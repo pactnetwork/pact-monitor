@@ -1,0 +1,49 @@
+version: "3.8"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: pact
+      POSTGRES_PASSWORD: pact
+      POSTGRES_DB: pact
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  backend:
+    build: ../packages/backend
+    depends_on:
+      - postgres
+    environment:
+      DATABASE_URL: postgresql://pact:pact@postgres:5432/pact
+      PORT: "3000"
+    expose:
+      - "3000"
+    restart: unless-stopped
+
+  scorecard:
+    build: ../packages/scorecard
+    volumes:
+      - scorecard_dist:/srv/scorecard
+
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+      - scorecard_dist:/srv/scorecard
+    depends_on:
+      - backend
+      - scorecard
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:
+  scorecard_dist:

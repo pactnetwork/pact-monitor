@@ -1,0 +1,15 @@
+pactnetwork.io {
+    handle /api/* {
+        reverse_proxy backend:3000
+    }
+
+    handle /health {
+        reverse_proxy backend:3000
+    }
+
+    handle {
+        root * /srv/scorecard
+        try_files {path} /index.html
+        file_server
+    }
+}
