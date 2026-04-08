@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pact Monitor — Playground</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <h1>Pact Monitor Playground</h1>
+  <p class="subtitle">Call any API and see how Pact classifies it</p>
+
+  <div class="config-row">
+    <div class="field">
+      <label>Backend URL</label>
+      <input type="text" id="backendUrl" value="http://localhost:3001">
+    </div>
+    <div class="field">
+      <label>API Key</label>
+      <input type="text" id="apiKey" placeholder="pact_...">
+    </div>
+  </div>
+
+  <label>Target URL</label>
+  <div class="input-row">
+    <select id="method">
+      <option value="GET">GET</option>
+      <option value="POST">POST</option>
+    </select>
+    <input type="text" id="url" placeholder="https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd">
+    <button id="monitorBtn" onclick="doMonitor()">Monitor</button>
+  </div>
+
+  <div class="result-card" id="resultCard">
+    <div class="result-grid">
+      <div class="result-item">
+        <label>Status</label>
+        <div class="value" id="resStatus">—</div>
+      </div>
+      <div class="result-item">
+        <label>Latency</label>
+        <div class="value" id="resLatency">—</div>
+      </div>
+      <div class="result-item">
+        <label>Classification</label>
+        <div class="value" id="resClass">—</div>
+      </div>
+      <div class="result-item">
+        <label>Provider</label>
+        <div class="value" id="resProvider">—</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="history">
+    <h2>History</h2>
+    <table class="history-table">
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>Provider</th>
+          <th>Status</th>
+          <th>Latency</th>
+          <th>Classification</th>
+        </tr>
+      </thead>
+      <tbody id="historyBody"></tbody>
+    </table>
+    <a class="scorecard-link" href="http://localhost:5173" target="_blank">View on Scorecard</a>
+  </div>
+
+  <script>
+    const history = [];
+
+    async function doMonitor() {
+      const backendUrl = document.getElementById('backendUrl').value.replace(/\/$/, '');
+      const apiKey = document.getElementById('apiKey').value;
+      const url = document.getElementById('url').value;
+      const method = document.getElementById('method').value;
+      const btn = document.getElementById('monitorBtn');
+
+      if (!url) return;
+      if (!apiKey) { alert('API key is required'); return; }
+
+      btn.disabled = true;
+      btn.textContent = '...';
+
+      try {
+        const res = await fetch(`${backendUrl}/api/v1/monitor`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({ url, method }),
+        });
+
+        const data = await res.json();
+
+        document.getElementById('resultCard').classList.add('visible');
+        document.getElementById('resStatus').textContent = data.status_code || 'ERR';
+        document.getElementById('resLatency').textContent = data.latency_ms + 'ms';
+        document.getElementById('resClass').textContent = data.classification;
+        document.getElementById('resClass').className = 'value ' + data.classification;
+        document.getElementById('resProvider').textContent = data.provider;
+
+        history.unshift({
+          time: new Date().toLocaleTimeString(),
+          provider: data.provider,
+          status: data.status_code,
+          latency: data.latency_ms,
+          classification: data.classification,
+        });
+
+        renderHistory();
+      } catch (err) {
+        alert('Failed to reach backend: ' + err.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Monitor';
+      }
+    }
+
+    function renderHistory() {
+      const tbody = document.getElementById('historyBody');
+      tbody.innerHTML = history.slice(0, 20).map(h => `
+        <tr>
+          <td>${h.time}</td>
+          <td>${h.provider}</td>
+          <td>${h.status}</td>
+          <td>${h.latency}ms</td>
+          <td class="${h.classification}">${h.classification}</td>
+        </tr>
+      `).join('');
+    }
+
+    document.getElementById('url').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') doMonitor();
+    });
+  </script>
+</body>
+</html>
