@@ -1,3 +1,137 @@
+import { useState, useEffect } from "react";
+import { useParams, useNavigate } from "react-router-dom";
+import { api, type ProviderDetail as ProviderDetailType, type TimeseriesData } from "../api/client";
+import { FailureTimeline } from "./Charts/FailureTimeline";
+import { FailureBreakdown } from "./Charts/FailureBreakdown";
+
+const tierColor: Record<string, string> = {
+  RELIABLE: "text-slate border-slate",
+  ELEVATED: "text-copper border-copper",
+  HIGH_RISK: "text-sienna border-sienna",
+};
+
+function formatUsd(lamports: number): string {
+  return `$${(lamports / 1_000_000).toFixed(2)}`;
+}
+
+function formatPct(rate: number): string {
+  return `${(rate * 100).toFixed(2)}%`;
+}
+
+function StatCard({ label, value, color }: { label: string; value: string; color?: string }) {
+  return (
+    <div className="bg-surface border border-border p-4">
+      <div className="text-xs text-neutral-500 uppercase tracking-widest font-sans">{label}</div>
+      <div className={`font-mono text-lg mt-1 ${color || "text-neutral-200"}`}>{value}</div>
+    </div>
+  );
+}
+
 export function ProviderDetail() {
-  return <div />;
+  const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const [provider, setProvider] = useState<ProviderDetailType | null>(null);
+  const [timeseries, setTimeseries] = useState<TimeseriesData | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!id) return;
+    Promise.all([api.getProvider(id), api.getTimeseries(id)])
+      .then(([p, ts]) => {
+        setProvider(p);
+        setTimeseries(ts);
+      })
+      .finally(() => setLoading(false));
+  }, [id]);
+
+  if (loading) return <p className="text-neutral-500 font-mono text-sm">Loading...</p>;
+  if (!provider) return <p className="text-sienna font-mono text-sm">Provider not found</p>;
+
+  return (
+    <div>
+      <button
+        onClick={() => navigate("/")}
+        className="text-sm text-neutral-500 hover:text-neutral-300 font-sans mb-4 border border-border px-3 py-1"
+      >
+        Back to rankings
+      </button>
+
+      <div className="mb-6">
+        <h2 className="font-serif text-2xl text-neutral-200">{provider.name}</h2>
+        <p className="text-sm text-neutral-500 font-sans">{provider.category}</p>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-8">
+        <StatCard label="Failure Rate" value={formatPct(provider.failure_rate)} color="text-copper" />
+        <StatCard label="Avg Latency" value={`${provider.avg_latency_ms}ms`} />
+        <StatCard label="Insurance Rate" value={formatPct(provider.insurance_rate)} color="text-copper" />
+        <StatCard label="$ Lost" value={formatUsd(provider.lost_payment_amount)} color="text-sienna" />
+        <div className="bg-surface border border-border p-4">
+          <div className="text-xs text-neutral-500 uppercase tracking-widest font-sans">Tier</div>
+          <span className={`border px-2 py-0.5 text-sm uppercase tracking-widest font-mono mt-1 inline-block ${tierColor[provider.tier] || ""}`}>
+            {provider.tier.replace("_", " ")}
+          </span>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+        <div className="bg-surface border border-border p-4">
+          <h3 className="text-xs text-neutral-500 uppercase tracking-widest font-sans mb-4">Failure Rate Over Time</h3>
+          {timeseries && <FailureTimeline data={timeseries.data} />}
+        </div>
+        <div className="bg-surface border border-border p-4">
+          <h3 className="text-xs text-neutral-500 uppercase tracking-widest font-sans mb-4">Failure Breakdown</h3>
+          <FailureBreakdown breakdown={provider.failure_breakdown} />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="bg-surface border border-border p-4">
+          <h3 className="text-xs text-neutral-500 uppercase tracking-widest font-sans mb-4">Top Endpoints</h3>
+          <table className="w-full font-mono text-sm">
+            <thead>
+              <tr className="text-neutral-500 text-xs border-b border-border">
+                <th className="text-left py-2">Endpoint</th>
+                <th className="text-right py-2">Calls</th>
+                <th className="text-right py-2">Failure</th>
+              </tr>
+            </thead>
+            <tbody>
+              {provider.top_endpoints.map((ep) => (
+                <tr key={ep.endpoint} className="border-b border-border/50">
+                  <td className="py-2 text-neutral-300">{ep.endpoint}</td>
+                  <td className="py-2 text-right text-neutral-400">{ep.calls.toLocaleString()}</td>
+                  <td className="py-2 text-right text-copper">{formatPct(ep.failure_rate)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="bg-surface border border-border p-4">
+          <h3 className="text-xs text-neutral-500 uppercase tracking-widest font-sans mb-4">Payment Protocols</h3>
+          <table className="w-full font-mono text-sm">
+            <thead>
+              <tr className="text-neutral-500 text-xs border-b border-border">
+                <th className="text-left py-2">Protocol</th>
+                <th className="text-right py-2">Calls</th>
+                <th className="text-right py-2">Total</th>
+                <th className="text-right py-2">Lost</th>
+              </tr>
+            </thead>
+            <tbody>
+              {Object.entries(provider.payment_breakdown).map(([proto, data]) => (
+                <tr key={proto} className="border-b border-border/50">
+                  <td className="py-2 text-neutral-300">{proto}</td>
+                  <td className="py-2 text-right text-neutral-400">{data.calls.toLocaleString()}</td>
+                  <td className="py-2 text-right text-neutral-400">{formatUsd(data.total_amount)}</td>
+                  <td className="py-2 text-right text-sienna">{formatUsd(data.lost_amount)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
 }
