@@ -117,6 +117,118 @@ describe("API integration tests", () => {
       await query("DELETE FROM call_records WHERE provider_id = $1", [providerId]);
       await query("DELETE FROM providers WHERE id = $1", [providerId]);
     });
+
+    it("creates a claim for failed records with payment", async () => {
+      const hostname = `claim-test-${randomUUID()}.example.com`;
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/records",
+        headers: { authorization: `Bearer ${TEST_API_KEY}` },
+        payload: {
+          records: [
+            {
+              hostname,
+              endpoint: "/v1/data",
+              timestamp: new Date().toISOString(),
+              status_code: 500,
+              latency_ms: 3000,
+              classification: "error",
+              payment_protocol: "x402",
+              payment_amount: 10000,
+              payment_asset: "USDC",
+              payment_network: "solana",
+            },
+          ],
+        },
+      });
+      assert.equal(res.statusCode, 200);
+      const body = res.json();
+      const providerId = body.provider_ids[0];
+
+      const claimResult = await query(
+        "SELECT * FROM claims WHERE provider_id = $1",
+        [providerId],
+      );
+      assert.equal(claimResult.rows.length, 1);
+      const claim = claimResult.rows[0];
+      assert.equal(claim.trigger_type, "error");
+      assert.equal(claim.refund_pct, 100);
+      assert.equal(Number(claim.call_cost), 10000);
+      assert.equal(Number(claim.refund_amount), 10000);
+      assert.equal(claim.status, "simulated");
+
+      await query("DELETE FROM claims WHERE provider_id = $1", [providerId]);
+      await query("DELETE FROM call_records WHERE provider_id = $1", [providerId]);
+      await query("DELETE FROM providers WHERE id = $1", [providerId]);
+    });
+
+    it("does NOT create a claim for successful records with payment", async () => {
+      const hostname = `no-claim-${randomUUID()}.example.com`;
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/records",
+        headers: { authorization: `Bearer ${TEST_API_KEY}` },
+        payload: {
+          records: [
+            {
+              hostname,
+              endpoint: "/v1/data",
+              timestamp: new Date().toISOString(),
+              status_code: 200,
+              latency_ms: 100,
+              classification: "success",
+              payment_protocol: "x402",
+              payment_amount: 10000,
+            },
+          ],
+        },
+      });
+      assert.equal(res.statusCode, 200);
+      const body = res.json();
+      const providerId = body.provider_ids[0];
+
+      const claimResult = await query(
+        "SELECT * FROM claims WHERE provider_id = $1",
+        [providerId],
+      );
+      assert.equal(claimResult.rows.length, 0);
+
+      await query("DELETE FROM call_records WHERE provider_id = $1", [providerId]);
+      await query("DELETE FROM providers WHERE id = $1", [providerId]);
+    });
+
+    it("does NOT create a claim for failed records without payment", async () => {
+      const hostname = `no-pay-${randomUUID()}.example.com`;
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/records",
+        headers: { authorization: `Bearer ${TEST_API_KEY}` },
+        payload: {
+          records: [
+            {
+              hostname,
+              endpoint: "/v1/data",
+              timestamp: new Date().toISOString(),
+              status_code: 500,
+              latency_ms: 3000,
+              classification: "error",
+            },
+          ],
+        },
+      });
+      assert.equal(res.statusCode, 200);
+      const body = res.json();
+      const providerId = body.provider_ids[0];
+
+      const claimResult = await query(
+        "SELECT * FROM claims WHERE provider_id = $1",
+        [providerId],
+      );
+      assert.equal(claimResult.rows.length, 0);
+
+      await query("DELETE FROM call_records WHERE provider_id = $1", [providerId]);
+      await query("DELETE FROM providers WHERE id = $1", [providerId]);
+    });
   });
 
   describe("GET /api/v1/providers", () => {
