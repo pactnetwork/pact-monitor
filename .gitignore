@@ -7,3 +7,11 @@ data/
 .superpowers/
 .worktrees/
 package-lock.json
+
+# Solana / Anchor
+packages/backend/.secrets/
+*.keypair.json
+packages/program/.anchor/
+packages/program/target/
+packages/program/test-ledger/
+packages/program/node_modules/
