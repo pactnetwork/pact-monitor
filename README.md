@@ -22,7 +22,7 @@ packages/
   sdk/        @pact-network/monitor   TypeScript SDK wrapping fetch()
   backend/    @pact-network/backend   Fastify API server + PostgreSQL
   scorecard/  @pact-network/scorecard Vite + React + Tailwind dashboard
-deploy/       Docker Compose + Caddyfile (production)
+deploy/       Docker Compose + GCP deployment configs
 docs/         PRD, design spec, implementation plan
 scripts/      Setup automation
 ```
@@ -35,7 +35,7 @@ scripts/      Setup automation
 | Backend   | Fastify 5, PostgreSQL 16, pg            |
 | Frontend  | React 19, Vite 6, Tailwind CSS, Recharts |
 | SDK       | Zero dependencies, wraps native fetch() |
-| Deploy    | Docker Compose, Caddy (reverse proxy)   |
+| Deploy    | Docker, GCP Cloud Run, GCR              |
 | Tooling   | pnpm workspaces, tsx                    |
 
 ## Quick Start
@@ -136,18 +136,15 @@ pnpm test:backend       # Backend tests (API routes, insurance formula)
 
 ## Production Deployment
 
-The `deploy/` directory contains the production stack:
+Production services are containerized and deployed to **Google Cloud Platform**:
 
-- **docker-compose.yml** runs PostgreSQL, backend, scorecard, and Caddy
-- **Caddyfile** routes `/api/*` to the backend and everything else to the SPA
-- HTTPS is auto-provisioned via Let's Encrypt
+- **Container Registry (GCR)** hosts Docker images for the backend and scorecard
+- **Cloud Run** runs the backend and scorecard as managed services
+- **Cloud SQL (PostgreSQL 16)** for the production database
 
-```bash
-cd deploy
-docker compose up -d
-```
+Each package has a Dockerfile for building production images. The `deploy/` directory contains orchestration configs for local staging and reference.
 
-Production runs on [pactnetwork.io](https://pactnetwork.io) with same-origin routing (no CORS needed).
+Production runs on [pactnetwork.io](https://pactnetwork.io).
 
 ## Design
 
@@ -158,6 +155,17 @@ Brutalist aesthetic. No gradients, no rounded corners, no emojis.
 - **Burnt Sienna:** #C9553D (failures, violations, HIGH RISK)
 - **Slate:** #5A6B7A (healthy, RELIABLE)
 - **Fonts:** Inria Serif (headlines), Inria Sans (body), JetBrains Mono (data)
+
+## Roadmap
+
+- **Solana on-chain program** -- publish insurance rates on-chain, enable parametric payouts via smart contract
+- **Claims engine** -- automated claim detection and payout when provider SLA violations exceed insured thresholds
+- **Multi-chain support** -- extend monitoring beyond Solana to EVM chains and cross-chain bridges
+- **Agent-to-agent marketplace** -- allow AI agents to purchase insurance policies directly, settling in SOL or stablecoins
+- **Historical analytics API** -- expose long-term provider reliability trends, seasonal patterns, and predictive risk scores
+- **SDK plugins** -- framework-specific integrations (LangChain, CrewAI, AutoGPT) for zero-config monitoring
+- **Webhook alerts** -- notify agent operators in real-time when provider reliability degrades past configurable thresholds
+- **Provider self-service** -- allow API providers to register, view their own metrics, and dispute classifications
 
 ## License
 
