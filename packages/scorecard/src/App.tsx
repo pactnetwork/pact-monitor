@@ -5,7 +5,7 @@ import { ThemeToggle } from "./components/ThemeToggle";
 
 export function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename="/scorecard">
       <div className="min-h-screen bg-bg">
         <header className="border-b border-border px-8 py-4 flex items-center justify-between">
           <div>
