@@ -1,3 +1,4 @@
+import { EventEmitter } from "events";
 import type { CallRecord, PactConfig, PactFetchOptions } from "./types.js";
 import { classify } from "./classifier.js";
 import { extractPaymentData, enrichWithManualAmount } from "./payment-extractor.js";
@@ -8,6 +9,7 @@ export class PactMonitor {
   private config: Required<PactConfig>;
   private storage: PactStorage;
   private sync: PactSync | null = null;
+  private events = new EventEmitter();
 
   constructor(config: PactConfig = {}) {
     this.config = {
@@ -115,6 +117,27 @@ export class PactMonitor {
     };
 
     this.storage.append(record);
+
+    if (record.classification !== "success") {
+      this.events.emit("failure", record);
+    }
+    this.events.emit("billed", { callCost: payment?.amount ?? 0 });
+  }
+
+  on(event: "failure", listener: (record: CallRecord) => void): this;
+  on(event: "billed", listener: (payload: { callCost: number }) => void): this;
+  on(event: string, listener: (...args: any[]) => void): this {
+    this.events.on(event, listener);
+    return this;
+  }
+
+  off(event: string, listener: (...args: any[]) => void): this {
+    this.events.off(event, listener);
+    return this;
+  }
+
+  emit(event: string, ...args: any[]): boolean {
+    return this.events.emit(event, ...args);
   }
 
   getStats() {
