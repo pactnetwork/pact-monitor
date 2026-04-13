@@ -559,20 +559,22 @@ describe("API integration tests", () => {
     const { getCachedOracleKeypair, __resetOracleKeypairCacheForTests } = await import("../services/claim-settlement.js");
     __resetOracleKeypairCacheForTests();
 
-    const a = getCachedOracleKeypair();
-    const b = getCachedOracleKeypair();
-    const c = getCachedOracleKeypair();
+    try {
+      const a = getCachedOracleKeypair();
+      const b = getCachedOracleKeypair();
+      const c = getCachedOracleKeypair();
 
-    // All calls must return the same cached object (reference equality).
-    assert.strictEqual(a, b, "second call must return the cached keypair instance");
-    assert.strictEqual(b, c, "third call must return the cached keypair instance");
-    // And it must be the keypair we wrote.
-    assert.equal(a.publicKey.toBase58(), kp.publicKey.toBase58());
-
-    if (savedEnv === undefined) delete process.env.PACT_ORACLE_KEYPAIR;
-    else process.env.PACT_ORACLE_KEYPAIR = savedEnv;
-    fs.unlinkSync(tmpFile);
-    __resetOracleKeypairCacheForTests();
+      // All calls must return the same cached object (reference equality).
+      assert.strictEqual(a, b, "second call must return the cached keypair instance");
+      assert.strictEqual(b, c, "third call must return the cached keypair instance");
+      // And it must be the keypair we wrote.
+      assert.equal(a.publicKey.toBase58(), kp.publicKey.toBase58());
+    } finally {
+      if (savedEnv === undefined) delete process.env.PACT_ORACLE_KEYPAIR;
+      else process.env.PACT_ORACLE_KEYPAIR = savedEnv;
+      try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
+      __resetOracleKeypairCacheForTests();
+    }
   });
 
   // Step 2.2/2.3 — pools route: 503 on missing env, cache consistency
@@ -582,31 +584,40 @@ describe("API integration tests", () => {
     const { __resetPoolCacheForTests } = await import("../routes/pools.js");
     __resetPoolCacheForTests();
     const app = await buildTestApp();
-    const resp = await app.inject({ method: "GET", url: "/api/v1/pools" });
-    assert.equal(resp.statusCode, 503);
-    const body = resp.json();
-    assert.equal(body.error, "Solana configuration unavailable");
-    if (saved !== undefined) process.env.SOLANA_PROGRAM_ID = saved;
-    await app.close();
+    try {
+      const resp = await app.inject({ method: "GET", url: "/api/v1/pools" });
+      assert.equal(resp.statusCode, 503);
+      const body = resp.json();
+      assert.equal(body.error, "Solana configuration unavailable");
+    } finally {
+      if (saved !== undefined) process.env.SOLANA_PROGRAM_ID = saved;
+      await app.close();
+    }
   });
 
   test("GET /api/v1/pools sequential calls return consistent status (error responses not cached)", async () => {
     // With no validator running both calls fall through to the RPC error path
     // and both return 502. Asserts that error responses are NOT cached (i.e.
     // the cache is not poisoned) and both requests are treated equally.
+    const savedProgramId = process.env.SOLANA_PROGRAM_ID;
     process.env.SOLANA_PROGRAM_ID = process.env.SOLANA_PROGRAM_ID ?? "4Z1Y3W49U2Cn6bz9UpkahVP7LaeobQ4cAaEt3uNaqSob";
     const { __resetPoolCacheForTests, __getPoolCacheTimestampForTests } = await import("../routes/pools.js");
     __resetPoolCacheForTests();
     const app = await buildTestApp();
-    const r1 = await app.inject({ method: "GET", url: "/api/v1/pools" });
-    const r2 = await app.inject({ method: "GET", url: "/api/v1/pools" });
-    assert.equal(r1.statusCode, r2.statusCode, "sequential calls should return identical status");
-    // Errors must NOT populate the cache.
-    assert.equal(
-      __getPoolCacheTimestampForTests(),
-      null,
-      "cache should remain empty after RPC error responses",
-    );
-    await app.close();
+    try {
+      const r1 = await app.inject({ method: "GET", url: "/api/v1/pools" });
+      const r2 = await app.inject({ method: "GET", url: "/api/v1/pools" });
+      assert.equal(r1.statusCode, r2.statusCode, "sequential calls should return identical status");
+      // Errors must NOT populate the cache.
+      assert.equal(
+        __getPoolCacheTimestampForTests(),
+        null,
+        "cache should remain empty after RPC error responses",
+      );
+    } finally {
+      if (savedProgramId === undefined) delete process.env.SOLANA_PROGRAM_ID;
+      else process.env.SOLANA_PROGRAM_ID = savedProgramId;
+      await app.close();
+    }
   });
 });
