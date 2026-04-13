@@ -8,6 +8,11 @@ const label = args[0] || "default";
 const pkIdx = args.indexOf("--agent-pubkey");
 const agentPubkey = pkIdx >= 0 ? args[pkIdx + 1] : null;
 
+if (pkIdx >= 0 && agentPubkey === undefined) {
+  console.error("error: --agent-pubkey flag requires a value");
+  process.exit(1);
+}
+
 const key = `pact_${randomBytes(24).toString("hex")}`;
 const hash = hashKey(key);
 
