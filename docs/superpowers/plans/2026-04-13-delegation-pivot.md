@@ -1247,20 +1247,51 @@ Not part of this plan — will be covered by the main plan's simulation integrat
 
 ## Execution Order
 
-Recommended sequence to avoid dependency problems:
+### Already complete (do not re-do)
 
-1. **This pivot plan Task 1** (update spec) — can happen any time, standalone
-2. **Main plan Task 6** (update_config) — already done? Check `git log` for `update_config` commit.
-3. **Main plan Task 7** (CoveragePool + create_pool)
-4. **Main plan Task 8** (UnderwriterPosition + deposit)
-5. **This pivot plan Task 2** (Policy state + errors)
-6. **This pivot plan Task 3** (enable_insurance)
-7. **This pivot plan Task 4** (settle_premium)
-8. **Main plan Task 9** (withdraw) — can slot in anywhere after Task 8
-9. **Main plan Task 12** (update_rates)
-10. **Main plan Task 13** (submit_claim)
-11. **This pivot plan Task 5** (tests for enable_insurance and settle_premium)
-12. **This pivot plan Task 6** (upgrade devnet program)
-13. **Main plan Task 14** (finalize devnet deploy + initialize)
+These were finished in the Friday 2026-04-10 session and the Sunday 2026-04-13 morning session. Do not include them in any subagent dispatch:
 
-After this point, continue with main plan Tasks 15+ (backend integration, SDK, etc.). The backend and SDK changes are minor compared to the spec's prepaid-model version: mostly, `create_policy` SDK calls become "approve + enable_insurance" two-instruction tx, and "prepaid balance" UX copy becomes "approval remaining" copy.
+| Main plan task | Status | Commit |
+|---|---|---|
+| 0: Solana CLI + Anchor + dev keypair + oracle keypair + .gitignore | ✓ done | `0ac127e` (gitignore); keypairs in `~/.config/solana/id.json` and `packages/backend/.secrets/oracle-keypair.json` |
+| 1: Anchor scaffold | ✓ done | `55cb581` |
+| 2: constants.rs | ✓ done | `1cb2d96` |
+| 3: error.rs (PactError enum) | ✓ done | `6c0e8f7` |
+| 4: state.rs / ProtocolConfig only | ✓ done | `c7155cc` |
+| 5: initialize_protocol + tests | ✓ done | `cc96962` (initial), `c99e31e` (split deployer/authority refactor) |
+| Plus: Phantom wallet imported, devnet program deployed, init-devnet.ts script written | ✓ done | `ae71747` |
+
+**Caveats from Friday/Sunday work:**
+- The deployed devnet program currently only knows `initialize_protocol`. Every other instruction in this pivot plan (and the main plan) requires a `anchor program deploy --upgrade`.
+- `init-devnet.ts` was written but **never run** — the ProtocolConfig PDA does NOT exist on devnet yet. It will be created during the final devnet verification step (this pivot plan Task 6, Step 5).
+- Anchor 1.0 is installed (not 0.31). `@anchor-lang/core` is the TS client (not `@coral-xyz/anchor`). The `instructions/` directory pattern is in use (not single `instructions.rs`). Local validator workaround: `solana-test-validator` + `cluster = "http://127.0.0.1:8899"` in `Anchor.toml` + `anchor test --skip-local-validator`.
+
+### Remaining sequence
+
+Each step lists which plan it comes from. The main plan is `2026-04-10-phase3-insurance-implementation.md`; pivot is this file.
+
+| # | Source | Task | Why this order |
+|---|---|---|---|
+| 1 | Pivot | Task 1 (update spec) | Standalone, do first to lock the design contract |
+| 2 | Main | Task 6 (update_config) | Independent of pivot, prerequisite for all `update_config` calls in tests |
+| 3 | Main | Task 7 (CoveragePool + create_pool) | Required by pivot Tasks 3-5 (Policy depends on CoveragePool struct) |
+| 4 | Main | Task 8 (UnderwriterPosition + deposit) | Required by pivot Task 5 tests (need a deposited pool) |
+| 5 | Main | Task 9 (withdraw) | Slots in here naturally after Task 8 |
+| 6 | Pivot | Task 2 (Policy state + delegation errors) | Refactor of main plan Task 10's state changes |
+| 7 | Pivot | Task 3 (enable_insurance) | Replaces main plan Task 10's create_policy/top_up |
+| 8 | Pivot | Task 4 (settle_premium) | Replaces main plan Task 11's settle_premium |
+| 9 | Main | Task 12 (update_rates) | Independent, can come before or after pivot tasks |
+| 10 | Main | Task 13 (submit_claim) | Final program instruction |
+| 11 | Pivot | Task 5 (delegation integration tests) | Now that all instructions exist, run the e2e test |
+| 12 | Pivot | Task 6 (upgrade devnet program + run init-devnet.ts) | Pushes new binary to devnet, creates ProtocolConfig PDA |
+| 13 | Main | Task 14 (finalize devnet — verify deployment) | Sanity check, additional pools |
+| 14+ | Main | Tasks 15-42 (backend integration, SDK, scorecard, simulation) | Main plan continues unchanged |
+
+### What changes from the original main plan
+
+The pivot plan **replaces** the following from the main plan:
+- Main plan Task 10's policy lifecycle code (create_policy + top_up) → pivot Tasks 2 + 3
+- Main plan Task 11's settle_premium → pivot Task 4
+- Spec's Policy section + create_policy/top_up/settle_premium subsections → pivot Task 1
+
+Everything else in the main plan is **untouched** — backend, SDK, monitor, scorecard, and simulation tests work the same way, with minor copy/UX changes (call it "approval remaining" instead of "prepaid balance" in user-facing strings). The backend's `claim-settlement.ts` and crank loops also need small updates (the `settle_premium` accounts list now includes `agent_token_account` and `treasury_token_account`), but those are mechanical updates done in main plan Tasks 17 and 20.
