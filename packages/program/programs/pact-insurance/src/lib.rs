@@ -21,4 +21,11 @@ pub mod pact_insurance {
     ) -> Result<()> {
         instructions::initialize_protocol::handler(ctx, args)
     }
+
+    pub fn update_config(
+        ctx: Context<UpdateConfig>,
+        args: UpdateConfigArgs,
+    ) -> Result<()> {
+        instructions::update_config::handler(ctx, args)
+    }
 }
