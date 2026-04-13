@@ -1,0 +1,10 @@
+node_modules
+dist
+.env
+.env.*
+*.test.ts
+coverage
+*.log
+*.map
+.DS_Store
+.git

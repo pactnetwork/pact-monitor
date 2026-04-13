@@ -1,11 +1,23 @@
 import "dotenv/config";
 import Fastify from "fastify";
+import cors from "@fastify/cors";
 import { initDb } from "./db.js";
 import { healthRoutes } from "./routes/health.js";
 import { recordsRoutes } from "./routes/records.js";
 import { providersRoutes } from "./routes/providers.js";
 
 const app = Fastify({ logger: true });
+
+const corsOrigins = (process.env.CORS_ORIGINS ?? "https://pactnetwork.io,http://localhost:5173")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter((origin) => origin.length > 0);
+
+await app.register(cors, {
+  origin: corsOrigins,
+  methods: ["GET", "POST", "OPTIONS"],
+  allowedHeaders: ["Authorization", "Content-Type"],
+});
 
 await app.register(healthRoutes);
 await app.register(recordsRoutes);
