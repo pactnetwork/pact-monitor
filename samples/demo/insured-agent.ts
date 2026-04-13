@@ -66,9 +66,12 @@ const { Client } = pg;
 
 const HOSTNAME = process.argv[2] || "api.coingecko.com";
 const SUCCESS_CALLS = parseInt(process.argv[3] || "3", 10);
-const CALL_COST_USDC = 2_000_000; // 2 USDC per call for accounting
-const ALLOWANCE_USDC = 20_000_000n; // 20 USDC delegated budget
-const INITIAL_USDC = 20_000_000n; // agent starts with 20 USDC in wallet
+// SDK's usdcAmount is in WHOLE USDC (not lamports). It multiplies by 1e6
+// internally. So 2 here means $2.00.
+const CALL_COST_USDC = 2;
+const CALL_COST_LAMPORTS = CALL_COST_USDC * 1_000_000;
+const ALLOWANCE_USDC = 20_000_000n; // 20 USDC delegated budget (in lamports)
+const INITIAL_USDC = 20_000_000n; // agent starts with 20 USDC in wallet (in lamports)
 
 const RPC_URL = process.env.SOLANA_RPC_URL || "https://api.devnet.solana.com";
 const PROGRAM_ID = new PublicKey(
@@ -171,7 +174,7 @@ async function main() {
   console.log("=== Pact Network — Insured Agent Demo ===");
   log("cfg", `Target hostname: ${HOSTNAME}`);
   log("cfg", `Success calls:   ${SUCCESS_CALLS}`);
-  log("cfg", `Call cost each:  ${formatUsdc(CALL_COST_USDC)}`);
+  log("cfg", `Call cost each:  ${formatUsdc(CALL_COST_LAMPORTS)}`);
   log("cfg", `RPC:             ${RPC_URL}`);
   log("cfg", `Backend:         ${BACKEND_URL}`);
   console.log("");
@@ -309,8 +312,8 @@ async function main() {
     const start = Date.now();
     try {
       // Manual usdcAmount tells the SDK to record this call as if it cost
-      // CALL_COST_USDC lamports (for premium accounting) since public APIs
-      // don't include x402 payment headers.
+      // CALL_COST_USDC whole USDC (SDK multiplies by 1e6 internally) for
+      // premium accounting, since public APIs don't include x402 headers.
       const res = await monitor.fetch(
         realUrl,
         {},
@@ -319,7 +322,7 @@ async function main() {
       const latency = Date.now() - start;
       log(
         "call",
-        `#${i + 1} SUCCESS ${res.status} ${latency}ms — billed ${formatUsdc(CALL_COST_USDC)}`,
+        `#${i + 1} SUCCESS ${res.status} ${latency}ms — billed ${formatUsdc(CALL_COST_LAMPORTS)}`,
       );
     } catch (err) {
       log("call", `#${i + 1} UNEXPECTED ERROR: ${(err as Error).message}`);
@@ -338,7 +341,7 @@ async function main() {
     const latency = Date.now() - failStart;
     log(
       "call",
-      `FAILURE ${res.status} ${latency}ms — payment ${formatUsdc(CALL_COST_USDC)} (refund claim should fire)`,
+      `FAILURE ${res.status} ${latency}ms — payment ${formatUsdc(CALL_COST_LAMPORTS)} (refund claim should fire)`,
     );
   } catch (err) {
     log("call", `FAILURE network error: ${(err as Error).message}`);

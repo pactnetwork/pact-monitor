@@ -104,7 +104,17 @@ export class PactMonitor {
     );
 
     let payment = headers ? extractPaymentData(headers) : null;
-    payment = enrichWithManualAmount(payment, pactOptions?.usdcAmount);
+    try {
+      payment = enrichWithManualAmount(payment, pactOptions?.usdcAmount);
+    } catch (err) {
+      // Golden rule: never break the agent. Drop payment metadata on
+      // invalid usdcAmount rather than throwing back to the caller.
+      // But do surface the problem loudly in stderr so the dev notices.
+      console.error(
+        `[pact-monitor] invalid pactOptions.usdcAmount — dropping payment metadata for this call: ${(err as Error).message}`,
+      );
+      // keep payment as whatever extractPaymentData returned (may still be null)
+    }
 
     const record: CallRecord = {
       hostname,

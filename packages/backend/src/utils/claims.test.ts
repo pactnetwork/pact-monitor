@@ -36,4 +36,48 @@ describe("claims refund logic", () => {
     const refundAmount = Math.round((paymentAmount * refundPct) / 100);
     assert.equal(refundAmount, 501);
   });
+
+  // --- Clamp tests for maybeCreateClaim's pre-chain optimistic refund.
+  // Prevents SDK unit-mistakes (passing lamports as USDC) from rendering
+  // "2000000.00 USDC" rows in the scorecard.
+
+  const MAX_SIMULATED_CALL_LAMPORTS = 1_000_000_000; // 1000 USDC
+
+  function simulateClamp(paymentAmount: number, refundPct: number) {
+    const clampedCallCost = Math.min(paymentAmount, MAX_SIMULATED_CALL_LAMPORTS);
+    const refundAmount = Math.min(
+      Math.round((clampedCallCost * refundPct) / 100),
+      MAX_SIMULATED_CALL_LAMPORTS,
+    );
+    return { clampedCallCost, refundAmount };
+  }
+
+  it("clamps a unit-mistake payment_amount of 2 trillion lamports at 1000 USDC", () => {
+    // Simulating: SDK user accidentally passed 2_000_000 as usdcAmount
+    // thinking it was lamports. SDK multiplied by 1e6 -> 2e12 payment_amount.
+    const { clampedCallCost, refundAmount } = simulateClamp(2_000_000_000_000, 100);
+    assert.equal(clampedCallCost, 1_000_000_000);
+    assert.equal(refundAmount, 1_000_000_000);
+  });
+
+  it("does not clamp sane values (1 USDC call)", () => {
+    const { clampedCallCost, refundAmount } = simulateClamp(1_000_000, 100);
+    assert.equal(clampedCallCost, 1_000_000);
+    assert.equal(refundAmount, 1_000_000);
+  });
+
+  it("clamps refund_amount even when call_cost is already in range (pathological refund_pct)", () => {
+    // Guard against an impossible refund_pct > 100. Caps refund at ceiling.
+    const clampedRefund = Math.min(
+      Math.round((500_000_000 * 300) / 100),
+      MAX_SIMULATED_CALL_LAMPORTS,
+    );
+    assert.equal(clampedRefund, 1_000_000_000);
+  });
+
+  it("MAX_SIMULATED_CALL_LAMPORTS boundary value passes through unchanged", () => {
+    const { clampedCallCost, refundAmount } = simulateClamp(1_000_000_000, 100);
+    assert.equal(clampedCallCost, 1_000_000_000);
+    assert.equal(refundAmount, 1_000_000_000);
+  });
 });

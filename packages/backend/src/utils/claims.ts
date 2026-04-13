@@ -44,7 +44,17 @@ export async function maybeCreateClaim(input: ClaimInput): Promise<string | null
   const refundPct = REFUND_PCT[triggerType];
   if (refundPct === undefined) return null;
 
-  const refundAmount = Math.round((paymentAmount * refundPct) / 100);
+  // Clamp the pre-chain optimistic refund at a sane ceiling. The on-chain
+  // program has its own tighter per-pool cap (max_coverage_per_call) which
+  // wins on real settlement, but this clamp prevents an SDK unit-mistake
+  // from ever rendering "2000000.00 USDC" in the scorecard. 1000 USDC is
+  // well above any sane single API call cost.
+  const MAX_SIMULATED_CALL_LAMPORTS = 1_000_000_000; // 1000 USDC
+  const clampedCallCost = Math.min(paymentAmount, MAX_SIMULATED_CALL_LAMPORTS);
+  const refundAmount = Math.min(
+    Math.round((clampedCallCost * refundPct) / 100),
+    MAX_SIMULATED_CALL_LAMPORTS,
+  );
 
   const row = await getOne<{ id: string }>(
     `INSERT INTO claims (
@@ -52,7 +62,7 @@ export async function maybeCreateClaim(input: ClaimInput): Promise<string | null
       call_cost, refund_pct, refund_amount, status
     ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'simulated')
     RETURNING id`,
-    [callRecordId, providerId, agentId, triggerType, paymentAmount, refundPct, refundAmount],
+    [callRecordId, providerId, agentId, triggerType, clampedCallCost, refundPct, refundAmount],
   );
 
   const claimRowId = row?.id ?? null;
@@ -85,14 +95,25 @@ export async function maybeCreateClaim(input: ClaimInput): Promise<string | null
           created_at: input.createdAt ?? new Date(),
         };
         const result = await submitClaimOnChain(callRecord, input.providerHostname);
+        // Reconcile: overwrite refund_amount with the ACTUAL on-chain value.
+        // The program caps refund at min(payment_amount, max_coverage_per_call,
+        // total_available), so the pre-chain optimistic estimate is usually
+        // too high. Storing the real value keeps the scorecard honest.
         await query(
           `UPDATE claims
            SET tx_hash = $1,
                settlement_slot = $2,
                status = 'settled',
-               policy_id = $3
+               policy_id = $3,
+               refund_amount = $5
            WHERE id = $4`,
-          [result.signature, result.slot, result.claimPda, claimRowId],
+          [
+            result.signature,
+            result.slot,
+            result.claimPda,
+            claimRowId,
+            result.refundAmount,
+          ],
         );
       }
     } catch (err) {
