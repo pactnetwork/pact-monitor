@@ -633,19 +633,27 @@ describe("API integration tests", () => {
     }
   });
 
-  test("GET /api/v1/pools sequential calls return consistent status (error responses not cached)", async () => {
-    // With no validator running both calls fall through to the RPC error path
-    // and both return 502. Asserts that error responses are NOT cached (i.e.
-    // the cache is not poisoned) and both requests are treated equally.
+  test("GET /api/v1/pools does not cache RPC error responses", async () => {
+    // Config must be fully valid so getConfigOr503 passes and execution
+    // reaches createSolanaClient → RPC. With no validator running, the RPC
+    // call fails and the route returns 502 "Upstream RPC error". This test
+    // asserts that:
+    //   1. Both sequential calls return the same 502 (cache consistency).
+    //   2. The cache is NOT populated by an error response (no poisoning).
     const savedProgramId = process.env.SOLANA_PROGRAM_ID;
-    process.env.SOLANA_PROGRAM_ID = process.env.SOLANA_PROGRAM_ID ?? "4Z1Y3W49U2Cn6bz9UpkahVP7LaeobQ4cAaEt3uNaqSob";
+    const savedUsdcMint = process.env.USDC_MINT;
+    process.env.SOLANA_PROGRAM_ID = savedProgramId ?? "4Z1Y3W49U2Cn6bz9UpkahVP7LaeobQ4cAaEt3uNaqSob";
+    // Canonical mainnet USDC mint — just needs to be a valid base58 32-byte
+    // pubkey so getSolanaConfig doesn't throw. We never touch it on-chain.
+    process.env.USDC_MINT = savedUsdcMint ?? "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
     const { __resetPoolCacheForTests, __getPoolCacheTimestampForTests } = await import("../routes/pools.js");
     __resetPoolCacheForTests();
     const app = await buildTestApp();
     try {
       const r1 = await app.inject({ method: "GET", url: "/api/v1/pools" });
       const r2 = await app.inject({ method: "GET", url: "/api/v1/pools" });
-      assert.equal(r1.statusCode, r2.statusCode, "sequential calls should return identical status");
+      assert.equal(r1.statusCode, 502, "first call should reach RPC and fail with 502");
+      assert.equal(r2.statusCode, 502, "second call should reach RPC and fail with 502");
       // Errors must NOT populate the cache.
       assert.equal(
         __getPoolCacheTimestampForTests(),
@@ -655,6 +663,8 @@ describe("API integration tests", () => {
     } finally {
       if (savedProgramId === undefined) delete process.env.SOLANA_PROGRAM_ID;
       else process.env.SOLANA_PROGRAM_ID = savedProgramId;
+      if (savedUsdcMint === undefined) delete process.env.USDC_MINT;
+      else process.env.USDC_MINT = savedUsdcMint;
       await app.close();
     }
   });
