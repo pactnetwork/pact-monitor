@@ -21,8 +21,17 @@ export function getCachedOracleKeypair(): Keypair {
   if (!path) {
     throw new Error("PACT_ORACLE_KEYPAIR env var not set");
   }
-  const bytes = JSON.parse(readFileSync(path, "utf8")) as number[];
-  cachedOracleKeypair = Keypair.fromSecretKey(Uint8Array.from(bytes));
+  const parsed = JSON.parse(readFileSync(path, "utf8"));
+  if (
+    !Array.isArray(parsed) ||
+    parsed.length !== 64 ||
+    !parsed.every((b) => typeof b === "number" && Number.isInteger(b) && b >= 0 && b <= 255)
+  ) {
+    throw new Error(
+      `Invalid keypair file at ${path}: expected JSON array of 64 bytes (0-255)`,
+    );
+  }
+  cachedOracleKeypair = Keypair.fromSecretKey(Uint8Array.from(parsed));
   return cachedOracleKeypair;
 }
 

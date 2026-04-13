@@ -577,6 +577,44 @@ describe("API integration tests", () => {
     }
   });
 
+  test("oracle keypair loader rejects malformed file content", async () => {
+    const fs = await import("fs");
+    const os = await import("os");
+    const path = await import("path");
+    const tmpFile = path.join(os.tmpdir(), `pact-oracle-bad-${Date.now()}.json`);
+    // Not an array — a string. Without validation this would fall through to
+    // Uint8Array.from(string), producing a truncated/zeroed secret key.
+    fs.writeFileSync(tmpFile, JSON.stringify("not-an-array"));
+
+    const savedEnv = process.env.PACT_ORACLE_KEYPAIR;
+    process.env.PACT_ORACLE_KEYPAIR = tmpFile;
+
+    const { getCachedOracleKeypair, __resetOracleKeypairCacheForTests } = await import("../services/claim-settlement.js");
+    __resetOracleKeypairCacheForTests();
+
+    try {
+      assert.throws(
+        () => getCachedOracleKeypair(),
+        /Invalid keypair file/,
+        "must throw when file content is not a 64-byte array",
+      );
+
+      // Also verify a short array (wrong length) is rejected.
+      fs.writeFileSync(tmpFile, JSON.stringify([1, 2, 3]));
+      __resetOracleKeypairCacheForTests();
+      assert.throws(
+        () => getCachedOracleKeypair(),
+        /Invalid keypair file/,
+        "must throw when array length is not 64",
+      );
+    } finally {
+      if (savedEnv === undefined) delete process.env.PACT_ORACLE_KEYPAIR;
+      else process.env.PACT_ORACLE_KEYPAIR = savedEnv;
+      try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
+      __resetOracleKeypairCacheForTests();
+    }
+  });
+
   // Step 2.2/2.3 — pools route: 503 on missing env, cache consistency
   test("GET /api/v1/pools returns 503 when SOLANA_PROGRAM_ID missing", async () => {
     const saved = process.env.SOLANA_PROGRAM_ID;
