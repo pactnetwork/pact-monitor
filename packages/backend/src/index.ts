@@ -8,8 +8,12 @@ import { providersRoutes } from "./routes/providers.js";
 import { monitorRoutes } from "./routes/monitor.js";
 import { analyticsRoutes } from "./routes/analytics.js";
 import { claimsRoutes } from "./routes/claims.js";
+import { adminRoutes } from "./routes/admin.js";
+import { metricsHook } from "./middleware/metrics.js";
 
 const app = Fastify({ logger: true });
+
+app.addHook("onResponse", metricsHook);
 
 const corsOrigins = (process.env.CORS_ORIGINS ?? "https://pactnetwork.io,http://localhost:5173")
   .split(",")
@@ -28,6 +32,7 @@ await app.register(providersRoutes);
 await app.register(monitorRoutes);
 await app.register(analyticsRoutes);
 await app.register(claimsRoutes);
+await app.register(adminRoutes);
 
 const port = parseInt(process.env.PORT || "3001", 10);
 
