@@ -56,6 +56,9 @@ export async function claimsSubmitRoute(app: FastifyInstance): Promise<void> {
       if (authed.agentId !== row.agent_id) {
         return reply.code(403).send({ error: "Forbidden" });
       }
+      if (providerHostname !== row.api_provider) {
+        return reply.code(400).send({ error: "providerHostname does not match call record" });
+      }
       if (!row.agent_pubkey) {
         return reply.code(400).send({ error: "Call record missing agent_pubkey" });
       }

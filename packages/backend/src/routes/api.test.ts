@@ -393,12 +393,14 @@ describe("API integration tests", () => {
       });
 
       assert.equal(resp.statusCode, 200);
+      const agentLabel = "test-agent-pubkey";
       const stored = await getOne<{ agent_pubkey: string }>(
-        "SELECT agent_pubkey FROM call_records WHERE agent_id = 'test-agent-pubkey' ORDER BY created_at DESC LIMIT 1",
+        "SELECT agent_pubkey FROM call_records WHERE agent_id = $1 ORDER BY created_at DESC LIMIT 1",
+        [agentLabel],
       );
       assert.equal(stored?.agent_pubkey, boundPubkey);
 
-      await query("DELETE FROM call_records WHERE agent_id = 'test-agent-pubkey'");
+      await query("DELETE FROM call_records WHERE agent_id = $1", [agentLabel]);
       await query("DELETE FROM providers WHERE base_url = $1", [hostname]);
       await query("DELETE FROM api_keys WHERE key_hash = $1", [hash]);
       await testApp.close();
@@ -444,6 +446,89 @@ describe("API integration tests", () => {
         payload: { callRecordId: rec!.id, providerHostname: provHostname },
       });
       assert.equal(resp.statusCode, 403);
+
+      await query("DELETE FROM call_records WHERE id = $1", [rec!.id]);
+      await query("DELETE FROM providers WHERE id = $1", [prov!.id]);
+      await query("DELETE FROM api_keys WHERE key_hash = $1", [hashA]);
+      await testApp.close();
+    });
+
+    it("rejects providerHostname mismatch with call record's provider with 400", async () => {
+      const testApp = await buildTestApp();
+      const keyA = `pact_${randomBytes(24).toString("hex")}`;
+      const hashA = createHash("sha256").update(keyA).digest("hex");
+      const agentLabel = `agent-a-${randomUUID()}`;
+      await query(
+        "INSERT INTO api_keys (key_hash, label, agent_pubkey) VALUES ($1, $2, $3)",
+        [hashA, agentLabel, "AgentPubkey1111111111111111111111111111111"],
+      );
+      const provXHostname = `provider-x-${randomUUID()}.example.com`;
+      const provYHostname = `provider-y-${randomUUID()}.example.com`;
+      const provX = await getOne<{ id: string }>(
+        "INSERT INTO providers (name, base_url) VALUES ($1, $2) RETURNING id",
+        [provXHostname, provXHostname],
+      );
+      const provY = await getOne<{ id: string }>(
+        "INSERT INTO providers (name, base_url) VALUES ($1, $2) RETURNING id",
+        [provYHostname, provYHostname],
+      );
+      // Call record is against provider X, but attacker will pass provider Y
+      const rec = await getOne<{ id: string }>(
+        `INSERT INTO call_records (provider_id, endpoint, timestamp, status_code,
+           latency_ms, classification, agent_id, agent_pubkey)
+         VALUES ($1, '/v1', NOW(), 500, 100, 'error', $2, $3) RETURNING id`,
+        [provX!.id, agentLabel, "AgentPubkey1111111111111111111111111111111"],
+      );
+      const resp = await testApp.inject({
+        method: "POST",
+        url: "/api/v1/claims/submit",
+        headers: { authorization: `Bearer ${keyA}`, "content-type": "application/json" },
+        payload: { callRecordId: rec!.id, providerHostname: provYHostname },
+      });
+      assert.equal(resp.statusCode, 400);
+      const body = resp.json();
+      assert.equal(body.error, "providerHostname does not match call record");
+
+      await query("DELETE FROM call_records WHERE id = $1", [rec!.id]);
+      await query("DELETE FROM providers WHERE id IN ($1, $2)", [provX!.id, provY!.id]);
+      await query("DELETE FROM api_keys WHERE key_hash = $1", [hashA]);
+      await testApp.close();
+    });
+
+    it("passes ownership + provider gates when agent matches and providerHostname matches (pre-policy 404)", async () => {
+      const testApp = await buildTestApp();
+      const keyA = `pact_${randomBytes(24).toString("hex")}`;
+      const hashA = createHash("sha256").update(keyA).digest("hex");
+      const agentLabel = `agent-happy-${randomUUID()}`;
+      await query(
+        "INSERT INTO api_keys (key_hash, label, agent_pubkey) VALUES ($1, $2, $3)",
+        [hashA, agentLabel, "AgentPubkey2222222222222222222222222222222"],
+      );
+      const provHostname = `happy-path-${randomUUID()}.example.com`;
+      const prov = await getOne<{ id: string }>(
+        "INSERT INTO providers (name, base_url) VALUES ($1, $2) RETURNING id",
+        [provHostname, provHostname],
+      );
+      const rec = await getOne<{ id: string }>(
+        `INSERT INTO call_records (provider_id, endpoint, timestamp, status_code,
+           latency_ms, classification, agent_id, agent_pubkey)
+         VALUES ($1, '/v1', NOW(), 500, 100, 'error', $2, $3) RETURNING id`,
+        [prov!.id, agentLabel, "AgentPubkey2222222222222222222222222222222"],
+      );
+      const resp = await testApp.inject({
+        method: "POST",
+        url: "/api/v1/claims/submit",
+        headers: { authorization: `Bearer ${keyA}`, "content-type": "application/json" },
+        payload: { callRecordId: rec!.id, providerHostname: provHostname },
+      });
+      // Ownership + providerHostname gates pass through; we expect to fail later
+      // in the pipeline (no on-chain policy seeded in test env → 404, or 500 if
+      // the RPC call itself errors out). Assert only that we are NOT blocked
+      // by 401/403/400 — which confirms the ownership and provider-match gates
+      // let us through.
+      assert.notEqual(resp.statusCode, 401);
+      assert.notEqual(resp.statusCode, 403);
+      assert.notEqual(resp.statusCode, 400);
 
       await query("DELETE FROM call_records WHERE id = $1", [rec!.id]);
       await query("DELETE FROM providers WHERE id = $1", [prov!.id]);
