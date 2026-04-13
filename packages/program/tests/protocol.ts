@@ -209,4 +209,58 @@ describe("pact-insurance: protocol", () => {
       expect(String(err)).to.match(/Unauthorized|ConstraintHasOne|has_one/i);
     }
   });
+
+  it("rejects min_pool_deposit below ABSOLUTE_MIN (1_000_000)", async () => {
+    try {
+      await program.methods
+        .updateConfig({
+          protocolFeeBps: null,
+          minPoolDeposit: new BN(500_000),
+          defaultInsuranceRateBps: null,
+          defaultMaxCoveragePerCall: null,
+          minPremiumBps: null,
+          withdrawalCooldownSeconds: null,
+          aggregateCapBps: null,
+          aggregateCapWindowSeconds: null,
+          claimWindowSeconds: null,
+          maxClaimsPerBatch: null,
+          paused: null,
+          treasury: null,
+          usdcMint: null,
+        })
+        .accounts({ config: protocolPda, authority: authority.publicKey })
+        .signers([authority])
+        .rpc();
+      expect.fail("Should have rejected");
+    } catch (err: any) {
+      expect(String(err)).to.match(/ConfigSafetyFloorViolation/);
+    }
+  });
+
+  it("rejects claim_window_seconds below ABSOLUTE_MIN (60)", async () => {
+    try {
+      await program.methods
+        .updateConfig({
+          protocolFeeBps: null,
+          minPoolDeposit: null,
+          defaultInsuranceRateBps: null,
+          defaultMaxCoveragePerCall: null,
+          minPremiumBps: null,
+          withdrawalCooldownSeconds: null,
+          aggregateCapBps: null,
+          aggregateCapWindowSeconds: null,
+          claimWindowSeconds: new BN(10),
+          maxClaimsPerBatch: null,
+          paused: null,
+          treasury: null,
+          usdcMint: null,
+        })
+        .accounts({ config: protocolPda, authority: authority.publicKey })
+        .signers([authority])
+        .rpc();
+      expect.fail("Should have rejected");
+    } catch (err: any) {
+      expect(String(err)).to.match(/ConfigSafetyFloorViolation/);
+    }
+  });
 });
