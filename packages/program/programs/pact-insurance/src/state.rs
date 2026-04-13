@@ -1,4 +1,5 @@
 use anchor_lang::prelude::*;
+use crate::constants::MAX_HOSTNAME_LEN;
 
 #[account]
 #[derive(InitSpace)]
@@ -27,4 +28,37 @@ pub struct ProtocolConfig {
 
 impl ProtocolConfig {
     pub const SEED: &'static [u8] = b"protocol";
+}
+
+#[account]
+#[derive(InitSpace)]
+pub struct CoveragePool {
+    pub authority: Pubkey,
+    #[max_len(MAX_HOSTNAME_LEN)]
+    pub provider_hostname: String,
+    pub usdc_mint: Pubkey,
+    pub vault: Pubkey,
+
+    pub total_deposited: u64,
+    pub total_available: u64,
+    pub total_premiums_earned: u64,
+    pub total_claims_paid: u64,
+
+    pub insurance_rate_bps: u16,
+    pub min_premium_bps: u16,
+    pub max_coverage_per_call: u64,
+
+    pub active_policies: u32,
+
+    pub payouts_this_window: u64,
+    pub window_start: i64,
+
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub bump: u8,
+}
+
+impl CoveragePool {
+    pub const SEED_PREFIX: &'static [u8] = b"pool";
+    pub const VAULT_SEED_PREFIX: &'static [u8] = b"vault";
 }

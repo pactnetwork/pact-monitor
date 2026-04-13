@@ -28,4 +28,11 @@ pub mod pact_insurance {
     ) -> Result<()> {
         instructions::update_config::handler(ctx, args)
     }
+
+    pub fn create_pool(
+        ctx: Context<CreatePool>,
+        args: CreatePoolArgs,
+    ) -> Result<()> {
+        instructions::create_pool::handler(ctx, args)
+    }
 }

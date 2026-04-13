@@ -3,6 +3,7 @@ import { Program, BN } from "@anchor-lang/core";
 import { PactInsurance } from "../target/types/pact_insurance";
 import { PublicKey, Keypair, SystemProgram } from "@solana/web3.js";
 import { expect } from "chai";
+import { getOrInitProtocol } from "./helpers/setup";
 
 describe("pact-insurance: protocol", () => {
   const provider = anchor.AnchorProvider.env();
@@ -10,33 +11,20 @@ describe("pact-insurance: protocol", () => {
 
   const program = anchor.workspace.PactInsurance as Program<PactInsurance>;
 
-  const authority = Keypair.generate();
-  const treasury = Keypair.generate().publicKey;
-  const usdcMint = Keypair.generate().publicKey;
-
   let protocolPda: PublicKey;
+  let authority: Keypair;
+  let treasury: PublicKey;
+  let usdcMint: PublicKey;
 
-  before(() => {
-    [protocolPda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("protocol")],
-      program.programId
-    );
+  before(async () => {
+    const handles = await getOrInitProtocol(program, provider);
+    protocolPda = handles.protocolPda;
+    authority = handles.authority;
+    treasury = handles.treasury;
+    usdcMint = handles.usdcMint;
   });
 
   it("initializes the protocol config with a separate authority", async () => {
-    await program.methods
-      .initializeProtocol({
-        authority: authority.publicKey,
-        treasury,
-        usdcMint,
-      })
-      .accounts({
-        config: protocolPda,
-        deployer: provider.wallet.publicKey,
-        systemProgram: SystemProgram.programId,
-      })
-      .rpc();
-
     const config = await program.account.protocolConfig.fetch(protocolPda);
     expect(config.authority.toString()).to.equal(authority.publicKey.toString());
     expect(config.authority.toString()).to.not.equal(provider.wallet.publicKey.toString());
