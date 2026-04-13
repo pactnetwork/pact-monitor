@@ -46,4 +46,8 @@ pub mod pact_insurance {
     ) -> Result<()> {
         instructions::enable_insurance::handler(ctx, args)
     }
+
+    pub fn settle_premium(ctx: Context<SettlePremium>, call_value: u64) -> Result<()> {
+        instructions::settle_premium::handler(ctx, call_value)
+    }
 }
