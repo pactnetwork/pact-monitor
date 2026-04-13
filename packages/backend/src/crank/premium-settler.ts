@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { PublicKey } from "@solana/web3.js";
-import { BN } from "@anchor-lang/core";
+import BN from "bn.js";
 import {
   getAssociatedTokenAddressSync,
   TOKEN_PROGRAM_ID,

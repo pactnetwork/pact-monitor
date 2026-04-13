@@ -1,5 +1,5 @@
 import { PublicKey, SystemProgram, type TransactionSignature } from "@solana/web3.js";
-import { BN } from "@anchor-lang/core";
+import BN from "bn.js";
 import { getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import { createHash } from "crypto";
 import {
