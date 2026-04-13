@@ -1,5 +1,6 @@
 import { useNavigate } from "react-router-dom";
 import { useProviders } from "../hooks/useProviders";
+import { track } from "../analytics/tracker";
 
 const tierColor: Record<string, string> = {
   RELIABLE: "text-slate border-slate",
@@ -56,7 +57,7 @@ export function ProviderTable() {
           {providers.map((p) => (
             <tr
               key={p.id}
-              onClick={() => navigate(`/provider/${p.id}`)}
+              onClick={() => { track("provider_click", { provider_id: p.id, provider_name: p.name }); navigate(`/provider/${p.id}`); }}
               className="border-b border-border/50 cursor-pointer hover:bg-surface-light transition-colors"
             >
               <td className="py-3 px-2 text-neutral-200 font-sans font-bold">{p.name}</td>
