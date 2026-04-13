@@ -2,7 +2,12 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 import { createSolanaClient, derivePoolPda, getSolanaConfig } from "../utils/solana.js";
 import { query } from "../db.js";
 
-interface CachedPoolList { cachedAt: number; data: unknown; }
+interface CachedPoolList {
+  cachedAt: number;
+  data: unknown;
+  programId: string;
+  rpcUrl: string;
+}
 const POOL_LIST_TTL_MS = 30_000;
 let poolListCache: CachedPoolList | null = null;
 
@@ -29,12 +34,20 @@ function getConfigOr503(reply: FastifyReply) {
 
 export async function poolsRoute(app: FastifyInstance): Promise<void> {
   app.get("/api/v1/pools", async (request, reply) => {
-    if (poolListCache && Date.now() - poolListCache.cachedAt < POOL_LIST_TTL_MS) {
-      return reply.send(poolListCache.data);
-    }
-
     const cfg = getConfigOr503(reply);
     if (!cfg) return;
+
+    // Cache is scoped to the (programId, rpcUrl) tuple. If either changes
+    // at runtime (e.g. program redeploy in Task 12), the cached payload
+    // belongs to a different network and must be invalidated.
+    if (
+      poolListCache &&
+      poolListCache.programId === cfg.config.programId &&
+      poolListCache.rpcUrl === cfg.config.rpcUrl &&
+      Date.now() - poolListCache.cachedAt < POOL_LIST_TTL_MS
+    ) {
+      return reply.send(poolListCache.data);
+    }
 
     try {
       const { program } = createSolanaClient(cfg.config);
@@ -55,7 +68,12 @@ export async function poolsRoute(app: FastifyInstance): Promise<void> {
         windowStart: p.account.windowStart.toString(),
       }));
       const payload = { pools: result };
-      poolListCache = { cachedAt: Date.now(), data: payload };
+      poolListCache = {
+        cachedAt: Date.now(),
+        data: payload,
+        programId: cfg.config.programId,
+        rpcUrl: cfg.config.rpcUrl,
+      };
       return reply.send(payload);
     } catch (err) {
       request.log.error({ err }, "Failed to fetch pools");
@@ -116,7 +134,11 @@ export async function poolsRoute(app: FastifyInstance): Promise<void> {
 
 export function __resetPoolCacheForTests(): void { poolListCache = null; }
 
-// Exported for tests that want to introspect cache state.
-export function __getPoolCacheTimestampForTests(): number | null {
-  return poolListCache?.cachedAt ?? null;
+// Exported for tests that want to introspect cache state. If programId is
+// provided, only returns the timestamp when the cached entry matches that
+// programId — otherwise returns "any cached" timestamp (or null if unset).
+export function __getPoolCacheTimestampForTests(programId?: string): number | null {
+  if (!poolListCache) return null;
+  if (programId !== undefined && poolListCache.programId !== programId) return null;
+  return poolListCache.cachedAt;
 }
