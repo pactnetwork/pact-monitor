@@ -11,6 +11,7 @@ import {
 import {
   TOKEN_PROGRAM_ID,
   createAssociatedTokenAccount,
+  createAccount,
   mintTo,
   approve,
 } from "@solana/spl-token";
@@ -249,6 +250,55 @@ describe("pact-insurance: security hardening", () => {
       expect.fail("Should have rejected");
     } catch (err: any) {
       expect(String(err)).to.match(/Unauthorized/);
+    }
+  });
+
+  it("C-03: submit_claim rejects agent_token_account that is not policy.agent_token_account", async () => {
+    // Create a second token account for the SAME agent on the SAME mint but at
+    // a different address. mint + owner constraints will pass; the new
+    // key-equality constraint must reject it with TokenAccountMismatch.
+    const wrongAta = await createAccount(
+      provider.connection,
+      (provider.wallet as anchor.Wallet).payer,
+      usdcMint,
+      agent.publicKey,
+      Keypair.generate(),
+    );
+
+    const callId = "c03-wrong-ata";
+    const callIdBuffer = Buffer.from(callId);
+    const [c03ClaimPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("claim"), policyPda.toBuffer(), callIdBuffer],
+      program.programId,
+    );
+
+    try {
+      await program.methods
+        .submitClaim({
+          callId,
+          triggerType: { error: {} },
+          evidenceHash: Array(32).fill(0),
+          callTimestamp: new BN(Math.floor(Date.now() / 1000)),
+          latencyMs: 100,
+          statusCode: 500,
+          paymentAmount: new BN(1000),
+        })
+        .accounts({
+          config: protocolPda,
+          pool: poolPda,
+          vault: vaultPda,
+          policy: policyPda,
+          claim: c03ClaimPda,
+          agentTokenAccount: wrongAta,
+          oracle: oracle.publicKey,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([oracle])
+        .rpc();
+      expect.fail("Should have rejected");
+    } catch (err: any) {
+      expect(String(err)).to.match(/TokenAccountMismatch/);
     }
   });
 });

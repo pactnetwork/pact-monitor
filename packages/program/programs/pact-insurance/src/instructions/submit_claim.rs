@@ -67,6 +67,7 @@ pub struct SubmitClaim<'info> {
 
     #[account(
         mut,
+        constraint = agent_token_account.key() == policy.agent_token_account @ PactError::TokenAccountMismatch,
         constraint = agent_token_account.mint == pool.usdc_mint,
         constraint = agent_token_account.owner == policy.agent,
     )]
