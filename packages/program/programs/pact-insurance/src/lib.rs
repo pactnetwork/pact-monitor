@@ -59,6 +59,10 @@ pub mod pact_insurance {
         instructions::enable_insurance::handler(ctx, args)
     }
 
+    pub fn disable_policy(ctx: Context<DisablePolicy>) -> Result<()> {
+        instructions::disable_policy::handler(ctx)
+    }
+
     pub fn settle_premium(ctx: Context<SettlePremium>, call_value: u64) -> Result<()> {
         instructions::settle_premium::handler(ctx, call_value)
     }

@@ -93,7 +93,7 @@ describe("pact-insurance: enable_insurance (delegation)", () => {
       await program.methods
         .enableInsurance({
           agentId: "agent-no-approve",
-          expiresAt: new BN(0),
+          expiresAt: new BN(Math.floor(Date.now() / 1000) + 86400),
         })
         .accounts({
           config: protocolPda,
@@ -122,7 +122,7 @@ describe("pact-insurance: enable_insurance (delegation)", () => {
     const enableIx = await program.methods
       .enableInsurance({
         agentId: "agent-with-approve",
-        expiresAt: new BN(0),
+        expiresAt: new BN(Math.floor(Date.now() / 1000) + 86400),
       })
       .accounts({
         config: protocolPda,

@@ -62,6 +62,13 @@ pub struct SettlePremium<'info> {
 pub fn handler(ctx: Context<SettlePremium>, call_value: u64) -> Result<()> {
     require!(call_value > 0, PactError::ZeroAmount);
 
+    let clock = Clock::get()?;
+    require!(ctx.accounts.policy.active, PactError::PolicyInactive);
+    require!(
+        clock.unix_timestamp < ctx.accounts.policy.expires_at,
+        PactError::PolicyExpired
+    );
+
     let agent_ata = &ctx.accounts.agent_token_account;
     require!(agent_ata.delegate.is_some(), PactError::DelegationMissing);
     require!(
@@ -135,7 +142,6 @@ pub fn handler(ctx: Context<SettlePremium>, call_value: u64) -> Result<()> {
 
     let pool = &mut ctx.accounts.pool;
     let policy = &mut ctx.accounts.policy;
-    let clock = Clock::get()?;
 
     policy.total_premiums_paid = policy
         .total_premiums_paid

@@ -19,6 +19,15 @@ import { expect } from "chai";
 import { createHash } from "crypto";
 import { getOrInitProtocol } from "../test-utils/setup";
 
+function deriveClaimPda(programId: PublicKey, policyKey: PublicKey, callId: string): PublicKey {
+  const hashed = createHash("sha256").update(callId).digest();
+  const [pda] = PublicKey.findProgramAddressSync(
+    [Buffer.from("claim"), policyKey.toBuffer(), hashed],
+    programId,
+  );
+  return pda;
+}
+
 describe("pact-insurance: security hardening", () => {
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
@@ -473,6 +482,252 @@ describe("pact-insurance: security hardening", () => {
       expect.fail("Should have rejected");
     } catch (err: any) {
       expect(String(err)).to.match(/RateBelowFloor/);
+    }
+  });
+
+  // ─── H-05: policy expiry + disable_policy ────────────────────────────────
+
+  // Agents created for H-05 tests. Declared at describe scope so they are
+  // accessible across all four it() blocks.
+  const disableAgent: Keypair = Keypair.generate();
+  let disableAgentAta: PublicKey;
+  let disablePolicyPda: PublicKey;
+
+  const expiredAgent: Keypair = Keypair.generate();
+  let expiredAgentAta: PublicKey;
+  let expiredPolicyPda: PublicKey;
+  let h05TreasuryAta: PublicKey;
+
+  before(async () => {
+    const payer = (provider.wallet as anchor.Wallet).payer;
+
+    // ── disableAgent: fresh policy, expires far in the future ──────────────
+    const daSig = await provider.connection.requestAirdrop(
+      disableAgent.publicKey,
+      5 * LAMPORTS_PER_SOL
+    );
+    await provider.connection.confirmTransaction(daSig);
+
+    disableAgentAta = await createAssociatedTokenAccount(
+      provider.connection,
+      payer,
+      usdcMint,
+      disableAgent.publicKey
+    );
+    await mintTo(
+      provider.connection,
+      payer,
+      usdcMint,
+      disableAgentAta,
+      provider.wallet.publicKey,
+      10_000_000
+    );
+    await approve(
+      provider.connection,
+      disableAgent,
+      disableAgentAta,
+      poolPda,
+      disableAgent,
+      100_000_000
+    );
+
+    [disablePolicyPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("policy"), poolPda.toBuffer(), disableAgent.publicKey.toBuffer()],
+      program.programId
+    );
+
+    await program.methods
+      .enableInsurance({
+        agentId: "disable-test-agent",
+        expiresAt: new BN(Math.floor(Date.now() / 1000) + 86400),
+      })
+      .accounts({
+        config: protocolPda,
+        pool: poolPda,
+        policy: disablePolicyPda,
+        agentTokenAccount: disableAgentAta,
+        agent: disableAgent.publicKey,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([disableAgent])
+      .rpc();
+
+    // ── expiredAgent: policy that will expire ~2 seconds after creation ─────
+    const eaSig = await provider.connection.requestAirdrop(
+      expiredAgent.publicKey,
+      5 * LAMPORTS_PER_SOL
+    );
+    await provider.connection.confirmTransaction(eaSig);
+
+    expiredAgentAta = await createAssociatedTokenAccount(
+      provider.connection,
+      payer,
+      usdcMint,
+      expiredAgent.publicKey
+    );
+    await mintTo(
+      provider.connection,
+      payer,
+      usdcMint,
+      expiredAgentAta,
+      provider.wallet.publicKey,
+      10_000_000
+    );
+    await approve(
+      provider.connection,
+      expiredAgent,
+      expiredAgentAta,
+      poolPda,
+      expiredAgent,
+      100_000_000
+    );
+
+    [expiredPolicyPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("policy"), poolPda.toBuffer(), expiredAgent.publicKey.toBuffer()],
+      program.programId
+    );
+
+    // expires_at = now + 2 seconds; we sleep 3s before testing it
+    const shortExpiresAt = new BN(Math.floor(Date.now() / 1000) + 2);
+    await program.methods
+      .enableInsurance({
+        agentId: "expired-test-agent",
+        expiresAt: shortExpiresAt,
+      })
+      .accounts({
+        config: protocolPda,
+        pool: poolPda,
+        policy: expiredPolicyPda,
+        agentTokenAccount: expiredAgentAta,
+        agent: expiredAgent.publicKey,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([expiredAgent])
+      .rpc();
+
+    // Treasury token account for settle_premium expired test.
+    // Use an explicit keypair so we don't collide with settlement.ts which
+    // also creates a treasury ATA using the same (usdcMint, treasury) pair.
+    const { treasury } = await getOrInitProtocol(program, provider);
+    h05TreasuryAta = await createAccount(
+      provider.connection,
+      payer,
+      usdcMint,
+      treasury,
+      Keypair.generate()
+    );
+
+    // Wait for the expiredAgent's policy to expire
+    await new Promise((r) => setTimeout(r, 3000));
+  });
+
+  it("H-05: disable_policy sets active=false and decrements pool.active_policies", async () => {
+    const poolBefore = await program.account.coveragePool.fetch(poolPda);
+
+    await program.methods
+      .disablePolicy()
+      .accounts({
+        pool: poolPda,
+        policy: disablePolicyPda,
+        agent: disableAgent.publicKey,
+      })
+      .signers([disableAgent])
+      .rpc();
+
+    const poolAfter = await program.account.coveragePool.fetch(poolPda);
+    const policyAfter = await program.account.policy.fetch(disablePolicyPda);
+
+    expect(policyAfter.active).to.equal(false);
+    expect(poolAfter.activePolicies).to.equal(poolBefore.activePolicies - 1);
+  });
+
+  it("H-05: submit_claim against a disabled policy rejects with PolicyInactive", async () => {
+    const callId = "h05-disabled-claim";
+    const claimPda = deriveClaimPda(program.programId, disablePolicyPda, callId);
+
+    try {
+      await program.methods
+        .submitClaim({
+          callId,
+          triggerType: { error: {} },
+          evidenceHash: Array(32).fill(0),
+          callTimestamp: new BN(Math.floor(Date.now() / 1000)),
+          latencyMs: 100,
+          statusCode: 500,
+          paymentAmount: new BN(1000),
+        })
+        .accounts({
+          config: protocolPda,
+          pool: poolPda,
+          vault: vaultPda,
+          policy: disablePolicyPda,
+          claim: claimPda,
+          agentTokenAccount: disableAgentAta,
+          oracle: oracle.publicKey,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([oracle])
+        .rpc();
+      expect.fail("Should have rejected");
+    } catch (err: any) {
+      expect(String(err)).to.match(/PolicyInactive/);
+    }
+  });
+
+  it("H-05: submit_claim against an expired policy rejects with PolicyExpired", async () => {
+    const callId = "h05-expired-claim";
+    const claimPda = deriveClaimPda(program.programId, expiredPolicyPda, callId);
+
+    try {
+      await program.methods
+        .submitClaim({
+          callId,
+          triggerType: { error: {} },
+          evidenceHash: Array(32).fill(0),
+          callTimestamp: new BN(Math.floor(Date.now() / 1000)),
+          latencyMs: 100,
+          statusCode: 500,
+          paymentAmount: new BN(1000),
+        })
+        .accounts({
+          config: protocolPda,
+          pool: poolPda,
+          vault: vaultPda,
+          policy: expiredPolicyPda,
+          claim: claimPda,
+          agentTokenAccount: expiredAgentAta,
+          oracle: oracle.publicKey,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([oracle])
+        .rpc();
+      expect.fail("Should have rejected");
+    } catch (err: any) {
+      expect(String(err)).to.match(/PolicyExpired/);
+    }
+  });
+
+  it("H-05: settle_premium against an expired policy rejects with PolicyExpired", async () => {
+    try {
+      await program.methods
+        .settlePremium(new BN(1000))
+        .accounts({
+          config: protocolPda,
+          pool: poolPda,
+          vault: vaultPda,
+          policy: expiredPolicyPda,
+          agentTokenAccount: expiredAgentAta,
+          treasuryTokenAccount: h05TreasuryAta,
+          authority: authority.publicKey,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([authority])
+        .rpc();
+      expect.fail("Should have rejected");
+    } catch (err: any) {
+      expect(String(err)).to.match(/PolicyExpired/);
     }
   });
 });

@@ -101,7 +101,7 @@ describe("pact-insurance: settle_premium (delegate transfer)", () => {
     const enableIx = await program.methods
       .enableInsurance({
         agentId: "settle-agent",
-        expiresAt: new BN(0),
+        expiresAt: new BN(Math.floor(Date.now() / 1000) + 86400),
       })
       .accounts({
         config: protocolPda,

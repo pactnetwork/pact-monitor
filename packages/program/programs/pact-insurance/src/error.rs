@@ -87,4 +87,7 @@ pub enum PactError {
     RateOutOfBounds,
     #[msg("Rate below pool minimum premium bps")]
     RateBelowFloor,
+
+    #[msg("Policy has expired")]
+    PolicyExpired,
 }

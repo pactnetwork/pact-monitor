@@ -88,8 +88,14 @@ pub fn handler(ctx: Context<SubmitClaim>, args: SubmitClaimArgs) -> Result<()> {
     require!(args.call_id.len() <= MAX_CALL_ID_LEN, PactError::CallIdTooLong);
     require!(args.payment_amount > 0, PactError::ZeroAmount);
 
-    let config = &ctx.accounts.config;
     let clock = Clock::get()?;
+    require!(ctx.accounts.policy.active, PactError::PolicyInactive);
+    require!(
+        clock.unix_timestamp < ctx.accounts.policy.expires_at,
+        PactError::PolicyExpired
+    );
+
+    let config = &ctx.accounts.config;
 
     let age = clock
         .unix_timestamp

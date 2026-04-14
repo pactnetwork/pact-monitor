@@ -2,6 +2,7 @@
 
 pub mod create_pool;
 pub mod deposit;
+pub mod disable_policy;
 pub mod enable_insurance;
 pub mod initialize_protocol;
 pub mod settle_premium;
@@ -13,6 +14,7 @@ pub mod withdraw;
 
 pub use create_pool::*;
 pub use deposit::*;
+pub use disable_policy::*;
 pub use enable_insurance::*;
 pub use initialize_protocol::*;
 pub use settle_premium::*;
