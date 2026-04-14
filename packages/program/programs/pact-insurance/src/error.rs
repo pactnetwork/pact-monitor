@@ -79,4 +79,7 @@ pub enum PactError {
 
     #[msg("Unauthorized oracle")]
     UnauthorizedOracle,
+
+    #[msg("Field is frozen after protocol initialization")]
+    FrozenConfigField,
 }

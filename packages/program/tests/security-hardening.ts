@@ -377,4 +377,58 @@ describe("pact-insurance: security hardening", () => {
       expect(String(err)).to.match(/TokenAccountMismatch/);
     }
   });
+
+  it("H-03: update_config rejects treasury mutation", async () => {
+    try {
+      await program.methods
+        .updateConfig({
+          protocolFeeBps: null,
+          minPoolDeposit: null,
+          defaultInsuranceRateBps: null,
+          defaultMaxCoveragePerCall: null,
+          minPremiumBps: null,
+          withdrawalCooldownSeconds: null,
+          aggregateCapBps: null,
+          aggregateCapWindowSeconds: null,
+          claimWindowSeconds: null,
+          maxClaimsPerBatch: null,
+          paused: null,
+          treasury: Keypair.generate().publicKey,
+          usdcMint: null,
+        })
+        .accounts({ config: protocolPda, authority: authority.publicKey })
+        .signers([authority])
+        .rpc();
+      expect.fail("Should have rejected");
+    } catch (err: any) {
+      expect(String(err)).to.match(/FrozenConfigField/);
+    }
+  });
+
+  it("H-03: update_config rejects usdc_mint mutation", async () => {
+    try {
+      await program.methods
+        .updateConfig({
+          protocolFeeBps: null,
+          minPoolDeposit: null,
+          defaultInsuranceRateBps: null,
+          defaultMaxCoveragePerCall: null,
+          minPremiumBps: null,
+          withdrawalCooldownSeconds: null,
+          aggregateCapBps: null,
+          aggregateCapWindowSeconds: null,
+          claimWindowSeconds: null,
+          maxClaimsPerBatch: null,
+          paused: null,
+          treasury: null,
+          usdcMint: Keypair.generate().publicKey,
+        })
+        .accounts({ config: protocolPda, authority: authority.publicKey })
+        .signers([authority])
+        .rpc();
+      expect.fail("Should have rejected");
+    } catch (err: any) {
+      expect(String(err)).to.match(/FrozenConfigField/);
+    }
+  });
 });
