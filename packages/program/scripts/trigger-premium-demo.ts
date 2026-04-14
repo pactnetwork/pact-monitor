@@ -54,7 +54,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const RPC_URL = "https://api.devnet.solana.com";
-const PROGRAM_ID = new PublicKey("4Z1Y3W49U2Cn6bz9UpkahVP7LaeobQ4cAaEt3uNaqSob");
+const PROGRAM_ID = new PublicKey("2Go74eCvY8vCco3WPuteGzrhKz8v3R7Pcp5tjuFpcmN3");
 const BACKEND_URL = process.env.BACKEND_URL ?? "http://localhost:3001";
 const DATABASE_URL = process.env.DATABASE_URL ?? "postgresql://pact:pact@localhost:5433/pact";
 

@@ -6,10 +6,10 @@ resolution = true
 skip-lint = false
 
 [programs.devnet]
-pact_insurance = "4Z1Y3W49U2Cn6bz9UpkahVP7LaeobQ4cAaEt3uNaqSob"
+pact_insurance = "2Go74eCvY8vCco3WPuteGzrhKz8v3R7Pcp5tjuFpcmN3"
 
 [programs.localnet]
-pact_insurance = "4Z1Y3W49U2Cn6bz9UpkahVP7LaeobQ4cAaEt3uNaqSob"
+pact_insurance = "2Go74eCvY8vCco3WPuteGzrhKz8v3R7Pcp5tjuFpcmN3"
 
 [provider]
 cluster = "http://127.0.0.1:8899"

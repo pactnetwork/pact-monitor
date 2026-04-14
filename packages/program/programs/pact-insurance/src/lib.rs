@@ -9,14 +9,14 @@ pub use constants::*;
 pub use instructions::*;
 pub use state::*;
 
-declare_id!("4Z1Y3W49U2Cn6bz9UpkahVP7LaeobQ4cAaEt3uNaqSob");
+declare_id!("2Go74eCvY8vCco3WPuteGzrhKz8v3R7Pcp5tjuFpcmN3");
 
 // Hardcoded deployer pubkey for mainnet/devnet deploys. Only enforced when
 // compiled with `--features enforce-deployer`. Tests build without this
 // feature so they can use a dynamic provider wallet.
 #[cfg(feature = "enforce-deployer")]
 pub const DEPLOYER_PUBKEY: Pubkey = anchor_lang::pubkey!(
-    "11111111111111111111111111111111"
+    "5XyGGyazg6rGJU3Hjkrx1PDM1rBE3FraRnMauSR46rW1"
 );
 
 #[program]

@@ -128,7 +128,7 @@ export async function submitClaimOnChain(
       claim: claimPda,
       agentTokenAccount,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      authority: (program.provider as any).wallet.publicKey,
+      oracle: (program.provider as any).wallet.publicKey,
       tokenProgram: TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
     })

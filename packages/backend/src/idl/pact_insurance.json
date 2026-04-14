@@ -1,5 +1,5 @@
 {
-  "address": "4Z1Y3W49U2Cn6bz9UpkahVP7LaeobQ4cAaEt3uNaqSob",
+  "address": "2Go74eCvY8vCco3WPuteGzrhKz8v3R7Pcp5tjuFpcmN3",
   "metadata": {
     "name": "pact_insurance",
     "version": "0.1.0",
@@ -248,6 +248,79 @@
           "type": "u64"
         }
       ]
+    },
+    {
+      "name": "disable_policy",
+      "discriminator": [
+        186,
+        120,
+        165,
+        18,
+        84,
+        121,
+        70,
+        175
+      ],
+      "accounts": [
+        {
+          "name": "pool",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool.provider_hostname",
+                "account": "CoveragePool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "policy",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  108,
+                  105,
+                  99,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool"
+              },
+              {
+                "kind": "account",
+                "path": "policy.agent",
+                "account": "Policy"
+              }
+            ]
+          }
+        },
+        {
+          "name": "agent",
+          "signer": true,
+          "relations": [
+            "policy"
+          ]
+        }
+      ],
+      "args": []
     },
     {
       "name": "enable_insurance",
@@ -649,41 +722,16 @@
         },
         {
           "name": "claim",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  99,
-                  108,
-                  97,
-                  105,
-                  109
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "policy"
-              },
-              {
-                "kind": "arg",
-                "path": "args.call_id"
-              }
-            ]
-          }
+          "writable": true
         },
         {
           "name": "agent_token_account",
           "writable": true
         },
         {
-          "name": "authority",
+          "name": "oracle",
           "writable": true,
-          "signer": true,
-          "relations": [
-            "config"
-          ]
+          "signer": true
         },
         {
           "name": "token_program",
@@ -755,6 +803,55 @@
               "name": "UpdateConfigArgs"
             }
           }
+        }
+      ]
+    },
+    {
+      "name": "update_oracle",
+      "discriminator": [
+        112,
+        41,
+        209,
+        18,
+        248,
+        226,
+        252,
+        188
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  116,
+                  111,
+                  99,
+                  111,
+                  108
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "new_oracle",
+          "type": "pubkey"
         }
       ]
     },
@@ -1142,6 +1239,36 @@
       "code": 6023,
       "name": "ArithmeticOverflow",
       "msg": "Arithmetic overflow"
+    },
+    {
+      "code": 6024,
+      "name": "UnauthorizedDeployer",
+      "msg": "Unauthorized deployer"
+    },
+    {
+      "code": 6025,
+      "name": "UnauthorizedOracle",
+      "msg": "Unauthorized oracle"
+    },
+    {
+      "code": 6026,
+      "name": "FrozenConfigField",
+      "msg": "Field is frozen after protocol initialization"
+    },
+    {
+      "code": 6027,
+      "name": "RateOutOfBounds",
+      "msg": "Rate exceeds maximum of 10000 bps"
+    },
+    {
+      "code": 6028,
+      "name": "RateBelowFloor",
+      "msg": "Rate below pool minimum premium bps"
+    },
+    {
+      "code": 6029,
+      "name": "PolicyExpired",
+      "msg": "Policy has expired"
     }
   ],
   "types": [
@@ -1369,6 +1496,10 @@
             "type": "pubkey"
           },
           {
+            "name": "oracle",
+            "type": "pubkey"
+          },
+          {
             "name": "treasury",
             "type": "pubkey"
           },
@@ -1438,6 +1569,10 @@
         "fields": [
           {
             "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "oracle",
             "type": "pubkey"
           },
           {

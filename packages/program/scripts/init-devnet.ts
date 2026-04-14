@@ -6,7 +6,11 @@ import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
 
-const DEVNET_USDC_MINT = new PublicKey("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU");
+// Phantom-controlled test USDC mint for Pact devnet (created 2026-04-14 via
+// scripts/create-test-mint.mjs). H-03 freezes config.usdc_mint post-init, so
+// this MUST be a mint where the deploying wallet is the mint authority — we
+// can't update_config it later. For mainnet, swap to the canonical USDC mint.
+const DEVNET_USDC_MINT = new PublicKey("5vcEdU8fBksfRH42wrebUV6dNEENPbdaBtAmw79ZNuSE");
 
 function loadKeypair(p: string): Keypair {
   const resolved = p.startsWith("~") ? path.join(os.homedir(), p.slice(1)) : p;
@@ -43,7 +47,8 @@ async function main() {
   );
 
   console.log("Deployer (Phantom):", deployer.publicKey.toString());
-  console.log("Oracle authority:  ", oracle.publicKey.toString());
+  console.log("Authority (= deployer):", deployer.publicKey.toString());
+  console.log("Oracle (claim signer):", oracle.publicKey.toString());
   console.log("Treasury:          ", deployer.publicKey.toString(), "(= deployer)");
   console.log("USDC mint (devnet):", DEVNET_USDC_MINT.toString());
   console.log("Protocol PDA:      ", protocolPda.toString());
@@ -66,7 +71,7 @@ async function main() {
 
   const sig = await (program.methods as any)
     .initializeProtocol({
-      authority: oracle.publicKey,
+      authority: deployer.publicKey,
       oracle: oracle.publicKey,
       treasury: deployer.publicKey,
       usdcMint: DEVNET_USDC_MINT,

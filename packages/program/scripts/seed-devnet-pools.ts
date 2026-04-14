@@ -5,7 +5,8 @@
 //   2. Mint test USDC into a fresh underwriter ATA.
 //   3. Deposit DEPOSIT_USDC into the pool.
 //
-// Authority for create_pool is the oracle keypair (matches devnet ProtocolConfig.authority).
+// Authority for create_pool is the deployer (Phantom) keypair — matches the
+// post-Task-5 ProtocolConfig where authority and oracle are distinct keys.
 // USDC mint is read live from ProtocolConfig (whatever update_config last set).
 //
 // Run from `packages/program/`:
@@ -43,7 +44,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const RPC_URL = "https://api.devnet.solana.com";
-const PROGRAM_ID = new PublicKey("4Z1Y3W49U2Cn6bz9UpkahVP7LaeobQ4cAaEt3uNaqSob");
+const PROGRAM_ID = new PublicKey("2Go74eCvY8vCco3WPuteGzrhKz8v3R7Pcp5tjuFpcmN3");
 
 const HOSTNAMES = [
   "api.helius.xyz",
@@ -176,12 +177,12 @@ async function main() {
             pool: poolPda,
             vault: vaultPda,
             usdcMint,
-            authority: oracle.publicKey,
+            authority: phantom.publicKey,
             systemProgram: SystemProgram.programId,
             tokenProgram: TOKEN_PROGRAM_ID,
             rent: SYSVAR_RENT_PUBKEY,
           })
-          .signers([oracle])
+          .signers([phantom])
           .rpc();
         log("pool", `created (sig ${sig})`);
       } catch (err: any) {
