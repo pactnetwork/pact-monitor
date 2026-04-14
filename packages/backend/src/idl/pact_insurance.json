@@ -597,11 +597,8 @@
           "writable": true
         },
         {
-          "name": "authority",
-          "signer": true,
-          "relations": [
-            "config"
-          ]
+          "name": "oracle",
+          "signer": true
         },
         {
           "name": "token_program",
@@ -911,11 +908,8 @@
           }
         },
         {
-          "name": "authority",
-          "signer": true,
-          "relations": [
-            "config"
-          ]
+          "name": "oracle",
+          "signer": true
         }
       ],
       "args": [

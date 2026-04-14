@@ -7,7 +7,6 @@ pub struct UpdateRates<'info> {
     #[account(
         seeds = [ProtocolConfig::SEED],
         bump = config.bump,
-        has_one = authority @ PactError::Unauthorized,
     )]
     pub config: Account<'info, ProtocolConfig>,
 
@@ -18,7 +17,13 @@ pub struct UpdateRates<'info> {
     )]
     pub pool: Account<'info, CoveragePool>,
 
-    pub authority: Signer<'info>,
+    // C-02 (continuation): update_rates is crank-driven (rate-updater
+    // computes new rates from observed failure statistics) and must be
+    // oracle-signed so the admin authority key stays cold.
+    #[account(
+        constraint = oracle.key() == config.oracle @ PactError::UnauthorizedOracle,
+    )]
+    pub oracle: Signer<'info>,
 }
 
 pub fn handler(ctx: Context<UpdateRates>, new_rate_bps: u16) -> Result<()> {

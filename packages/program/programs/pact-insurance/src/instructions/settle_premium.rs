@@ -8,7 +8,6 @@ pub struct SettlePremium<'info> {
     #[account(
         seeds = [ProtocolConfig::SEED],
         bump = config.bump,
-        has_one = authority @ PactError::Unauthorized,
     )]
     pub config: Box<Account<'info, ProtocolConfig>>,
 
@@ -54,7 +53,13 @@ pub struct SettlePremium<'info> {
     )]
     pub treasury_token_account: Box<Account<'info, TokenAccount>>,
 
-    pub authority: Signer<'info>,
+    // C-02 (continuation): settle_premium is a high-frequency crank-driven
+    // operation and must NOT require the admin authority key to be hot.
+    // Oracle signs, same keypair as submit_claim.
+    #[account(
+        constraint = oracle.key() == config.oracle @ PactError::UnauthorizedOracle,
+    )]
+    pub oracle: Signer<'info>,
 
     pub token_program: Program<'info, Token>,
 }

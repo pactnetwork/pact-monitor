@@ -19,6 +19,7 @@ describe("pact-insurance: settle_premium (delegate transfer)", () => {
 
   let protocolPda: PublicKey;
   let authority: Keypair;
+  let oracle: Keypair;
   let treasury: PublicKey;
   let usdcMint: PublicKey;
 
@@ -35,6 +36,7 @@ describe("pact-insurance: settle_premium (delegate transfer)", () => {
     const handles = await getOrInitProtocol(program, provider);
     protocolPda = handles.protocolPda;
     authority = handles.authority;
+    oracle = handles.oracle;
     treasury = handles.treasury;
     usdcMint = handles.usdcMint;
 
@@ -141,10 +143,10 @@ describe("pact-insurance: settle_premium (delegate transfer)", () => {
         policy: policyPda,
         agentTokenAccount: agentAta,
         treasuryTokenAccount: treasuryAta,
-        authority: authority.publicKey,
+        oracle: oracle.publicKey,
         tokenProgram: TOKEN_PROGRAM_ID,
       })
-      .signers([authority])
+      .signers([oracle])
       .rpc();
 
     const afterAgent = await getAccount(provider.connection, agentAta);
@@ -164,7 +166,7 @@ describe("pact-insurance: settle_premium (delegate transfer)", () => {
     expect(pool.totalAvailable.toNumber()).to.equal(expectedPoolPremium);
   });
 
-  it("rejects settle_premium when authority is wrong", async () => {
+  it("rejects settle_premium when oracle signer is wrong", async () => {
     const rando = Keypair.generate();
     const sig = await provider.connection.requestAirdrop(rando.publicKey, 1_000_000_000);
     await provider.connection.confirmTransaction(sig);
@@ -179,14 +181,14 @@ describe("pact-insurance: settle_premium (delegate transfer)", () => {
           policy: policyPda,
           agentTokenAccount: agentAta,
           treasuryTokenAccount: treasuryAta,
-          authority: rando.publicKey,
+          oracle: rando.publicKey,
           tokenProgram: TOKEN_PROGRAM_ID,
         })
         .signers([rando])
         .rpc();
       expect.fail("should have rejected");
     } catch (err: any) {
-      expect(String(err)).to.match(/Unauthorized|has_one/i);
+      expect(String(err)).to.match(/UnauthorizedOracle/);
     }
   });
 });

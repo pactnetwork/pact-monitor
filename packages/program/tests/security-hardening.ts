@@ -448,9 +448,9 @@ describe("pact-insurance: security hardening", () => {
         .accounts({
           config: protocolPda,
           pool: poolPda,
-          authority: authority.publicKey,
+          oracle: oracle.publicKey,
         })
-        .signers([authority])
+        .signers([oracle])
         .rpc();
       expect.fail("Should have rejected");
     } catch (err: any) {
@@ -475,9 +475,9 @@ describe("pact-insurance: security hardening", () => {
         .accounts({
           config: protocolPda,
           pool: poolPda,
-          authority: authority.publicKey,
+          oracle: oracle.publicKey,
         })
-        .signers([authority])
+        .signers([oracle])
         .rpc();
       expect.fail("Should have rejected");
     } catch (err: any) {
@@ -720,10 +720,10 @@ describe("pact-insurance: security hardening", () => {
           policy: expiredPolicyPda,
           agentTokenAccount: expiredAgentAta,
           treasuryTokenAccount: h05TreasuryAta,
-          authority: authority.publicKey,
+          oracle: oracle.publicKey,
           tokenProgram: TOKEN_PROGRAM_ID,
         })
-        .signers([authority])
+        .signers([oracle])
         .rpc();
       expect.fail("Should have rejected");
     } catch (err: any) {
@@ -744,10 +744,10 @@ describe("pact-insurance: security hardening", () => {
           policy: disablePolicyPda,
           agentTokenAccount: disableAgentAta,
           treasuryTokenAccount: h05TreasuryAta,
-          authority: authority.publicKey,
+          oracle: oracle.publicKey,
           tokenProgram: TOKEN_PROGRAM_ID,
         })
-        .signers([authority])
+        .signers([oracle])
         .rpc();
       expect.fail("Should have rejected");
     } catch (err: any) {
