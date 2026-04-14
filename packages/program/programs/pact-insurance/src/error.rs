@@ -90,4 +90,7 @@ pub enum PactError {
 
     #[msg("Policy has expired")]
     PolicyExpired,
+
+    #[msg("New oracle key is invalid (zero or equals authority)")]
+    InvalidOracleKey,
 }

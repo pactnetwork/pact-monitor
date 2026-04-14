@@ -14,6 +14,7 @@ import {
   createAccount,
   mintTo,
   approve,
+  getAccount,
 } from "@solana/spl-token";
 import { expect } from "chai";
 import { createHash } from "crypto";
@@ -259,7 +260,72 @@ describe("pact-insurance: security hardening", () => {
         .rpc();
       expect.fail("Should have rejected");
     } catch (err: any) {
-      expect(String(err)).to.match(/Unauthorized/);
+      // Negative lookahead so this doesn't accidentally match
+      // UnauthorizedOracle or UnauthorizedDeployer — we specifically want the
+      // generic `has_one = authority` rejection (PactError::Unauthorized).
+      expect(String(err)).to.match(/Unauthorized(?!Oracle|Deployer)/);
+    }
+  });
+
+  it("C-02: update_oracle rejects zero pubkey as new oracle", async () => {
+    try {
+      await program.methods
+        .updateOracle(PublicKey.default)
+        .accounts({ config: protocolPda, authority: authority.publicKey })
+        .signers([authority])
+        .rpc();
+      expect.fail("Should have rejected");
+    } catch (err: any) {
+      expect(String(err)).to.match(/InvalidOracleKey/);
+    }
+  });
+
+  it("C-02: update_oracle rejects new oracle equal to authority (undoes split)", async () => {
+    try {
+      await program.methods
+        .updateOracle(authority.publicKey)
+        .accounts({ config: protocolPda, authority: authority.publicKey })
+        .signers([authority])
+        .rpc();
+      expect.fail("Should have rejected");
+    } catch (err: any) {
+      expect(String(err)).to.match(/InvalidOracleKey/);
+    }
+  });
+
+  it("C-02: submit_claim rejects authority keypair as oracle signer", async () => {
+    // Covers the review gap: existing test only rejects an impostor.
+    // The authority keypair passing as oracle must ALSO fail, otherwise
+    // the oracle/authority split is nominal rather than enforced.
+    const callId = "c02-authority-cannot-submit";
+    const claimPda = deriveClaimPda(program.programId, policyPda, callId);
+    try {
+      await program.methods
+        .submitClaim({
+          callId,
+          triggerType: { error: {} },
+          evidenceHash: Array(32).fill(0),
+          callTimestamp: new BN(Math.floor(Date.now() / 1000)),
+          latencyMs: 100,
+          statusCode: 500,
+          paymentAmount: new BN(1000),
+        })
+        .accounts({
+          config: protocolPda,
+          pool: poolPda,
+          vault: vaultPda,
+          policy: policyPda,
+          claim: claimPda,
+          agentTokenAccount: agentAta,
+          oracle: authority.publicKey,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([authority])
+        .rpc();
+      expect.fail("Should have rejected");
+    } catch (err: any) {
+      expect(String(err)).to.match(/UnauthorizedOracle/);
     }
   });
 
@@ -731,28 +797,49 @@ describe("pact-insurance: security hardening", () => {
     }
   });
 
-  it("H-05: settle_premium against a disabled policy rejects with PolicyInactive", async () => {
-    // disablePolicyPda was disabled in the earlier disable_policy test.
-    // Reuse h05TreasuryAta (created in the H-05 before() block).
-    try {
-      await program.methods
-        .settlePremium(new BN(1000))
-        .accounts({
-          config: protocolPda,
-          pool: poolPda,
-          vault: vaultPda,
-          policy: disablePolicyPda,
-          agentTokenAccount: disableAgentAta,
-          treasuryTokenAccount: h05TreasuryAta,
-          oracle: oracle.publicKey,
-          tokenProgram: TOKEN_PROGRAM_ID,
-        })
-        .signers([oracle])
-        .rpc();
-      expect.fail("Should have rejected");
-    } catch (err: any) {
-      expect(String(err)).to.match(/PolicyInactive/);
-    }
+  it("H-05 + premium-evasion fix: settle_premium STILL collects on disabled policy", async () => {
+    // Regression for the premium-evasion vector called out in PR #20 review:
+    // an agent could `disable_policy` in the same window they racked up
+    // billable calls, then the crank's `settle_premium` would revert with
+    // `PolicyInactive` and the protocol would eat the cost. Fix (option b):
+    // settle_premium only enforces `expires_at`, not `active`. Revocation
+    // still blocks NEW claims via submit_claim.
+    //
+    // disablePolicyPda was deactivated in the earlier disable_policy test but
+    // its expires_at is still ~1 day in the future, so settlement should
+    // succeed and the premium should actually move tokens.
+    //
+    // Math: call_value * pool.insurance_rate_bps / 10_000
+    const pool = await program.account.coveragePool.fetch(poolPda);
+    const rateBps = pool.insuranceRateBps;
+    const callValue = 1_000_000;
+    const expectedGross = Math.floor((callValue * rateBps) / 10_000);
+    expect(expectedGross).to.be.greaterThan(0);
+
+    const beforeAgent = await getAccount(provider.connection, disableAgentAta);
+
+    await program.methods
+      .settlePremium(new BN(callValue))
+      .accounts({
+        config: protocolPda,
+        pool: poolPda,
+        vault: vaultPda,
+        policy: disablePolicyPda,
+        agentTokenAccount: disableAgentAta,
+        treasuryTokenAccount: h05TreasuryAta,
+        oracle: oracle.publicKey,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      })
+      .signers([oracle])
+      .rpc();
+
+    const afterAgent = await getAccount(provider.connection, disableAgentAta);
+    const spent = Number(beforeAgent.amount) - Number(afterAgent.amount);
+    expect(spent).to.equal(expectedGross);
+
+    // Sanity: policy is still marked inactive — settle_premium did NOT flip it.
+    const policyAfter = await program.account.policy.fetch(disablePolicyPda);
+    expect(policyAfter.active).to.equal(false);
   });
 
   it("H-05: enable_insurance rejects expires_at in the past", async () => {

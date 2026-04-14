@@ -17,6 +17,10 @@ pub struct UpdateOracle<'info> {
 
 pub fn handler(ctx: Context<UpdateOracle>, new_oracle: Pubkey) -> Result<()> {
     let config = &mut ctx.accounts.config;
+    require!(
+        new_oracle != Pubkey::default() && new_oracle != config.authority,
+        PactError::InvalidOracleKey
+    );
     config.oracle = new_oracle;
     Ok(())
 }

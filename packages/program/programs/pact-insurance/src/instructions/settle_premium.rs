@@ -26,6 +26,7 @@ pub struct SettlePremium<'info> {
     )]
     pub vault: Box<Account<'info, TokenAccount>>,
 
+    // Intentionally does NOT check policy.active. See handler comment below.
     #[account(
         mut,
         seeds = [
@@ -34,7 +35,6 @@ pub struct SettlePremium<'info> {
             policy.agent.as_ref()
         ],
         bump = policy.bump,
-        constraint = policy.active @ PactError::PolicyInactive,
         constraint = policy.pool == pool.key(),
     )]
     pub policy: Box<Account<'info, Policy>>,
@@ -67,8 +67,14 @@ pub struct SettlePremium<'info> {
 pub fn handler(ctx: Context<SettlePremium>, call_value: u64) -> Result<()> {
     require!(call_value > 0, PactError::ZeroAmount);
 
+    // Intentionally does NOT gate on `policy.active`. If an agent racks up
+    // billable calls during a settlement window and then calls
+    // `disable_policy` before the crank lands, the premium for those calls
+    // is still owed — they were made under coverage. Revocation applies to
+    // `submit_claim` (no new claims on an inactive policy), not to
+    // collection of premiums that have already accrued. `expires_at` is
+    // still enforced so a long-stale policy stops accruing.
     let clock = Clock::get()?;
-    require!(ctx.accounts.policy.active, PactError::PolicyInactive);
     require!(
         clock.unix_timestamp < ctx.accounts.policy.expires_at,
         PactError::PolicyExpired

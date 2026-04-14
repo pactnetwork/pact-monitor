@@ -1263,6 +1263,11 @@
       "code": 6029,
       "name": "PolicyExpired",
       "msg": "Policy has expired"
+    },
+    {
+      "code": 6030,
+      "name": "InvalidOracleKey",
+      "msg": "New oracle key is invalid (zero or equals authority)"
     }
   ],
   "types": [
