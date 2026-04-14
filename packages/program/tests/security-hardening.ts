@@ -1,8 +1,19 @@
 import * as anchor from "@anchor-lang/core";
 import { Program, BN } from "@anchor-lang/core";
 import { PactInsurance } from "../target/types/pact_insurance";
-import { PublicKey, Keypair, SystemProgram } from "@solana/web3.js";
-import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
+import {
+  PublicKey,
+  Keypair,
+  SystemProgram,
+  SYSVAR_RENT_PUBKEY,
+  LAMPORTS_PER_SOL,
+} from "@solana/web3.js";
+import {
+  TOKEN_PROGRAM_ID,
+  createAssociatedTokenAccount,
+  mintTo,
+  approve,
+} from "@solana/spl-token";
 import { expect } from "chai";
 import { getOrInitProtocol } from "../test-utils/setup";
 
@@ -14,28 +25,173 @@ describe("pact-insurance: security hardening", () => {
   let authority: Keypair;
   let oracle: Keypair;
   let protocolPda: PublicKey;
+  let usdcMint: PublicKey;
+
+  // Self-contained pool/policy/agent setup — keeps the C-02 wrong-oracle test
+  // independent of any other test file's state. Hostname is unique to avoid
+  // collision with claims.ts/pool.ts.
+  const hostname = "security-test.example";
+  let poolPda: PublicKey;
+  let vaultPda: PublicKey;
+
+  const underwriter: Keypair = Keypair.generate();
+  let underwriterAta: PublicKey;
+  let positionPda: PublicKey;
+
+  const agent: Keypair = Keypair.generate();
+  let agentAta: PublicKey;
+  let policyPda: PublicKey;
+
+  const wrongOracleCallId = "wrong-oracle-test";
+  let wrongOracleClaimPda: PublicKey;
 
   before(async () => {
     const h = await getOrInitProtocol(program, provider);
     authority = h.authority;
     oracle = h.oracle;
     protocolPda = h.protocolPda;
+    usdcMint = h.usdcMint;
+
+    [poolPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("pool"), Buffer.from(hostname)],
+      program.programId
+    );
+    [vaultPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("vault"), poolPda.toBuffer()],
+      program.programId
+    );
+    [positionPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("position"), poolPda.toBuffer(), underwriter.publicKey.toBuffer()],
+      program.programId
+    );
+    [policyPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("policy"), poolPda.toBuffer(), agent.publicKey.toBuffer()],
+      program.programId
+    );
+    [wrongOracleClaimPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("claim"), policyPda.toBuffer(), Buffer.from(wrongOracleCallId)],
+      program.programId
+    );
+
+    // Create pool.
+    await program.methods
+      .createPool({
+        providerHostname: hostname,
+        insuranceRateBps: null,
+        maxCoveragePerCall: null,
+      })
+      .accounts({
+        config: protocolPda,
+        pool: poolPda,
+        vault: vaultPda,
+        usdcMint,
+        authority: authority.publicKey,
+        systemProgram: SystemProgram.programId,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        rent: SYSVAR_RENT_PUBKEY,
+      })
+      .signers([authority])
+      .rpc();
+
+    // Fund underwriter, mint USDC, deposit so the pool has funds available.
+    const udSig = await provider.connection.requestAirdrop(
+      underwriter.publicKey,
+      10 * LAMPORTS_PER_SOL
+    );
+    await provider.connection.confirmTransaction(udSig);
+
+    const payer = (provider.wallet as anchor.Wallet).payer;
+    underwriterAta = await createAssociatedTokenAccount(
+      provider.connection,
+      payer,
+      usdcMint,
+      underwriter.publicKey
+    );
+    await mintTo(
+      provider.connection,
+      payer,
+      usdcMint,
+      underwriterAta,
+      provider.wallet.publicKey,
+      1_000_000_000
+    );
+
+    await program.methods
+      .deposit(new BN(100_000_000))
+      .accounts({
+        config: protocolPda,
+        pool: poolPda,
+        vault: vaultPda,
+        position: positionPda,
+        underwriterTokenAccount: underwriterAta,
+        underwriter: underwriter.publicKey,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([underwriter])
+      .rpc();
+
+    // Fund agent, create ATA, mint USDC, approve pool delegate, enable insurance.
+    const agSig = await provider.connection.requestAirdrop(
+      agent.publicKey,
+      10 * LAMPORTS_PER_SOL
+    );
+    await provider.connection.confirmTransaction(agSig);
+
+    agentAta = await createAssociatedTokenAccount(
+      provider.connection,
+      payer,
+      usdcMint,
+      agent.publicKey
+    );
+    await mintTo(
+      provider.connection,
+      payer,
+      usdcMint,
+      agentAta,
+      provider.wallet.publicKey,
+      10_000_000
+    );
+
+    await approve(
+      provider.connection,
+      agent,
+      agentAta,
+      poolPda,
+      agent,
+      100_000_000
+    );
+
+    const expiresAt = new BN(Math.floor(Date.now() / 1000) + 86400);
+    await program.methods
+      .enableInsurance({
+        agentId: "agent-security-test",
+        expiresAt,
+      })
+      .accounts({
+        config: protocolPda,
+        pool: poolPda,
+        policy: policyPda,
+        agentTokenAccount: agentAta,
+        agent: agent.publicKey,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([agent])
+      .rpc();
   });
 
   it("C-02: submit_claim rejects signer that is not config.oracle", async () => {
     const impostor = Keypair.generate();
-    const sig = await provider.connection.requestAirdrop(impostor.publicKey, 1_000_000_000);
+    const sig = await provider.connection.requestAirdrop(impostor.publicKey, 2_000_000_000);
     await provider.connection.confirmTransaction(sig);
 
-    // We expect the oracle constraint to fire before any of the other account
-    // validations resolve, so even a broken remaining-accounts payload is enough
-    // to observe UnauthorizedOracle. We pass protocolPda for every account slot
-    // because it's a known-valid PublicKey we don't care about — the constraint
-    // fails first.
+    // Every account is valid except the oracle signer — only the
+    // UnauthorizedOracle constraint should fire. A narrow regex ensures this
+    // test breaks loudly if the oracle constraint is ever removed.
     try {
       await program.methods
         .submitClaim({
-          callId: "test-call-id",
+          callId: wrongOracleCallId,
           triggerType: { error: {} },
           evidenceHash: Array(32).fill(0),
           callTimestamp: new BN(Math.floor(Date.now() / 1000)),
@@ -45,11 +201,11 @@ describe("pact-insurance: security hardening", () => {
         })
         .accounts({
           config: protocolPda,
-          pool: protocolPda,
-          vault: protocolPda,
-          policy: protocolPda,
-          claim: protocolPda,
-          agentTokenAccount: protocolPda,
+          pool: poolPda,
+          vault: vaultPda,
+          policy: policyPda,
+          claim: wrongOracleClaimPda,
+          agentTokenAccount: agentAta,
           oracle: impostor.publicKey,
           tokenProgram: TOKEN_PROGRAM_ID,
           systemProgram: SystemProgram.programId,
@@ -58,9 +214,7 @@ describe("pact-insurance: security hardening", () => {
         .rpc();
       expect.fail("Should have rejected");
     } catch (err: any) {
-      // Anchor may reject on the oracle constraint or on an account deserialization
-      // error depending on evaluation order — either way the impostor was rejected.
-      expect(String(err)).to.match(/UnauthorizedOracle|Unauthorized|constraint|AnchorError|AccountNotInitialized|AccountDiscriminatorMismatch/i);
+      expect(String(err)).to.match(/UnauthorizedOracle/);
     }
   });
 
