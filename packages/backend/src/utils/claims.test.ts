@@ -96,7 +96,17 @@ describe("callIdSeedBytes (H-02 lock-in)", () => {
 
   it("produces a 32-byte output regardless of input length", () => {
     assert.equal(callIdSeedBytes("short").length, 32);
-    assert.equal(callIdSeedBytes("a".repeat(64)).length, 32);
     assert.equal(callIdSeedBytes("11111111-2222-3333-4444-555555555555").length, 32);
+
+    // 64-char boundary (MAX_CALL_ID_LEN) is the case closest to the H-02 bug;
+    // lock it to sha256 bytes so a future swap to any other 32-byte digest
+    // (SHA-512/256, BLAKE2s, etc.) fails loudly instead of silently desyncing
+    // from the on-chain program.
+    const long = "a".repeat(64);
+    assert.deepEqual(
+      Buffer.from(callIdSeedBytes(long)),
+      createHash("sha256").update(long).digest(),
+    );
+    assert.equal(callIdSeedBytes(long).length, 32);
   });
 });
