@@ -61,9 +61,11 @@ pub fn handler(ctx: Context<EnableInsurance>, args: EnableInsuranceArgs) -> Resu
         PactError::AgentIdTooLong
     );
 
+    let clock = Clock::get()?;
+    require!(args.expires_at > clock.unix_timestamp, PactError::PolicyExpired);
+
     let policy = &mut ctx.accounts.policy;
     let pool = &mut ctx.accounts.pool;
-    let clock = Clock::get()?;
 
     policy.agent = ctx.accounts.agent.key();
     policy.pool = pool.key();

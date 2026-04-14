@@ -618,7 +618,7 @@ describe("pact-insurance: security hardening", () => {
     );
 
     // Wait for the expiredAgent's policy to expire
-    await new Promise((r) => setTimeout(r, 3000));
+    await new Promise((r) => setTimeout(r, 2500));
   });
 
   it("H-05: disable_policy sets active=false and decrements pool.active_policies", async () => {
@@ -724,6 +724,90 @@ describe("pact-insurance: security hardening", () => {
           tokenProgram: TOKEN_PROGRAM_ID,
         })
         .signers([authority])
+        .rpc();
+      expect.fail("Should have rejected");
+    } catch (err: any) {
+      expect(String(err)).to.match(/PolicyExpired/);
+    }
+  });
+
+  it("H-05: settle_premium against a disabled policy rejects with PolicyInactive", async () => {
+    // disablePolicyPda was disabled in the earlier disable_policy test.
+    // Reuse h05TreasuryAta (created in the H-05 before() block).
+    try {
+      await program.methods
+        .settlePremium(new BN(1000))
+        .accounts({
+          config: protocolPda,
+          pool: poolPda,
+          vault: vaultPda,
+          policy: disablePolicyPda,
+          agentTokenAccount: disableAgentAta,
+          treasuryTokenAccount: h05TreasuryAta,
+          authority: authority.publicKey,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([authority])
+        .rpc();
+      expect.fail("Should have rejected");
+    } catch (err: any) {
+      expect(String(err)).to.match(/PolicyInactive/);
+    }
+  });
+
+  it("H-05: enable_insurance rejects expires_at in the past", async () => {
+    const pastAgent = Keypair.generate();
+    const payer = (provider.wallet as anchor.Wallet).payer;
+
+    const sig = await provider.connection.requestAirdrop(
+      pastAgent.publicKey,
+      5 * LAMPORTS_PER_SOL
+    );
+    await provider.connection.confirmTransaction(sig);
+
+    const pastAgentAta = await createAssociatedTokenAccount(
+      provider.connection,
+      payer,
+      usdcMint,
+      pastAgent.publicKey
+    );
+    await mintTo(
+      provider.connection,
+      payer,
+      usdcMint,
+      pastAgentAta,
+      provider.wallet.publicKey,
+      10_000_000
+    );
+    await approve(
+      provider.connection,
+      pastAgent,
+      pastAgentAta,
+      poolPda,
+      pastAgent,
+      100_000_000
+    );
+
+    const [pastPolicyPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("policy"), poolPda.toBuffer(), pastAgent.publicKey.toBuffer()],
+      program.programId
+    );
+
+    try {
+      await program.methods
+        .enableInsurance({
+          agentId: "past-test-agent",
+          expiresAt: new BN(0), // permanently expired (Unix epoch)
+        })
+        .accounts({
+          config: protocolPda,
+          pool: poolPda,
+          policy: pastPolicyPda,
+          agentTokenAccount: pastAgentAta,
+          agent: pastAgent.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([pastAgent])
         .rpc();
       expect.fail("Should have rejected");
     } catch (err: any) {
