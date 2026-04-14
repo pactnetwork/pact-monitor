@@ -73,4 +73,7 @@ pub enum PactError {
 
     #[msg("Arithmetic overflow")]
     ArithmeticOverflow,
+
+    #[msg("Unauthorized deployer")]
+    UnauthorizedDeployer,
 }

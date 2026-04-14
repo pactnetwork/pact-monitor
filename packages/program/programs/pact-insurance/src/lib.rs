@@ -11,6 +11,14 @@ pub use state::*;
 
 declare_id!("4Z1Y3W49U2Cn6bz9UpkahVP7LaeobQ4cAaEt3uNaqSob");
 
+// Hardcoded deployer pubkey for mainnet/devnet deploys. Only enforced when
+// compiled with `--features enforce-deployer`. Tests build without this
+// feature so they can use a dynamic provider wallet.
+#[cfg(feature = "enforce-deployer")]
+pub const DEPLOYER_PUBKEY: Pubkey = anchor_lang::pubkey!(
+    "11111111111111111111111111111111"
+);
+
 #[program]
 pub mod pact_insurance {
     use super::*;

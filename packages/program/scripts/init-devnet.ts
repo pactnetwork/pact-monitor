@@ -67,6 +67,7 @@ async function main() {
   const sig = await (program.methods as any)
     .initializeProtocol({
       authority: oracle.publicKey,
+      oracle: oracle.publicKey,
       treasury: deployer.publicKey,
       usdcMint: DEVNET_USDC_MINT,
     })
