@@ -226,21 +226,25 @@ async function main() {
      VALUES ($1, $2, $3)
      ON CONFLICT (base_url) DO UPDATE SET name = EXCLUDED.name
      RETURNING id`,
-    [hostname.split(".")[0] ?? hostname, "Demo", hostname],
+    [hostname, "Demo", hostname],
   );
   const providerId = providerRow.rows[0].id;
   log("db", `provider row: ${providerId}`);
 
-  // --- Step 7: generate a Pact API key for this run
+  // --- Step 7: generate a Pact API key for this run, BOUND to the agent pubkey.
+  // Task 1's security hardening made agent_pubkey a server-side binding — the
+  // backend now reads it from api_keys, not from the record body. Without this
+  // bind, maybeCreateClaim will early-return before attempting the on-chain
+  // submit (input.agentPubkey is null).
   const apiKey = `pact_demo_${Math.random().toString(36).slice(2, 14)}`;
   const keyHash = createHash("sha256").update(apiKey).digest("hex");
   await pgClient.query(
-    `INSERT INTO api_keys (key_hash, label)
-     VALUES ($1, $2)
+    `INSERT INTO api_keys (key_hash, label, agent_pubkey)
+     VALUES ($1, $2, $3)
      ON CONFLICT (key_hash) DO NOTHING`,
-    [keyHash, `demo-claim-${Date.now()}`],
+    [keyHash, `demo-claim-${Date.now()}`, agent.publicKey.toBase58()],
   );
-  log("db", `api key: ${apiKey.slice(0, 16)}...`);
+  log("db", `api key: ${apiKey.slice(0, 16)}... bound to ${agent.publicKey.toBase58()}`);
   await pgClient.end();
 
   // --- Step 8: POST a fake failed call record to the backend

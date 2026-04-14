@@ -136,21 +136,22 @@ async function fundFromPhantom(
   await connection.confirmTransaction(sig, "confirmed");
 }
 
-async function ensureApiKey(): Promise<string> {
+async function ensureApiKey(agentPubkey: string): Promise<string> {
   const existing = process.env.PACT_API_KEY;
   if (existing && existing !== "pact_your_key_here") return existing;
 
-  // Self-serve: generate a key and insert into backend.
+  // Self-serve: generate a key and insert into backend, BOUND to the agent
+  // pubkey (Task 1 reads agent_pubkey from the api_keys row server-side).
   const pgClient = new Client({ connectionString: DATABASE_URL });
   await pgClient.connect();
   const apiKey = `pact_demo_${randomBytes(6).toString("hex")}`;
   const keyHash = createHash("sha256").update(apiKey).digest("hex");
   await pgClient.query(
-    `INSERT INTO api_keys (key_hash, label) VALUES ($1, $2) ON CONFLICT (key_hash) DO NOTHING`,
-    [keyHash, `insured-agent-demo-${Date.now()}`],
+    `INSERT INTO api_keys (key_hash, label, agent_pubkey) VALUES ($1, $2, $3) ON CONFLICT (key_hash) DO NOTHING`,
+    [keyHash, `insured-agent-demo-${Date.now()}`, agentPubkey],
   );
   await pgClient.end();
-  log("auth", `self-generated api key ${apiKey.slice(0, 20)}...`);
+  log("auth", `self-generated api key ${apiKey.slice(0, 20)}... bound to ${agentPubkey}`);
   return apiKey;
 }
 
@@ -292,7 +293,7 @@ async function main() {
   console.log("");
 
   // -------- wire up backend (API key + provider row) --------
-  const apiKey = await ensureApiKey();
+  const apiKey = await ensureApiKey(agent.publicKey.toBase58());
   await ensureProviderRow(HOSTNAME);
 
   // -------- monitor SDK setup --------

@@ -173,15 +173,17 @@ async function main() {
      VALUES ($1, $2, $3)
      ON CONFLICT (base_url) DO UPDATE SET name = EXCLUDED.name
      RETURNING id`,
-    [hostname.split(".")[0] ?? hostname, "Demo", hostname],
+    [hostname, "Demo", hostname],
   );
   const providerId = providerRow.rows[0].id;
 
   const apiKey = `pact_prem_${Math.random().toString(36).slice(2, 14)}`;
   const keyHash = createHash("sha256").update(apiKey).digest("hex");
+  // Task 1 binds agent_pubkey server-side; api_keys.agent_pubkey must be set
+  // or maybeCreateClaim skips the on-chain path.
   await pgClient.query(
-    `INSERT INTO api_keys (key_hash, label) VALUES ($1, $2) ON CONFLICT (key_hash) DO NOTHING`,
-    [keyHash, `prem-demo-${Date.now()}`],
+    `INSERT INTO api_keys (key_hash, label, agent_pubkey) VALUES ($1, $2, $3) ON CONFLICT (key_hash) DO NOTHING`,
+    [keyHash, `prem-demo-${Date.now()}`, agent.publicKey.toBase58()],
   );
   await pgClient.end();
   log("db", `provider ${providerId.slice(0, 8)}, api key ${apiKey.slice(0, 16)}...`);
