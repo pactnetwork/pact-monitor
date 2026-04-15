@@ -101,8 +101,8 @@ export function FaucetPage() {
   return (
     <div className="max-w-2xl">
       <div className="mb-8">
-        <h2 className="font-serif text-2xl text-neutral-200 mb-2">TEST-USDC Faucet</h2>
-        <p className="text-sm text-neutral-500 font-sans">
+        <h2 className="font-serif text-2xl text-heading mb-2">TEST-USDC Faucet</h2>
+        <p className="text-sm text-muted font-sans">
           Get devnet TEST-USDC so you can try the scorecard as a caller or sponsor.
           Rate-limited to 1 drip per wallet every 10 minutes.
         </p>
@@ -115,7 +115,7 @@ export function FaucetPage() {
       )}
 
       {!status && !statusErr && (
-        <p className="text-neutral-500 font-mono text-sm">Loading faucet status…</p>
+        <p className="text-muted font-mono text-sm">Loading faucet status…</p>
       )}
 
       {status && !status.enabled && (
@@ -123,7 +123,7 @@ export function FaucetPage() {
           <p className="text-sienna font-mono text-xs uppercase tracking-widest mb-2">
             Disabled — {status.network}
           </p>
-          <p className="text-neutral-300 font-mono text-sm">
+          <p className="text-secondary font-mono text-sm">
             {status.reason ?? "Faucet is not available on this network."}
           </p>
         </div>
@@ -134,12 +134,12 @@ export function FaucetPage() {
           {/* Network + mint */}
           <div className="grid grid-cols-2 gap-4 mb-6">
             <div className="border border-border p-4">
-              <p className="text-xs text-neutral-500 uppercase tracking-widest font-mono">Network</p>
-              <p className="text-base text-neutral-200 font-mono mt-1">{status.network}</p>
+              <p className="text-xs text-muted uppercase tracking-widest font-mono">Network</p>
+              <p className="text-base text-primary font-mono mt-1">{status.network}</p>
             </div>
             <div className="border border-border p-4">
-              <p className="text-xs text-neutral-500 uppercase tracking-widest font-mono">TEST-USDC Mint</p>
-              <p className="text-xs text-neutral-200 font-mono mt-1 break-all">
+              <p className="text-xs text-muted uppercase tracking-widest font-mono">TEST-USDC Mint</p>
+              <p className="text-xs text-primary font-mono mt-1 break-all">
                 {truncatePubkey(status.mint)}
               </p>
             </div>
@@ -147,16 +147,16 @@ export function FaucetPage() {
 
           {/* Wallet */}
           <div className="border border-border p-4 mb-6">
-            <p className="text-xs text-neutral-500 uppercase tracking-widest font-mono mb-3">
+            <p className="text-xs text-muted uppercase tracking-widest font-mono mb-3">
               Wallet
             </p>
             {pubkey ? (
               <div className="flex items-center justify-between gap-4">
-                <p className="text-sm text-neutral-200 font-mono break-all">{pubkey}</p>
+                <p className="text-sm text-primary font-mono break-all">{pubkey}</p>
                 <button
                   type="button"
                   onClick={disconnect}
-                  className="text-xs font-mono uppercase tracking-widest text-neutral-500 hover:text-neutral-200 border border-border px-3 py-2"
+                  className="text-xs font-mono uppercase tracking-widest text-muted hover:text-primary border border-border px-3 py-2"
                 >
                   Disconnect
                 </button>
@@ -180,7 +180,7 @@ export function FaucetPage() {
 
           {/* Amount + claim */}
           <div className="border border-border p-4 mb-6">
-            <label className="block text-xs text-neutral-500 uppercase tracking-widest font-mono mb-2">
+            <label className="block text-xs text-muted uppercase tracking-widest font-mono mb-2">
               Amount (whole TEST-USDC, 1 – {status.maxPerDrip.toLocaleString()})
             </label>
             <div className="flex gap-2 mb-4">
@@ -191,12 +191,12 @@ export function FaucetPage() {
                 step={1}
                 value={amount}
                 onChange={(e) => setAmount(parseInt(e.target.value || "0", 10))}
-                className="bg-bg border border-border text-neutral-200 font-mono px-3 py-2 w-40"
+                className="bg-bg border border-border text-primary font-mono px-3 py-2 w-40"
               />
               <button
                 type="button"
                 onClick={() => setAmount(status.maxPerDrip)}
-                className="text-xs font-mono uppercase tracking-widest text-neutral-500 hover:text-neutral-200 border border-border px-3 py-2"
+                className="text-xs font-mono uppercase tracking-widest text-muted hover:text-primary border border-border px-3 py-2"
               >
                 Max
               </button>
@@ -216,7 +216,7 @@ export function FaucetPage() {
             </button>
 
             {!pubkey && (
-              <p className="text-xs text-neutral-500 font-mono mt-3">
+              <p className="text-xs text-muted font-mono mt-3">
                 Connect a Phantom wallet to claim.
               </p>
             )}
@@ -225,10 +225,10 @@ export function FaucetPage() {
           {/* Drip state feedback */}
           {drip.kind === "success" && (
             <div className="border border-border p-4 mb-6">
-              <p className="text-xs text-neutral-500 uppercase tracking-widest font-mono mb-2">
+              <p className="text-xs text-muted uppercase tracking-widest font-mono mb-2">
                 Drip confirmed
               </p>
-              <p className="text-neutral-200 font-mono text-sm mb-3">
+              <p className="text-primary font-mono text-sm mb-3">
                 Minted {drip.result.amount.toLocaleString()} TEST-USDC to{" "}
                 {truncatePubkey(drip.result.recipient)}.
               </p>
@@ -248,17 +248,17 @@ export function FaucetPage() {
               <p className="text-sienna font-mono text-xs uppercase tracking-widest mb-2">
                 Drip failed
               </p>
-              <p className="text-neutral-300 font-mono text-sm">{drip.message}</p>
+              <p className="text-secondary font-mono text-sm">{drip.message}</p>
             </div>
           )}
         </>
       )}
 
       <div className="border border-border p-4">
-        <p className="text-xs text-neutral-500 uppercase tracking-widest font-mono mb-2">
+        <p className="text-xs text-muted uppercase tracking-widest font-mono mb-2">
           Next steps
         </p>
-        <ul className="text-sm text-neutral-300 font-sans space-y-2">
+        <ul className="text-sm text-secondary font-sans space-y-2">
           <li>
             • Want to call insured APIs as an agent? See{" "}
             <code className="font-mono text-copper">docs/caller-quickstart.md</code>.
