@@ -99,10 +99,10 @@ export function FaucetPage() {
     amount <= (status?.maxPerDrip ?? 10_000);
 
   return (
-    <div className="max-w-2xl">
-      <div className="mb-8">
-        <h2 className="font-serif text-2xl text-heading mb-2">TEST-USDC Faucet</h2>
-        <p className="text-sm text-muted font-sans">
+    <div className="max-w-2xl mx-auto">
+      <div className="mb-8 text-center">
+        <h2 className="font-serif text-2xl text-primary mb-2">TEST-USDC Faucet</h2>
+        <p className="text-sm text-secondary font-sans">
           Get devnet TEST-USDC so you can try the scorecard as a caller or sponsor.
           Rate-limited to 1 drip per wallet every 10 minutes.
         </p>
