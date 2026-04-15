@@ -158,6 +158,23 @@ To check whether embeddings exist, inspect `.gitnexus/meta.json` — the `stats.
 
 > Claude Code users: A PostToolUse hook handles this automatically after `git commit` and `git merge`.
 
+## Worktree gotcha — DO NOT run analyze from a worktree
+
+`gitnexus analyze` derives the project name from `path.basename(repoPath)` and
+rewrites both `CLAUDE.md` and `AGENTS.md` in place. If you run it from a git
+worktree (e.g. `../pact-network-feature-x`), it will clobber every
+`pact-network` reference in those files with the worktree directory's name,
+silently corrupting the agent instructions for the next committer.
+
+**Rules:**
+- Only run `gitnexus analyze` from the primary checkout at
+  `.../pact-network` where `path.basename` already equals `pact-network`.
+- If you're working in a worktree, skip the refresh — the PostToolUse hook will
+  catch up when you're back in the primary checkout, or you can run analyze
+  there manually.
+- Never commit a `CLAUDE.md` / `AGENTS.md` diff whose only change is the
+  project-name token swapping to a worktree directory name — revert it.
+
 ## CLI
 
 | Task | Read this skill file |
