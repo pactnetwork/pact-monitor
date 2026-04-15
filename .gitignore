@@ -8,10 +8,13 @@ data/
 .worktrees/
 package-lock.json
 
+# macOS
+.DS_Store
+
 # Solana / Anchor
 packages/backend/.secrets/
 *.keypair.json
 packages/program/.anchor/
 packages/program/target/
-packages/program/test-ledger/
+test-ledger/
 packages/program/node_modules/
