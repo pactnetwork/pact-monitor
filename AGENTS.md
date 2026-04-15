@@ -87,23 +87,6 @@ To check whether embeddings exist, inspect `.gitnexus/meta.json` — the `stats.
 
 > Claude Code users: A PostToolUse hook handles this automatically after `git commit` and `git merge`.
 
-## Worktree gotcha — DO NOT run analyze from a worktree
-
-`gitnexus analyze` derives the project name from `path.basename(repoPath)` and
-rewrites both `CLAUDE.md` and `AGENTS.md` in place. If you run it from a git
-worktree (e.g. `../pact-network-feature-x`), it will clobber every
-`pact-network` reference in those files with the worktree directory's name,
-silently corrupting the agent instructions for the next committer.
-
-**Rules:**
-- Only run `gitnexus analyze` from the primary checkout at
-  `.../pact-network` where `path.basename` already equals `pact-network`.
-- If you're working in a worktree, skip the refresh — the PostToolUse hook will
-  catch up when you're back in the primary checkout, or you can run analyze
-  there manually.
-- Never commit a `CLAUDE.md` / `AGENTS.md` diff whose only change is the
-  project-name token swapping to a worktree directory name — revert it.
-
 ## CLI
 
 | Task | Read this skill file |
@@ -116,3 +99,26 @@ silently corrupting the agent instructions for the next committer.
 | Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
 
 <!-- gitnexus:end -->
+
+## GitNexus — Worktree gotcha (read me before running analyze)
+
+> This section lives **outside** the `gitnexus:start`…`gitnexus:end` markers on
+> purpose. Anything inside those markers gets regenerated from a hardcoded
+> template every time `gitnexus analyze` runs — our own notes would be wiped.
+
+`gitnexus analyze` derives the project name from `path.basename(repoPath)` and
+regenerates both `CLAUDE.md` and `AGENTS.md` between the marker blocks. If you
+run it from a git worktree (e.g. `../pact-network-feature-x`), every
+`pact-network` reference inside the block is rewritten to the worktree
+directory's basename, silently corrupting the agent instructions for the next
+committer.
+
+**Rules for this repo:**
+- Only run `gitnexus analyze` from the primary checkout at `.../pact-network`,
+  where `path.basename` already equals `pact-network`.
+- If you're working in a worktree, **skip the refresh** — the user-level
+  PostToolUse hook will still kick off `gitnexus analyze` after any commit in
+  that worktree, so assume `CLAUDE.md` / `AGENTS.md` will be dirty and
+  `git checkout --` them before pushing.
+- Never commit a `CLAUDE.md` / `AGENTS.md` diff whose only change is the
+  project-name token swapping to a worktree directory name — revert it.
