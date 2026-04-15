@@ -2,8 +2,10 @@ import { useEffect } from "react";
 import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
 import { ProviderTable } from "./components/ProviderTable";
 import { ProviderDetail } from "./components/ProviderDetail";
+import { PoolDetail } from "./components/PoolDetail";
 import { ThemeToggle } from "./components/ThemeToggle";
 import { AdminDashboard } from "./components/AdminDashboard";
+import { FaucetPage } from "./components/FaucetPage";
 import { track } from "./analytics/tracker";
 
 function PageTracker() {
@@ -40,7 +42,9 @@ export function App() {
           <Routes>
             <Route path="/" element={<ProviderTable />} />
             <Route path="/provider/:id" element={<ProviderDetail />} />
+            <Route path="/pool/:hostname" element={<PoolDetail />} />
             <Route path="/admin" element={<AdminDashboard />} />
+            <Route path="/faucet" element={<FaucetPage />} />
           </Routes>
         </main>
       </div>
