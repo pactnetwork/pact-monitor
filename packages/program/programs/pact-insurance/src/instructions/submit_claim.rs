@@ -1,4 +1,5 @@
 use anchor_lang::prelude::*;
+use sha2::{Digest, Sha256};
 use anchor_spl::token::{self, Token, TokenAccount, Transfer};
 use crate::state::{ProtocolConfig, CoveragePool, Policy, Claim, TriggerType, ClaimStatus};
 use crate::constants::{ABSOLUTE_MAX_AGGREGATE_CAP_BPS, MAX_CALL_ID_LEN};
@@ -21,7 +22,6 @@ pub struct SubmitClaim<'info> {
     #[account(
         seeds = [ProtocolConfig::SEED],
         bump = config.bump,
-        has_one = authority @ PactError::Unauthorized,
         constraint = !config.paused @ PactError::ProtocolPaused,
     )]
     pub config: Box<Account<'info, ProtocolConfig>>,
@@ -55,12 +55,12 @@ pub struct SubmitClaim<'info> {
 
     #[account(
         init,
-        payer = authority,
+        payer = oracle,
         space = 8 + Claim::INIT_SPACE,
         seeds = [
             Claim::SEED_PREFIX,
             policy.key().as_ref(),
-            args.call_id.as_bytes()
+            &Sha256::digest(args.call_id.as_bytes())
         ],
         bump
     )]
@@ -68,13 +68,17 @@ pub struct SubmitClaim<'info> {
 
     #[account(
         mut,
+        constraint = agent_token_account.key() == policy.agent_token_account @ PactError::TokenAccountMismatch,
         constraint = agent_token_account.mint == pool.usdc_mint,
         constraint = agent_token_account.owner == policy.agent,
     )]
     pub agent_token_account: Box<Account<'info, TokenAccount>>,
 
-    #[account(mut)]
-    pub authority: Signer<'info>,
+    #[account(
+        mut,
+        constraint = oracle.key() == config.oracle @ PactError::UnauthorizedOracle,
+    )]
+    pub oracle: Signer<'info>,
 
     pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
@@ -84,8 +88,14 @@ pub fn handler(ctx: Context<SubmitClaim>, args: SubmitClaimArgs) -> Result<()> {
     require!(args.call_id.len() <= MAX_CALL_ID_LEN, PactError::CallIdTooLong);
     require!(args.payment_amount > 0, PactError::ZeroAmount);
 
-    let config = &ctx.accounts.config;
     let clock = Clock::get()?;
+    require!(ctx.accounts.policy.active, PactError::PolicyInactive);
+    require!(
+        clock.unix_timestamp < ctx.accounts.policy.expires_at,
+        PactError::PolicyExpired
+    );
+
+    let config = &ctx.accounts.config;
 
     let age = clock
         .unix_timestamp

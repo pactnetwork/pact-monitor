@@ -38,7 +38,6 @@ import "dotenv/config";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { createHash, randomBytes } from "crypto";
 import {
   Connection,
   Keypair,
@@ -57,10 +56,7 @@ import {
 import * as anchor from "@anchor-lang/core";
 import { Program } from "@anchor-lang/core";
 import BN from "bn.js";
-import pg from "pg";
 import { pactMonitor } from "@pact-network/monitor";
-
-const { Client } = pg;
 
 // -------- config --------
 
@@ -75,11 +71,13 @@ const INITIAL_USDC = 20_000_000n; // agent starts with 20 USDC in wallet (in lam
 
 const RPC_URL = process.env.SOLANA_RPC_URL || "https://api.devnet.solana.com";
 const PROGRAM_ID = new PublicKey(
-  process.env.SOLANA_PROGRAM_ID || "4Z1Y3W49U2Cn6bz9UpkahVP7LaeobQ4cAaEt3uNaqSob",
+  process.env.SOLANA_PROGRAM_ID || "2Go74eCvY8vCco3WPuteGzrhKz8v3R7Pcp5tjuFpcmN3",
 );
 const BACKEND_URL = process.env.PACT_BACKEND_URL || "http://localhost:3001";
-const DATABASE_URL =
-  process.env.DATABASE_URL || "postgresql://pact:pact@localhost:5433/pact";
+// Admin token for provisioning an API key at demo start. Matches ADMIN_TOKEN
+// in the backend env — if unset, the script falls back to PACT_API_KEY env
+// var (pre-provisioned out of band by an admin).
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "";
 
 const PHANTOM_PATH = path.join(os.homedir(), ".config/solana/phantom-devnet.json");
 const ORACLE_PATH = path.resolve(
@@ -136,37 +134,49 @@ async function fundFromPhantom(
   await connection.confirmTransaction(sig, "confirmed");
 }
 
-async function ensureApiKey(): Promise<string> {
+async function ensureApiKey(agentPubkey: string): Promise<string> {
+  // 1. If an API key is already provisioned out of band (the usual
+  //    production shape), just use it.
   const existing = process.env.PACT_API_KEY;
-  if (existing && existing !== "pact_your_key_here") return existing;
+  if (existing && existing !== "pact_your_key_here") {
+    log("auth", `using pre-provisioned PACT_API_KEY ${existing.slice(0, 20)}...`);
+    return existing;
+  }
 
-  // Self-serve: generate a key and insert into backend.
-  const pgClient = new Client({ connectionString: DATABASE_URL });
-  await pgClient.connect();
-  const apiKey = `pact_demo_${randomBytes(6).toString("hex")}`;
-  const keyHash = createHash("sha256").update(apiKey).digest("hex");
-  await pgClient.query(
-    `INSERT INTO api_keys (key_hash, label) VALUES ($1, $2) ON CONFLICT (key_hash) DO NOTHING`,
-    [keyHash, `insured-agent-demo-${Date.now()}`],
-  );
-  await pgClient.end();
-  log("auth", `self-generated api key ${apiKey.slice(0, 20)}...`);
-  return apiKey;
+  // 2. Otherwise, call the admin endpoint to provision a fresh key bound to
+  //    this agent pubkey. Requires ADMIN_TOKEN env var to match the backend.
+  //    No direct Postgres access — the demo is a pure SDK/HTTP consumer.
+  if (!ADMIN_TOKEN) {
+    throw new Error(
+      "No PACT_API_KEY and no ADMIN_TOKEN set. Either (a) pre-provision an API key " +
+        "via `pnpm --filter @pact-network/backend exec tsx src/scripts/generate-key.ts " +
+        "<label> --agent-pubkey <pubkey>` and set PACT_API_KEY, or (b) set ADMIN_TOKEN " +
+        "to the same value the backend sees so this demo can call POST /api/v1/admin/keys."
+    );
+  }
+  const label = `insured-agent-demo-${Date.now()}`;
+  const res = await globalThis.fetch(`${BACKEND_URL}/api/v1/admin/keys`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${ADMIN_TOKEN}`,
+    },
+    body: JSON.stringify({ label, agent_pubkey: agentPubkey }),
+  });
+  if (!res.ok) {
+    throw new Error(
+      `admin /keys provisioning failed: ${res.status} ${await res.text()}`
+    );
+  }
+  const body = (await res.json()) as { apiKey: string };
+  log("auth", `provisioned api key ${body.apiKey.slice(0, 20)}... bound to ${agentPubkey}`);
+  return body.apiKey;
 }
 
-async function ensureProviderRow(hostname: string): Promise<string> {
-  const pgClient = new Client({ connectionString: DATABASE_URL });
-  await pgClient.connect();
-  const row = await pgClient.query<{ id: string }>(
-    `INSERT INTO providers (name, category, base_url)
-     VALUES ($1, $2, $3)
-     ON CONFLICT (base_url) DO UPDATE SET name = EXCLUDED.name
-     RETURNING id`,
-    [hostname.split(".")[0] ?? hostname, "Demo", hostname],
-  );
-  await pgClient.end();
-  return row.rows[0].id;
-}
+// NOTE: no ensureProviderRow helper. The backend's findOrCreateProvider
+// (in src/routes/records.ts) creates the providers row automatically when
+// the SDK POSTs its first record, and respects any pretty name/category
+// previously seeded by src/scripts/seed.ts.
 
 // -------- main --------
 
@@ -269,10 +279,11 @@ async function main() {
     agent.publicKey,
     ALLOWANCE_USDC,
   );
+  // H-05: expires_at must be strictly in the future.
   const enableIx = await (program.methods as any)
     .enableInsurance({
       agentId: `demo-${Date.now().toString(36)}`,
-      expiresAt: new BN(0),
+      expiresAt: new BN(Math.floor(Date.now() / 1000) + 30 * 86400),
     })
     .accounts({
       config: protocolPda,
@@ -290,9 +301,8 @@ async function main() {
   log("enable", `explorer: https://explorer.solana.com/tx/${enableSig}?cluster=devnet`);
   console.log("");
 
-  // -------- wire up backend (API key + provider row) --------
-  const apiKey = await ensureApiKey();
-  await ensureProviderRow(HOSTNAME);
+  // -------- wire up backend (API key only; provider row auto-created on first POST) --------
+  const apiKey = await ensureApiKey(agent.publicKey.toBase58());
 
   // -------- monitor SDK setup --------
   const monitor = pactMonitor({

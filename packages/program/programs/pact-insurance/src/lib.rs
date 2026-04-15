@@ -9,7 +9,15 @@ pub use constants::*;
 pub use instructions::*;
 pub use state::*;
 
-declare_id!("4Z1Y3W49U2Cn6bz9UpkahVP7LaeobQ4cAaEt3uNaqSob");
+declare_id!("2Go74eCvY8vCco3WPuteGzrhKz8v3R7Pcp5tjuFpcmN3");
+
+// Hardcoded deployer pubkey for mainnet/devnet deploys. Only enforced when
+// compiled with `--features enforce-deployer`. Tests build without this
+// feature so they can use a dynamic provider wallet.
+#[cfg(feature = "enforce-deployer")]
+pub const DEPLOYER_PUBKEY: Pubkey = anchor_lang::pubkey!(
+    "5XyGGyazg6rGJU3Hjkrx1PDM1rBE3FraRnMauSR46rW1"
+);
 
 #[program]
 pub mod pact_insurance {
@@ -29,6 +37,10 @@ pub mod pact_insurance {
         instructions::update_config::handler(ctx, args)
     }
 
+    pub fn update_oracle(ctx: Context<UpdateOracle>, new_oracle: Pubkey) -> Result<()> {
+        instructions::update_oracle::handler(ctx, new_oracle)
+    }
+
     pub fn create_pool(
         ctx: Context<CreatePool>,
         args: CreatePoolArgs,
@@ -45,6 +57,10 @@ pub mod pact_insurance {
         args: EnableInsuranceArgs,
     ) -> Result<()> {
         instructions::enable_insurance::handler(ctx, args)
+    }
+
+    pub fn disable_policy(ctx: Context<DisablePolicy>) -> Result<()> {
+        instructions::disable_policy::handler(ctx)
     }
 
     pub fn settle_premium(ctx: Context<SettlePremium>, call_value: u64) -> Result<()> {

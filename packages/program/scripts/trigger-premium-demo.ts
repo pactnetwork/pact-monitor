@@ -10,16 +10,17 @@
 //   6. Check agent's USDC balance + delegated_amount to verify premium pulled
 //   7. Check pool.total_premiums_earned on-chain
 //
-// Usage (from packages/backend/ because it needs pg):
-//   npx tsx ../program/scripts/trigger-premium-demo.ts <hostname> [call_count]
+// Lower-level plumbing test for the premium-settlement flow. POSTs hand-
+// rolled fake successful records, not real SDK traffic. For the full SDK-
+// driven agent flow, see samples/demo/insured-agent.ts.
 //
-// Example:
-//   npx tsx ../program/scripts/trigger-premium-demo.ts api.dexscreener.com 5
+// Usage (from packages/backend/):
+//   ADMIN_TOKEN=<token> pnpm exec tsx ../program/scripts/trigger-premium-demo.ts <hostname> [call_count]
 //
 // Pre-reqs:
 //   - devnet pool exists for <hostname> (run seed-devnet-pools.ts)
 //   - backend running at BACKEND_URL (default localhost:3001)
-//   - postgres reachable via DATABASE_URL
+//   - ADMIN_TOKEN env var matches backend's ADMIN_TOKEN
 //   - phantom keypair at ~/.config/solana/phantom-devnet.json with >= 0.3 SOL
 //   - config.usdcMint must have phantom as mint authority
 //   - CRANK_ENABLED=true in backend .env (otherwise nothing settles and
@@ -46,17 +47,14 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { fileURLToPath } from "url";
-import { createHash } from "crypto";
-import pg from "pg";
 
-const { Client } = pg;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const RPC_URL = "https://api.devnet.solana.com";
-const PROGRAM_ID = new PublicKey("4Z1Y3W49U2Cn6bz9UpkahVP7LaeobQ4cAaEt3uNaqSob");
+const PROGRAM_ID = new PublicKey("2Go74eCvY8vCco3WPuteGzrhKz8v3R7Pcp5tjuFpcmN3");
 const BACKEND_URL = process.env.BACKEND_URL ?? "http://localhost:3001";
-const DATABASE_URL = process.env.DATABASE_URL ?? "postgresql://pact:pact@localhost:5433/pact";
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? "";
 
 const ALLOWANCE_USDC = 10_000_000n;
 const AGENT_INITIAL_USDC = 10_000_000n;
@@ -144,10 +142,12 @@ async function main() {
   );
 
   const approveIx = createApproveInstruction(agentAta, poolPda, agent.publicKey, ALLOWANCE_USDC);
+  // H-05: expires_at must be strictly in the future.
+  const expiresAt = new BN(Math.floor(Date.now() / 1000) + 30 * 86400);
   const enableIx = await (program.methods as any)
     .enableInsurance({
       agentId: `prem-${Date.now().toString(36)}`,
-      expiresAt: new BN(0),
+      expiresAt,
     })
     .accounts({
       config: protocolPda,
@@ -163,26 +163,31 @@ async function main() {
   const enableSig = await provider.sendAndConfirm(enableTx, [agent]);
   log("enable", `policy active (sig ${enableSig.slice(0, 16)}...)`);
 
-  // Backend provider row + api key
-  const pgClient = new Client({ connectionString: DATABASE_URL });
-  await pgClient.connect();
-  const providerRow = await pgClient.query(
-    `INSERT INTO providers (name, category, base_url)
-     VALUES ($1, $2, $3)
-     ON CONFLICT (base_url) DO UPDATE SET name = EXCLUDED.name
-     RETURNING id`,
-    [hostname.split(".")[0] ?? hostname, "Demo", hostname],
-  );
-  const providerId = providerRow.rows[0].id;
-
-  const apiKey = `pact_prem_${Math.random().toString(36).slice(2, 14)}`;
-  const keyHash = createHash("sha256").update(apiKey).digest("hex");
-  await pgClient.query(
-    `INSERT INTO api_keys (key_hash, label) VALUES ($1, $2) ON CONFLICT (key_hash) DO NOTHING`,
-    [keyHash, `prem-demo-${Date.now()}`],
-  );
-  await pgClient.end();
-  log("db", `provider ${providerId.slice(0, 8)}, api key ${apiKey.slice(0, 16)}...`);
+  // Provision the api key via the HTTP admin endpoint (no pg). Provider row
+  // is auto-created by POST /api/v1/records via findOrCreateProvider.
+  if (!ADMIN_TOKEN) {
+    console.error(
+      "[FAIL] ADMIN_TOKEN env var not set. Run with: ADMIN_TOKEN=<token> pnpm exec tsx ..."
+    );
+    process.exit(1);
+  }
+  const keyRes = await fetch(`${BACKEND_URL}/api/v1/admin/keys`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${ADMIN_TOKEN}`,
+    },
+    body: JSON.stringify({
+      label: `prem-demo-${Date.now()}`,
+      agent_pubkey: agent.publicKey.toBase58(),
+    }),
+  });
+  if (!keyRes.ok) {
+    console.error(`[FAIL] admin /keys: ${keyRes.status} ${await keyRes.text()}`);
+    process.exit(1);
+  }
+  const { apiKey } = (await keyRes.json()) as { apiKey: string };
+  log("auth", `provisioned api key ${apiKey.slice(0, 16)}... bound to ${agent.publicKey.toBase58()}`);
 
   // POST N successful call records
   const records = [];

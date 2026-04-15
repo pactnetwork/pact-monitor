@@ -7,6 +7,7 @@ import { createMint } from "@solana/spl-token";
 // Shared authority keypair used across all test files in the same mocha run.
 // Generated once at module load so protocol.ts and pool.ts share it.
 export const authority: Keypair = Keypair.generate();
+export const oracle: Keypair = Keypair.generate();
 export const treasury: PublicKey = Keypair.generate().publicKey;
 
 let cachedUsdcMint: PublicKey | null = null;
@@ -15,6 +16,7 @@ let initialized = false;
 export interface ProtocolHandles {
   protocolPda: PublicKey;
   authority: Keypair;
+  oracle: Keypair;
   treasury: PublicKey;
   usdcMint: PublicKey;
 }
@@ -47,6 +49,12 @@ export async function getOrInitProtocol(
       );
     }
 
+    const oracleAirdrop = await provider.connection.requestAirdrop(
+      oracle.publicKey,
+      5_000_000_000
+    );
+    await provider.connection.confirmTransaction(oracleAirdrop);
+
     cachedUsdcMint = await createMint(
       provider.connection,
       (provider.wallet as anchor.Wallet).payer,
@@ -58,6 +66,7 @@ export async function getOrInitProtocol(
     await program.methods
       .initializeProtocol({
         authority: authority.publicKey,
+        oracle: oracle.publicKey,
         treasury,
         usdcMint: cachedUsdcMint,
       })
@@ -74,6 +83,7 @@ export async function getOrInitProtocol(
   return {
     protocolPda,
     authority,
+    oracle,
     treasury,
     usdcMint: cachedUsdcMint!,
   };

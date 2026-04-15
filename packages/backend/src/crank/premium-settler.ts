@@ -129,7 +129,7 @@ export async function runPremiumSettler(app: FastifyInstance): Promise<void> {
             policy: entry.publicKey,
             agentTokenAccount: policy.agentTokenAccount,
             treasuryTokenAccount,
-            authority: oracleKeypair.publicKey,
+            oracle: oracleKeypair.publicKey,
             tokenProgram: TOKEN_PROGRAM_ID,
           })
           .rpc();

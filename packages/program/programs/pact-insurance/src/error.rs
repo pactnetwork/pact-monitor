@@ -73,4 +73,24 @@ pub enum PactError {
 
     #[msg("Arithmetic overflow")]
     ArithmeticOverflow,
+
+    #[msg("Unauthorized deployer")]
+    UnauthorizedDeployer,
+
+    #[msg("Unauthorized oracle")]
+    UnauthorizedOracle,
+
+    #[msg("Field is frozen after protocol initialization")]
+    FrozenConfigField,
+
+    #[msg("Rate exceeds maximum of 10000 bps")]
+    RateOutOfBounds,
+    #[msg("Rate below pool minimum premium bps")]
+    RateBelowFloor,
+
+    #[msg("Policy has expired")]
+    PolicyExpired,
+
+    #[msg("New oracle key is invalid (zero or equals authority)")]
+    InvalidOracleKey,
 }

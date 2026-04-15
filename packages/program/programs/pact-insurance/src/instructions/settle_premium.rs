@@ -8,7 +8,6 @@ pub struct SettlePremium<'info> {
     #[account(
         seeds = [ProtocolConfig::SEED],
         bump = config.bump,
-        has_one = authority @ PactError::Unauthorized,
     )]
     pub config: Box<Account<'info, ProtocolConfig>>,
 
@@ -27,6 +26,7 @@ pub struct SettlePremium<'info> {
     )]
     pub vault: Box<Account<'info, TokenAccount>>,
 
+    // Intentionally does NOT check policy.active. See handler comment below.
     #[account(
         mut,
         seeds = [
@@ -35,7 +35,6 @@ pub struct SettlePremium<'info> {
             policy.agent.as_ref()
         ],
         bump = policy.bump,
-        constraint = policy.active @ PactError::PolicyInactive,
         constraint = policy.pool == pool.key(),
     )]
     pub policy: Box<Account<'info, Policy>>,
@@ -54,13 +53,32 @@ pub struct SettlePremium<'info> {
     )]
     pub treasury_token_account: Box<Account<'info, TokenAccount>>,
 
-    pub authority: Signer<'info>,
+    // C-02 (continuation): settle_premium is a high-frequency crank-driven
+    // operation and must NOT require the admin authority key to be hot.
+    // Oracle signs, same keypair as submit_claim.
+    #[account(
+        constraint = oracle.key() == config.oracle @ PactError::UnauthorizedOracle,
+    )]
+    pub oracle: Signer<'info>,
 
     pub token_program: Program<'info, Token>,
 }
 
 pub fn handler(ctx: Context<SettlePremium>, call_value: u64) -> Result<()> {
     require!(call_value > 0, PactError::ZeroAmount);
+
+    // Intentionally does NOT gate on `policy.active`. If an agent racks up
+    // billable calls during a settlement window and then calls
+    // `disable_policy` before the crank lands, the premium for those calls
+    // is still owed — they were made under coverage. Revocation applies to
+    // `submit_claim` (no new claims on an inactive policy), not to
+    // collection of premiums that have already accrued. `expires_at` is
+    // still enforced so a long-stale policy stops accruing.
+    let clock = Clock::get()?;
+    require!(
+        clock.unix_timestamp < ctx.accounts.policy.expires_at,
+        PactError::PolicyExpired
+    );
 
     let agent_ata = &ctx.accounts.agent_token_account;
     require!(agent_ata.delegate.is_some(), PactError::DelegationMissing);
@@ -135,7 +153,6 @@ pub fn handler(ctx: Context<SettlePremium>, call_value: u64) -> Result<()> {
 
     let pool = &mut ctx.accounts.pool;
     let policy = &mut ctx.accounts.policy;
-    let clock = Clock::get()?;
 
     policy.total_premiums_paid = policy
         .total_premiums_paid

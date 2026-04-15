@@ -14,6 +14,7 @@ describe("pact-insurance: pool", () => {
 
   let protocolPda: PublicKey;
   let authority: Keypair;
+  let oracle: Keypair;
   let usdcMint: PublicKey;
 
   const hostname = "api.helius.xyz";
@@ -24,6 +25,7 @@ describe("pact-insurance: pool", () => {
     const handles = await getOrInitProtocol(program, provider);
     protocolPda = handles.protocolPda;
     authority = handles.authority;
+    oracle = handles.oracle;
     usdcMint = handles.usdcMint;
 
     [poolPda] = PublicKey.findProgramAddressSync(
@@ -71,22 +73,22 @@ describe("pact-insurance: pool", () => {
     expect(pool.vault.toString()).to.equal(vaultPda.toString());
   });
 
-  it("updates pool insurance_rate_bps via update_rates", async () => {
+  it("updates pool insurance_rate_bps via update_rates (oracle-signed)", async () => {
     await program.methods
       .updateRates(50)
       .accounts({
         config: protocolPda,
         pool: poolPda,
-        authority: authority.publicKey,
+        oracle: oracle.publicKey,
       })
-      .signers([authority])
+      .signers([oracle])
       .rpc();
 
     const pool = await program.account.coveragePool.fetch(poolPda);
     expect(pool.insuranceRateBps).to.equal(50);
   });
 
-  it("rejects update_rates from non-authority", async () => {
+  it("rejects update_rates from non-oracle signer", async () => {
     const rando = Keypair.generate();
     const sig = await provider.connection.requestAirdrop(rando.publicKey, 1_000_000_000);
     await provider.connection.confirmTransaction(sig);
@@ -97,13 +99,13 @@ describe("pact-insurance: pool", () => {
         .accounts({
           config: protocolPda,
           pool: poolPda,
-          authority: rando.publicKey,
+          oracle: rando.publicKey,
         })
         .signers([rando])
         .rpc();
       expect.fail("should have rejected");
     } catch (err: any) {
-      expect(String(err)).to.match(/Unauthorized|ConstraintHasOne|has_one/i);
+      expect(String(err)).to.match(/UnauthorizedOracle/);
     }
   });
 

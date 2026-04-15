@@ -84,7 +84,7 @@ export async function runRateUpdater(app: FastifyInstance): Promise<void> {
         .accounts({
           config: protocolPda,
           pool: pool.publicKey,
-          authority: oracleKeypair.publicKey,
+          oracle: oracleKeypair.publicKey,
         })
         .rpc();
       app.log.info(

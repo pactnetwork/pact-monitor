@@ -85,13 +85,8 @@ pub fn handler(ctx: Context<UpdateConfig>, args: UpdateConfigArgs) -> Result<()>
         config.paused = v;
     }
 
-    if let Some(v) = args.treasury {
-        config.treasury = v;
-    }
-
-    if let Some(v) = args.usdc_mint {
-        config.usdc_mint = v;
-    }
+    require!(args.treasury.is_none(), PactError::FrozenConfigField);
+    require!(args.usdc_mint.is_none(), PactError::FrozenConfigField);
 
     Ok(())
 }

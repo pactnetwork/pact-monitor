@@ -5,6 +5,7 @@ use crate::constants::*;
 #[derive(AnchorSerialize, AnchorDeserialize, Clone)]
 pub struct InitializeProtocolArgs {
     pub authority: Pubkey,
+    pub oracle: Pubkey,
     pub treasury: Pubkey,
     pub usdc_mint: Pubkey,
 }
@@ -30,9 +31,19 @@ pub fn handler(
     ctx: Context<InitializeProtocol>,
     args: InitializeProtocolArgs,
 ) -> Result<()> {
+    #[cfg(feature = "enforce-deployer")]
+    {
+        use crate::DEPLOYER_PUBKEY;
+        require!(
+            ctx.accounts.deployer.key() == DEPLOYER_PUBKEY,
+            crate::error::PactError::UnauthorizedDeployer
+        );
+    }
+
     let config = &mut ctx.accounts.config;
 
     config.authority = args.authority;
+    config.oracle = args.oracle;
     config.treasury = args.treasury;
     config.usdc_mint = args.usdc_mint;
 

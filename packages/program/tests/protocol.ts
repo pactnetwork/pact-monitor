@@ -13,6 +13,7 @@ describe("pact-insurance: protocol", () => {
 
   let protocolPda: PublicKey;
   let authority: Keypair;
+  let oracleKeypair: Keypair;
   let treasury: PublicKey;
   let usdcMint: PublicKey;
 
@@ -20,16 +21,19 @@ describe("pact-insurance: protocol", () => {
     const handles = await getOrInitProtocol(program, provider);
     protocolPda = handles.protocolPda;
     authority = handles.authority;
+    oracleKeypair = handles.oracle;
     treasury = handles.treasury;
     usdcMint = handles.usdcMint;
   });
 
-  it("initializes the protocol config with a separate authority", async () => {
+  it("initializes the protocol config with a separate authority and oracle", async () => {
     const config = await program.account.protocolConfig.fetch(protocolPda);
     expect(config.authority.toString()).to.equal(authority.publicKey.toString());
     expect(config.authority.toString()).to.not.equal(provider.wallet.publicKey.toString());
     expect(config.treasury.toString()).to.equal(treasury.toString());
     expect(config.usdcMint.toString()).to.equal(usdcMint.toString());
+    expect(config.oracle.toString()).to.equal(oracleKeypair.publicKey.toString());
+    expect(config.authority.toString()).to.not.equal(config.oracle.toString());
     expect(config.protocolFeeBps).to.equal(1500);
     expect(config.minPoolDeposit.toNumber()).to.equal(100_000_000);
     expect(config.withdrawalCooldownSeconds.toNumber()).to.equal(604_800);
@@ -43,6 +47,7 @@ describe("pact-insurance: protocol", () => {
       await program.methods
         .initializeProtocol({
           authority: authority.publicKey,
+          oracle: oracleKeypair.publicKey,
           treasury,
           usdcMint,
         })
@@ -56,6 +61,14 @@ describe("pact-insurance: protocol", () => {
     } catch (err: any) {
       expect(String(err)).to.match(/already in use|already initialized/i);
     }
+  });
+
+  it.skip("[feature=enforce-deployer] rejects init from any signer other than DEPLOYER_PUBKEY", async () => {
+    // This test must be run with `anchor test --features enforce-deployer`
+    // and with provider.wallet set to a keypair matching the baked-in const.
+    // Left skipped here so the default test run still passes. Real coverage
+    // is verified in Task 12 by confirming that the deployed .so rejects
+    // non-deployer init calls on devnet.
   });
 
   it("updates protocol_fee_bps when authority calls update_config", async () => {
