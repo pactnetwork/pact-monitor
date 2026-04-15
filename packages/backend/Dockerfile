@@ -10,6 +10,7 @@ COPY package.json ./
 RUN npm install --omit=dev --no-audit --no-fund
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/src/schema.sql ./dist/schema.sql
+COPY --from=builder /app/src/idl ./dist/idl
 ENV NODE_ENV=production
 EXPOSE 8080
 CMD ["node", "dist/index.js"]
