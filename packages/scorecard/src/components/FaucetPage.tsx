@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { usePhantom } from "../hooks/usePhantom";
 import {
   getFaucetStatus,
@@ -103,7 +104,7 @@ export function FaucetPage() {
       <div className="mb-8 text-center">
         <h2 className="font-serif text-2xl text-primary mb-2">TEST-USDC Faucet</h2>
         <p className="text-sm text-secondary font-sans">
-          Get devnet TEST-USDC so you can try the scorecard as a caller or sponsor.
+          Get devnet TEST-USDC so you can try the scorecard as an Agent or Underwriter.
           Rate-limited to 1 drip per wallet every 10 minutes.
         </p>
       </div>
@@ -260,12 +261,16 @@ export function FaucetPage() {
         </p>
         <ul className="text-sm text-secondary font-sans space-y-2">
           <li>
-            • Want to call insured APIs as an agent? See{" "}
-            <code className="font-mono text-copper">docs/caller-quickstart.md</code>.
+            • Want to insure your API calls as an Agent?{" "}
+            <Link to="/guide/agent" className="text-copper font-mono text-xs uppercase tracking-widest">
+              Agent Quickstart
+            </Link>
           </li>
           <li>
-            • Want to sponsor a pool and earn premiums? See{" "}
-            <code className="font-mono text-copper">docs/sponsor-quickstart.md</code>.
+            • Want to provide coverage and earn premiums?{" "}
+            <Link to="/guide/underwriter" className="text-copper font-mono text-xs uppercase tracking-widest">
+              Underwriter Quickstart
+            </Link>
           </li>
         </ul>
       </div>
