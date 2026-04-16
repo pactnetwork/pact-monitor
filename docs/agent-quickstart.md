@@ -1,4 +1,4 @@
-# Caller Quickstart — Insuring AI Agent API Calls
+# Agent Quickstart — Insuring AI Agent API Calls
 
 This guide walks a developer through making their first insured API call on Pact Network's devnet. You'll get test USDC, enable a policy on a pool, call an API through the Pact SDK, and watch a claim settle on-chain when the call fails.
 

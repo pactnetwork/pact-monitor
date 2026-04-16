@@ -1,5 +1,7 @@
 {
   "rewrites": [
+    { "source": "/api/:path*", "destination": "https://api.pactnetwork.io/api/:path*" },
+    { "source": "/health", "destination": "https://api.pactnetwork.io/health" },
     { "source": "/scorecard/assets/:path*", "destination": "/assets/:path*" },
     { "source": "/scorecard", "destination": "/index.html" },
     { "source": "/scorecard/:path*", "destination": "/index.html" }
