@@ -1,8 +1,8 @@
-# Sponsor Quickstart — Earning Premiums on Pact Network
+# Underwriter Quickstart — Earning Premiums on Pact Network
 
-A **sponsor** deposits TEST-USDC into a provider pool's vault. The protocol pays out refunds from that vault when callers on the pool experience failures — and collects **premiums** from every successful call, accruing to sponsors proportionally to their share of the vault.
+An **Underwriter** deposits TEST-USDC into a provider pool's vault. The protocol pays out refunds from that vault when Agents on the pool experience failures — and collects **premiums** from every successful call, accruing to Underwriters proportionally to their share of the vault.
 
-If you believe a given API provider is more reliable than the market thinks, sponsoring its pool is a directional bet: you earn premiums as long as the realized failure rate stays below the published insurance rate.
+If you believe a given API provider is more reliable than the market thinks, underwriting its pool is a directional bet: you earn premiums as long as the realized failure rate stays below the published insurance rate.
 
 **Estimated time:** 5 minutes. **Cost:** zero (devnet).
 
@@ -10,7 +10,7 @@ If you believe a given API provider is more reliable than the market thinks, spo
 
 ## 1. Get TEST-USDC from the faucet
 
-Same drill as the caller quickstart:
+Same drill as the Agent quickstart:
 
 1. Visit **[pactnetwork.io/scorecard/faucet](https://pactnetwork.io/scorecard/faucet)**.
 2. Connect Phantom on **Devnet**.
@@ -32,7 +32,7 @@ The pool detail page shows:
 - Last 24h premiums paid in and claims paid out
 - Failure rate (rolling 7 days) and current insurance rate (bps)
 
-Pools where premiums paid > claims paid are profitable for sponsors in expectation.
+Pools where premiums paid > claims paid are profitable for underwriters in expectation.
 
 ---
 
@@ -45,7 +45,7 @@ cd packages/program
 pnpm tsx scripts/deposit-to-pool.ts api.coingecko.com 5000
 ```
 
-> Heads up: `deposit-to-pool.ts` isn't in the repo yet — the pattern is identical to `seed-devnet-pools.ts` but calls `program.methods.deposit(...)` once with your sponsor wallet as the authority. Copy that script and adapt if you want to deposit now. A first-class UI is tracked in the sponsor dashboard milestone.
+> Heads up: `deposit-to-pool.ts` isn't in the repo yet — the pattern is identical to `seed-devnet-pools.ts` but calls `program.methods.deposit(...)` once with your underwriter wallet as the authority. Copy that script and adapt if you want to deposit now. A first-class UI is tracked in the underwriter dashboard milestone.
 
 The script:
 1. Derives the pool PDA from the hostname seed.
@@ -59,7 +59,7 @@ Minimum deposit is **100 TEST-USDC** (enforced by `config.min_pool_deposit`).
 
 ## 4. Watch premiums accrue
 
-Every call from an insured agent on that pool triggers a `settle_premium` instruction. The premium flows from the caller's policy balance into the vault you just funded. Your pro-rata share grows as the vault grows.
+Every call from an insured agent on that pool triggers a `settle_premium` instruction. The premium flows from the Agent's policy balance into the vault you just funded. Your pro-rata share grows as the vault grows.
 
 Track it in two ways:
 
@@ -82,7 +82,7 @@ pnpm tsx scripts/withdraw-from-pool.ts api.coingecko.com 5000
 
 The instruction is `withdraw(pool, amount)`. It moves USDC from the vault back to your wallet ATA, subject to the pool's current vault balance and the aggregate claim cap (30% over any 24h window — see `config.aggregate_cap_bps`).
 
-> If the vault has recently paid out a large claim, your withdrawable balance may be less than your deposit. That's the risk side of the sponsor bet.
+> If the vault has recently paid out a large claim, your withdrawable balance may be less than your deposit. That's the risk side of the underwriter bet.
 
 ---
 

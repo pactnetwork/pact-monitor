@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
+import { BrowserRouter, Routes, Route, useLocation, Link } from "react-router-dom";
 import { ProviderTable } from "./components/ProviderTable";
 import { ProviderDetail } from "./components/ProviderDetail";
 import { PoolDetail } from "./components/PoolDetail";
@@ -29,14 +29,22 @@ export function App() {
       <div className="min-h-screen bg-bg">
         <header className="border-b border-border px-8 py-4 flex items-center justify-between">
           <div>
-            <h1 className="font-serif text-xl text-primary tracking-wide">
-              Pact Network
-            </h1>
-            <p className="text-sm text-secondary font-sans">
-              API Reliability Scorecard
-            </p>
+            <Link to="/" className="no-underline">
+              <h1 className="font-serif text-xl text-primary tracking-wide">
+                Pact Network
+              </h1>
+              <p className="text-sm text-secondary font-sans">
+                API Reliability Scorecard
+              </p>
+            </Link>
           </div>
-          <ThemeToggle />
+          <div className="flex items-center gap-6">
+            <nav className="flex gap-4 font-mono text-xs uppercase tracking-widest">
+              <Link to="/" className="text-secondary hover:text-primary">Rankings</Link>
+              <Link to="/faucet" className="text-secondary hover:text-primary">Faucet</Link>
+            </nav>
+            <ThemeToggle />
+          </div>
         </header>
         <main className="px-8 py-6">
           <Routes>
