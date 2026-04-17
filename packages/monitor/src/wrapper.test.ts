@@ -109,7 +109,7 @@ test("sync payload no longer includes agent_pubkey field", async () => {
     return new Response("{}", { status: 200 });
   };
   try {
-    const sync = new PactSync(storage as never, "http://x", "k", 1, 10);
+    const sync = new PactSync(storage as never, "http://x", "k", 1, 10, null);
     await sync.flush();
   } finally {
     globalThis.fetch = originalFetch;

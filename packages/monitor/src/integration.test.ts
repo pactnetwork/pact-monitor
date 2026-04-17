@@ -24,7 +24,7 @@
 //   - postgres reachable from the backend (not from this test directly — we
 //     don't touch pg, we only hit HTTP routes)
 //
-// Run from packages/sdk/:
+// Run from packages/monitor/:
 //   ADMIN_TOKEN=<token> npm test
 //
 // Why not mock? We already have wrapper.test.ts for mocked unit tests.
@@ -176,6 +176,7 @@ describe("PactMonitor integration (live backend)", { skip: skipReason }, () => {
       apiKey,
       60_000,
       100,
+      null,
     );
     await sync.flush();
 
@@ -221,6 +222,7 @@ describe("PactMonitor integration (live backend)", { skip: skipReason }, () => {
       apiKey,
       60_000,
       100,
+      null,
     );
     await sync.flush();
 
@@ -318,6 +320,7 @@ describe("PactMonitor integration (live backend)", { skip: skipReason }, () => {
       apiKey,
       60_000,
       100,
+      null,
     );
 
     // Fire two flush() calls IN PARALLEL. Before the Task 3.1 fix, both
