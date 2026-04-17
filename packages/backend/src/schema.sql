@@ -86,6 +86,8 @@ CREATE TABLE IF NOT EXISTS api_keys (
 );
 
 ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS agent_pubkey TEXT;
+ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_label ON api_keys(label);
 CREATE INDEX IF NOT EXISTS idx_api_keys_agent_pubkey ON api_keys(agent_pubkey);
 
 CREATE TABLE IF NOT EXISTS claims (
@@ -98,7 +100,7 @@ CREATE TABLE IF NOT EXISTS claims (
   call_cost       BIGINT,
   refund_pct      INTEGER NOT NULL,
   refund_amount   BIGINT,
-  status          TEXT NOT NULL DEFAULT 'simulated' CHECK (status IN ('detected', 'simulated', 'submitted', 'settled')),
+  status          TEXT NOT NULL DEFAULT 'simulated' CHECK (status IN ('detected', 'simulated', 'submitted', 'settled', 'frozen')),
   tx_hash         TEXT,
   settlement_slot BIGINT,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -125,3 +127,53 @@ CREATE TABLE IF NOT EXISTS faucet_drips (
 
 CREATE INDEX IF NOT EXISTS idx_faucet_drips_recipient_created
   ON faucet_drips(recipient, created_at);
+
+-- ============================================================
+-- Anti-fraud: premium adjustments
+-- ============================================================
+CREATE TABLE IF NOT EXISTS premium_adjustments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  agent_id TEXT NOT NULL,
+  provider_id UUID NOT NULL REFERENCES providers(id),
+  loading_factor NUMERIC(4,2) NOT NULL DEFAULT 1.0,
+  reason TEXT,
+  calculated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(agent_id, provider_id)
+);
+
+-- ============================================================
+-- Anti-fraud: outage events
+-- ============================================================
+CREATE TABLE IF NOT EXISTS outage_events (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  provider_id UUID NOT NULL REFERENCES providers(id),
+  reporting_agents INTEGER NOT NULL,
+  started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  ended_at TIMESTAMPTZ,
+  network_failure_rate NUMERIC(5,2)
+);
+
+CREATE INDEX IF NOT EXISTS idx_outage_events_provider
+  ON outage_events(provider_id, started_at);
+
+-- ============================================================
+-- Anti-fraud: agent flags
+-- ============================================================
+CREATE TABLE IF NOT EXISTS agent_flags (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  agent_id TEXT NOT NULL,
+  agent_pubkey TEXT,
+  flag_reason TEXT NOT NULL,
+  flag_data JSONB,
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'dismissed', 'suspended')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  resolved_at TIMESTAMPTZ,
+  resolved_by TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_flags_agent
+  ON agent_flags(agent_id, status);
+
+CREATE INDEX IF NOT EXISTS idx_agent_flags_status
+  ON agent_flags(status, created_at);

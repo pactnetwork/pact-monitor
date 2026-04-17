@@ -275,4 +275,82 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
       agent_pubkey: body.agent_pubkey,
     });
   });
+
+  // ── Flags ──────────────────────────────────────────────
+  app.get("/api/v1/admin/flags", async (request, reply) => {
+    const { status } = request.query as { status?: string };
+    const where = status ? "WHERE status = $1" : "";
+    const params = status ? [status] : [];
+    const rows = await getMany<{
+      id: string;
+      agent_id: string;
+      agent_pubkey: string | null;
+      flag_reason: string;
+      flag_data: Record<string, unknown>;
+      status: string;
+      created_at: string;
+      resolved_at: string | null;
+      resolved_by: string | null;
+    }>(`SELECT * FROM agent_flags ${where} ORDER BY created_at DESC LIMIT 100`, params);
+
+    const enriched = await Promise.all(
+      rows.map(async (row) => {
+        const stats = await getOne<{ records_24h: string; claims_24h: string }>(
+          `SELECT
+            (SELECT COUNT(*) FROM call_records WHERE agent_id = $1 AND created_at > NOW() - INTERVAL '1 day') AS records_24h,
+            (SELECT COUNT(*) FROM claims WHERE agent_id = $1 AND created_at > NOW() - INTERVAL '1 day') AS claims_24h`,
+          [row.agent_id],
+        );
+        return {
+          ...row,
+          records_24h: parseInt(stats?.records_24h ?? "0", 10),
+          claims_24h: parseInt(stats?.claims_24h ?? "0", 10),
+        };
+      }),
+    );
+
+    return reply.send(enriched);
+  });
+
+  app.patch("/api/v1/admin/flags/:id", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const { status } = request.body as { status: "dismissed" | "suspended" };
+
+    if (!["dismissed", "suspended"].includes(status)) {
+      return reply.code(400).send({ error: "Status must be 'dismissed' or 'suspended'" });
+    }
+
+    const flag = await getOne<{ agent_id: string; status: string }>(
+      "SELECT agent_id, status FROM agent_flags WHERE id = $1",
+      [id],
+    );
+    if (!flag) {
+      return reply.code(404).send({ error: "Flag not found" });
+    }
+
+    // Guard: only resolve pending flags (idempotent)
+    const updated = await query(
+      "UPDATE agent_flags SET status = $1, resolved_at = NOW(), resolved_by = 'admin' WHERE id = $2 AND status = 'pending'",
+      [status, id],
+    );
+    if (updated.rowCount === 0) {
+      return reply.code(409).send({ error: "Flag already resolved" });
+    }
+
+    if (status === "dismissed") {
+      await query(
+        "UPDATE premium_adjustments SET loading_factor = 1.0, reason = 'flag_dismissed' WHERE agent_id = $1",
+        [flag.agent_id],
+      );
+    }
+
+    if (status === "suspended") {
+      await query(
+        "UPDATE api_keys SET status = 'suspended' WHERE label = $1",
+        [flag.agent_id],
+      );
+    }
+
+    return reply.send({ ok: true, status });
+  });
 }

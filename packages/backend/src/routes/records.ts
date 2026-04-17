@@ -1,7 +1,9 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { requireApiKey } from "../middleware/auth.js";
+import { requireApiKey, verifyRecordSignature } from "../middleware/auth.js";
 import { query, getOne } from "../db.js";
 import { maybeCreateClaim } from "../utils/claims.js";
+import { detectAnomalies } from "../utils/fraud-detection.js";
+import { getEffectiveRate } from "../utils/insurance.js";
 
 interface RecordInput {
   hostname: string;
@@ -24,6 +26,10 @@ interface RecordsBody {
   records: RecordInput[];
 }
 
+const MAX_BATCH_SIZE = 500;
+const MAX_RECORDS_PER_HOUR = 10_000;
+const RATE_LIMIT_WARNING_THRESHOLD = 0.8;
+
 async function findOrCreateProvider(hostname: string): Promise<string> {
   const existing = await getOne<{ id: string }>(
     "SELECT id FROM providers WHERE base_url = $1",
@@ -41,7 +47,7 @@ async function findOrCreateProvider(hostname: string): Promise<string> {
 export async function recordsRoutes(app: FastifyInstance): Promise<void> {
   app.post<{ Body: RecordsBody }>(
     "/api/v1/records",
-    { preHandler: requireApiKey },
+    { preHandler: [requireApiKey, verifyRecordSignature] },
     async (request, reply) => {
       const { records } = request.body;
 
@@ -49,10 +55,36 @@ export async function recordsRoutes(app: FastifyInstance): Promise<void> {
         return reply.code(400).send({ error: "records array is required" });
       }
 
+      if (records.length > MAX_BATCH_SIZE) {
+        return reply.code(400).send({
+          error: `Batch size ${records.length} exceeds maximum of ${MAX_BATCH_SIZE}`,
+        });
+      }
+
       const authed = request as FastifyRequest & {
         agentId: string;
         agentPubkey: string | null;
       };
+
+      // DB-backed hourly rate limit (works across instances and restarts)
+      const hourlyCount = await getOne<{ cnt: string }>(
+        "SELECT COUNT(*) AS cnt FROM call_records WHERE agent_id = $1 AND created_at > NOW() - INTERVAL '1 hour'",
+        [authed.agentId],
+      );
+      const currentHourly = parseInt(hourlyCount?.cnt ?? "0", 10);
+      if (currentHourly + records.length > MAX_RECORDS_PER_HOUR) {
+        return reply.code(429).send({
+          error: "Rate limit exceeded",
+          remaining: Math.max(0, MAX_RECORDS_PER_HOUR - currentHourly),
+        });
+      }
+      if (currentHourly >= MAX_RECORDS_PER_HOUR * RATE_LIMIT_WARNING_THRESHOLD) {
+        request.log.warn(
+          { agentId: authed.agentId, currentHourly, limit: MAX_RECORDS_PER_HOUR },
+          "Agent approaching hourly rate limit (80%)",
+        );
+      }
+
       const agentId = authed.agentId;
       const agentPubkey = authed.agentPubkey;
       const providerIds = new Set<string>();
@@ -117,6 +149,16 @@ export async function recordsRoutes(app: FastifyInstance): Promise<void> {
         accepted++;
       }
 
+      // Run anomaly detection per provider touched in this batch
+      const uniqueProviders = [...providerIds];
+      for (const pid of uniqueProviders) {
+        try {
+          await detectAnomalies(authed.agentId, authed.agentPubkey ?? null, pid, request.log);
+        } catch (err) {
+          request.log.error({ err, providerId: pid }, "Anomaly detection failed");
+        }
+      }
+
       // Update provider wallet_address from payment data if available
       for (const rec of records) {
         if (rec.recipient_address) {
@@ -127,7 +169,15 @@ export async function recordsRoutes(app: FastifyInstance): Promise<void> {
         }
       }
 
-      return { accepted, provider_ids: [...providerIds] };
+      // Include effective rates per provider so agent can see premium impact
+      const effectiveRates: Record<string, number> = {};
+      for (const pid of [...providerIds]) {
+        try {
+          effectiveRates[pid] = await getEffectiveRate(1.0, agentId, pid);
+        } catch { /* non-critical */ }
+      }
+
+      return { accepted, provider_ids: [...providerIds], effective_rates: effectiveRates };
     },
   );
 }
