@@ -5,6 +5,7 @@ import nacl from "tweetnacl";
  * Serialize records array to a deterministic JSON string (sorted keys).
  */
 export function serializeRecords(records: unknown[]): string {
+  if (records.length === 0) return "[]";
   return JSON.stringify(records, Object.keys(records[0] as object).sort());
 }
 

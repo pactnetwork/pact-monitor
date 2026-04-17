@@ -21,12 +21,12 @@ export async function requireApiKey(
   const key = header.slice(7);
   const hash = hashKey(key);
 
-  const row = await getOne<{ id: string; label: string; agent_pubkey: string | null }>(
-    "SELECT id, label, agent_pubkey FROM api_keys WHERE key_hash = $1",
+  const row = await getOne<{ id: string; label: string; agent_pubkey: string | null; is_active: boolean }>(
+    "SELECT id, label, agent_pubkey, is_active FROM api_keys WHERE key_hash = $1",
     [hash],
   );
 
-  if (!row) {
+  if (!row || !row.is_active) {
     reply.code(401).send({ error: "Invalid API key" });
     return;
   }
@@ -65,6 +65,7 @@ export async function verifyRecordSignature(
 
   try {
     const body = request.body as { records: unknown[] };
+    if (!body.records || body.records.length === 0) return;
     const serialized = JSON.stringify(body.records, Object.keys(body.records[0] as object).sort());
     const hash = createHash("sha256").update(serialized).digest();
     const sigBytes = Buffer.from(signature, "base64");

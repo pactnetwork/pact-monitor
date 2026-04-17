@@ -4,6 +4,7 @@ import { query, getOne } from "../db.js";
 import { maybeCreateClaim } from "../utils/claims.js";
 import { RateLimiter } from "../utils/rate-limiter.js";
 import { detectAnomalies } from "../utils/fraud-detection.js";
+import { getEffectiveRate } from "../utils/insurance.js";
 
 interface RecordInput {
   hostname: string;
@@ -169,7 +170,15 @@ export async function recordsRoutes(app: FastifyInstance): Promise<void> {
         }
       }
 
-      return { accepted, provider_ids: [...providerIds] };
+      // Include effective rates per provider so agent can see premium impact
+      const effectiveRates: Record<string, number> = {};
+      for (const pid of [...providerIds]) {
+        try {
+          effectiveRates[pid] = await getEffectiveRate(1.0, agentId, pid);
+        } catch { /* non-critical */ }
+      }
+
+      return { accepted, provider_ids: [...providerIds], effective_rates: effectiveRates };
     },
   );
 }
