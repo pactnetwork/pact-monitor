@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { requireApiKey } from "../middleware/auth.js";
+import { requireApiKey, verifyRecordSignature } from "../middleware/auth.js";
 import { query, getOne } from "../db.js";
 import { maybeCreateClaim } from "../utils/claims.js";
 import { RateLimiter } from "../utils/rate-limiter.js";
@@ -51,7 +51,7 @@ async function findOrCreateProvider(hostname: string): Promise<string> {
 export async function recordsRoutes(app: FastifyInstance): Promise<void> {
   app.post<{ Body: RecordsBody }>(
     "/api/v1/records",
-    { preHandler: requireApiKey },
+    { preHandler: [requireApiKey, verifyRecordSignature] },
     async (request, reply) => {
       const { records } = request.body;
 
