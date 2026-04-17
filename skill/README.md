@@ -44,7 +44,7 @@ the monorepo copy, not this one.
 
 - [Pact Network Scorecard](https://pactnetwork.io)
 - [Monorepo](https://github.com/solder-build/pact-monitor)
-- [Monitor SDK source](https://github.com/solder-build/pact-monitor/tree/main/packages/sdk)
+- [Monitor SDK source](https://github.com/solder-build/pact-monitor/tree/main/packages/monitor)
 - [Insurance SDK source](https://github.com/solder-build/pact-monitor/tree/main/packages/insurance)
 - [Samples](https://github.com/solder-build/pact-monitor/tree/main/samples)
 

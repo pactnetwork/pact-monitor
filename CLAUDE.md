@@ -14,11 +14,14 @@ Pact Network is a parametric micro-insurance system for AI agent API payments on
 
 ```
 packages/
-  sdk/        — @pact-network/monitor: TypeScript SDK wrapping fetch() to monitor API reliability
+  monitor/    — @pact-network/monitor: TypeScript SDK wrapping fetch() to monitor API reliability
+  insurance/  — @pact-network/insurance: TypeScript SDK for the on-chain Anchor insurance program
   backend/    — @pact-network/backend: Fastify API server aggregating monitoring data
   scorecard/  — @pact-network/scorecard: Vite+React dashboard showing provider reliability rankings
+  program/    — Anchor program (pact_insurance)
 deploy/       — Docker Compose + Caddyfile
 docs/         — PRD, design spec, implementation plan
+samples/      — Sample agent integrations and demos
 ```
 
 ## Design System
@@ -36,8 +39,11 @@ docs/         — PRD, design spec, implementation plan
 # Install all workspace dependencies
 npm install
 
-# SDK
-cd packages/sdk && npm run build
+# Monitor SDK
+cd packages/monitor && npm run build
+
+# Insurance SDK
+cd packages/insurance && npm run build
 
 # Backend (needs PostgreSQL running)
 cd packages/backend && npm run dev
