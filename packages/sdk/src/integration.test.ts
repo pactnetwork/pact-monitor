@@ -176,6 +176,7 @@ describe("PactMonitor integration (live backend)", { skip: skipReason }, () => {
       apiKey,
       60_000,
       100,
+      null,
     );
     await sync.flush();
 
@@ -221,6 +222,7 @@ describe("PactMonitor integration (live backend)", { skip: skipReason }, () => {
       apiKey,
       60_000,
       100,
+      null,
     );
     await sync.flush();
 
@@ -318,6 +320,7 @@ describe("PactMonitor integration (live backend)", { skip: skipReason }, () => {
       apiKey,
       60_000,
       100,
+      null,
     );
 
     // Fire two flush() calls IN PARALLEL. Before the Task 3.1 fix, both

@@ -6,7 +6,7 @@ import { PactStorage } from "./storage.js";
 import { PactSync } from "./sync.js";
 
 export class PactMonitor {
-  private config: Required<PactConfig>;
+  private config: Omit<Required<PactConfig>, "keypair"> & Pick<PactConfig, "keypair">;
   private storage: PactStorage;
   private sync: PactSync | null = null;
   private events = new EventEmitter();
@@ -21,11 +21,19 @@ export class PactMonitor {
       latencyThresholdMs: config.latencyThresholdMs ?? 5_000,
       storagePath: config.storagePath || "",
       agentPubkey: config.agentPubkey || "",
+      keypair: config.keypair ?? undefined,
     };
 
     if (this.config.syncEnabled && this.config.apiKey && !this.config.agentPubkey) {
       console.warn(
         "[pact-monitor] agentPubkey missing — on-chain claims will not be submitted for this agent.",
+      );
+    }
+
+    if (this.config.syncEnabled && this.config.apiKey && !this.config.keypair) {
+      console.warn(
+        "[pact-monitor] keypair not provided — record batches will not be signed. " +
+        "This will be required in a future version.",
       );
     }
 
@@ -38,6 +46,7 @@ export class PactMonitor {
         this.config.apiKey,
         this.config.syncIntervalMs,
         this.config.syncBatchSize,
+        this.config.keypair ?? null,
       );
       this.sync.start();
     }

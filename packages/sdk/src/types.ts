@@ -31,6 +31,7 @@ export interface PactConfig {
   latencyThresholdMs?: number;
   storagePath?: string;
   agentPubkey?: string;
+  keypair?: { publicKey: Uint8Array; secretKey: Uint8Array };
 }
 
 export interface ExpectedSchema {
