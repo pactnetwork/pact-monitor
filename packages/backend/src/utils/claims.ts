@@ -4,6 +4,7 @@ import {
   hasActiveOnChainPolicy,
   type CallRecord,
 } from "../services/claim-settlement.js";
+import { hasPendingFlag } from "./fraud-detection.js";
 
 const REFUND_PCT: Record<string, number> = {
   timeout: 100,
@@ -39,6 +40,34 @@ export async function maybeCreateClaim(input: ClaimInput): Promise<string | null
 
   if (classification === "success") return null;
   if (!paymentAmount || paymentAmount <= 0) return null;
+
+  // Anti-fraud: skip claim if agent is flagged
+  if (input.agentId) {
+    const flagged = await hasPendingFlag(input.agentId);
+    if (flagged) {
+      input.logger?.warn(
+        { agentId: input.agentId },
+        "Skipping claim creation: agent is flagged",
+      );
+      return null;
+    }
+  }
+
+  // Anti-fraud: daily claim cap per agent
+  if (input.agentId) {
+    const dailyCount = await getOne<{ cnt: string }>(
+      "SELECT COUNT(*) AS cnt FROM claims WHERE agent_id = $1 AND created_at > NOW() - INTERVAL '1 day'",
+      [input.agentId],
+    );
+    const count = parseInt(dailyCount?.cnt ?? "0", 10);
+    if (count >= 1000) {
+      input.logger?.warn(
+        { agentId: input.agentId, dailyClaims: count },
+        "Skipping claim creation: daily cap reached (1000)",
+      );
+      return null;
+    }
+  }
 
   const triggerType = classification;
   const refundPct = REFUND_PCT[triggerType];
