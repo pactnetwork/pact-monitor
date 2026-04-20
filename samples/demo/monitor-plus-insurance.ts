@@ -15,7 +15,7 @@ import * as os from "os";
 import * as path from "path";
 import { Keypair } from "@solana/web3.js";
 import { pactMonitor } from "@q3labs/pact-monitor";
-import { PactInsurance } from "@pact-network/insurance";
+import { PactInsurance } from "@q3labs/pact-insurance";
 
 const HOSTNAME = process.argv[2] || "api.coingecko.com";
 const URL = `https://${HOSTNAME}/api/v3/simple/price?ids=solana&vs_currencies=usd`;

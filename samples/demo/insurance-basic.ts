@@ -14,7 +14,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { Keypair } from "@solana/web3.js";
-import { PactInsurance } from "@pact-network/insurance";
+import { PactInsurance } from "@q3labs/pact-insurance";
 
 const HOSTNAME = process.argv[2] || "api.coingecko.com";
 const RPC_URL = process.env.SOLANA_RPC_URL || "https://api.devnet.solana.com";
