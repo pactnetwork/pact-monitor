@@ -1,0 +1,21 @@
+[package]
+name = "pact-insurance-pinocchio"
+version = "0.1.0"
+description = "Pact Network on-chain parametric insurance (Pinocchio port, scaffolding)"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "pact_insurance_pinocchio"
+
+[features]
+default = []
+bpf-entrypoint = []
+
+[dependencies]
+pinocchio = "0.10"
+solana-address = { version = "2", features = ["decode"] }
+bytemuck = { version = "1.14", features = ["derive"] }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))'] }
