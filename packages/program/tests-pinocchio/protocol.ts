@@ -36,6 +36,7 @@ import {
 import {
   getInitializeProtocolInstruction,
   getUpdateConfigInstruction,
+  getUpdateOracleInstruction,
   findProtocolConfigPda,
   decodeProtocolConfig,
   PACT_INSURANCE_PROGRAM_ADDRESS,
@@ -479,6 +480,112 @@ async function run() {
           { ...emptyArgs(), usdcMint: newMint },
           6026,
         );
+      },
+      counter,
+    );
+
+    // -----------------------------------------------------------------------
+    // WP-7 — update_oracle (disc 2). Migrates the 4 C-02 cases from
+    // packages/program/tests/security-hardening.ts. InvalidOracleKey (6030)
+    // is reused for both zero-pubkey and oracle==authority — matches the
+    // Anchor source. Non-authority signer hits Unauthorized (6018).
+    // -----------------------------------------------------------------------
+
+    const sendUpdateOracle = async (
+      signer: KeyPairSigner,
+      newOracle: Address,
+    ): Promise<void> => {
+      const ix = getUpdateOracleInstruction({
+        config: protocolPda,
+        authority: signer,
+        newOracle,
+      });
+      const { value: latest } = await h.rpc.getLatestBlockhash().send();
+      const msg = pipe(
+        createTransactionMessage({ version: 0 }),
+        (m) => setTransactionMessageFeePayerSigner(deployer, m),
+        (m) => setTransactionMessageLifetimeUsingBlockhash(latest, m),
+        (m) => appendTransactionMessageInstruction(ix, m),
+      );
+      const signed = await signTransactionMessageWithSigners(msg);
+      const wire = getBase64EncodedWireTransaction(signed);
+      const sig = await h.rpc
+        .sendTransaction(wire, {
+          encoding: 'base64',
+          preflightCommitment: 'confirmed',
+        })
+        .send();
+      await waitForSignature(h, sig);
+    };
+
+    const expectUpdateOracleReject = async (
+      signer: KeyPairSigner,
+      newOracle: Address,
+      expectedCode: number,
+    ) => {
+      const hex = expectedCode.toString(16);
+      const pattern = new RegExp(`#${expectedCode}\\b|0x${hex}\\b`, 'i');
+      let threw = false;
+      try {
+        await sendUpdateOracle(signer, newOracle);
+      } catch (err) {
+        threw = true;
+        const detail = JSON.stringify(err, Object.getOwnPropertyNames(err));
+        assert.match(
+          detail,
+          pattern,
+          `expected custom error ${expectedCode} (0x${hex}), got: ${detail}`,
+        );
+      }
+      assert(threw, 'update_oracle must reject');
+    };
+
+    // ---- Test 12 (C-02) — rotates oracle when authority calls ----
+    await runCase(
+      'C-02: rotates oracle when authority calls update_oracle',
+      async () => {
+        const newOracle = (await generateKeyPairSigner()).address;
+        await sendUpdateOracle(authority, newOracle);
+        const cfg = await fetchConfig(h, protocolPda);
+        assert.equal(cfg.oracle, newOracle);
+        // Restore the original oracle so downstream state reads stay
+        // well-defined for any future test addition.
+        await sendUpdateOracle(authority, oracle);
+        const restored = await fetchConfig(h, protocolPda);
+        assert.equal(restored.oracle, oracle);
+      },
+      counter,
+    );
+
+    // ---- Test 13 (C-02) — rejects update_oracle from non-authority ----
+    await runCase(
+      'C-02: rejects update_oracle from non-authority',
+      async () => {
+        const rando = await fundedSigner(h, 1);
+        const candidate = (await generateKeyPairSigner()).address;
+        await expectUpdateOracleReject(rando, candidate, 6018);
+      },
+      counter,
+    );
+
+    // ---- Test 14 (C-02) — rejects update_oracle with zero pubkey ----
+    await runCase(
+      'C-02: rejects update_oracle with zero pubkey',
+      async () => {
+        // `11111111111111111111111111111111` is the canonical base58 encoding
+        // of the all-zero 32-byte array (System Program). Casting via
+        // `Address` keeps typing honest; the handler strictly compares bytes.
+        const zero = '11111111111111111111111111111111' as Address;
+        await expectUpdateOracleReject(authority, zero, 6030);
+      },
+      counter,
+    );
+
+    // ---- Test 15 (C-02) — rejects new_oracle == authority ----
+    await runCase(
+      'C-02: rejects update_oracle with new_oracle == authority',
+      async () => {
+        await expectUpdateOracleReject(authority, authority.address, 6030);
       },
       counter,
     );

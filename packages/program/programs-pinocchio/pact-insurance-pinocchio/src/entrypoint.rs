@@ -16,8 +16,8 @@ pub fn process_instruction(
     match disc {
         Discriminator::InitializeProtocol => instructions::initialize_protocol::process(accounts, rest),
         Discriminator::UpdateConfig => instructions::update_config::process(accounts, rest),
-        Discriminator::UpdateOracle
-        | Discriminator::CreatePool
+        Discriminator::UpdateOracle => instructions::update_oracle::process(accounts, rest),
+        Discriminator::CreatePool
         | Discriminator::Deposit
         | Discriminator::EnableInsurance
         | Discriminator::DisablePolicy
