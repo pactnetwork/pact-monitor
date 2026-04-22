@@ -9,7 +9,7 @@ These are repeated at the top of every per-WP spawn prompt in Section C. Violati
 
 1. **Fixed-size strings.** `CoveragePool.provider_hostname` and `Policy.agent_id` are `[u8; 64]` on-disk (not Borsh `String`). Use bytemuck zero-copy. *(Note: spec §2.2 mentions 128 bytes for hostname; Alan's decision is 64 — Section G documents this so we flag it before WP-2 starts.)*
 2. **No state migration.** Only devnet is deployed; no mainnet state. Layout is fresh; devnet is wiped and redeployed post-port. Do NOT write a migration instruction.
-3. **Preserve Anchor error codes `6000..=6027`.** The Pinocchio `From<PactError> for ProgramError` must emit `ProgramError::Custom(6000..=6027)` with the identical semantic mapping Anchor generated. Variant order and names come from `packages/program/programs/pact-insurance/src/error.rs`. Backend/SDK regex depends on this.
+3. **Preserve Anchor error codes `6000..=6030` (31 variants).** The Pinocchio `From<PactError> for ProgramError` must emit `ProgramError::Custom(6000..=6030)` with the identical semantic mapping Anchor generated. Variant order and names come from `packages/program/programs/pact-insurance/src/error.rs`. Backend/SDK regex depends on this. *(Updated post-WP-2: recon spec §6.1 said 31 variants / 6000..=6030 — stale. Commit `8084c41` added `RateBelowFloor`, `PolicyExpired`, `InvalidOracleKey` post-spec-freeze. Live source has 31. The rule "preserve Anchor numbering" overrides the stale numeric range.)*
 4. **Fix `create_pool` mint bug.** The Pinocchio port of `create_pool` MUST add an explicit `pool_usdc_mint.key() == config.usdc_mint` check. This was missing in the Anchor original (spec §8.2) — fixing it during the port is in scope.
 5. **Cooldown-resets-on-every-deposit.** Preserve exactly (spec §8.3). Do not "fix."
 6. **Test harness migrates during the port.** Each instruction PR includes: handler + account validators + Codama-regenerated TS client surface for just that instruction + the migrated Codama/`@solana/kit` test. No "rewrite tests after the port" step.
@@ -38,6 +38,13 @@ WP-1 landed at commit `2524cae` (SBF size 5.4 KiB vs Anchor's 461 KiB). Five dev
    The skill's `migration-from-anchor.md` still shows the 0.9 paths. Future WP agents: use the 0.10 paths; do not copy skill paths verbatim.
 5. **Entrypoint gating.** `entrypoint!(process_instruction)` is gated on the `bpf-entrypoint` feature (default OFF). This lets `cargo test`/`cargo check` on the library work without the SBF linker. `cargo build-sbf --features bpf-entrypoint` is the SBF-build invocation. Library-mode `cargo check` is the default.
 
+### Addendum from WP-4 (Apr 22, 2026)
+
+6. **No `pinocchio::pubkey` module in 0.10.** PDA derivation uses `solana_address::Address::find_program_address(&[...], &ID)` — NOT `pinocchio::pubkey::find_program_address`. The `pinocchio-pubkey` 0.3 crate targets the 0.9 API and is not a substitute.
+7. **`solana-address` is target-split.** Host builds need `features = ["curve25519"]` for `find_program_address` (PDA test support). SBF builds omit the feature. Handled in `pact-insurance-pinocchio/Cargo.toml` via `[target.'cfg(...)'.dependencies]` sections.
+8. **Policy PDA seed truth.** Anchor's `enable_insurance.rs` uses `agent.key().as_ref()` — i.e., the agent signer's 32-byte Pubkey, NOT a hashed `agent_id` string. Recon spec's "agent_id bytes" wording was ambiguous; follow Anchor source. Same principle applies to every other "what is this seed?" question: **Anchor source trumps spec paraphrasing.**
+9. **Claim PDA seed = `[b"claim", policy.as_ref(), sha256(call_id)]`** — caller pre-hashes the `call_id` to 32 bytes. Pool seed is `[b"pool", hostname_bytes]` where `hostname_bytes` is a `&[u8]` slice into the fixed `[u8; 64]` (trimmed at the `\0` terminator to match `String::as_bytes()` length in Anchor).
+
 ---
 
 ## Section A — Work Packages
@@ -58,10 +65,10 @@ Naming: new Pinocchio crate begins life as `pact_insurance_pinocchio` at `packag
 
 ### WP-2: Error module (numeric-preserving)
 
-- **Scope:** port `packages/program/programs/pact-insurance/src/error.rs` to `packages/program/programs-pinocchio/pact-insurance-pinocchio/src/error.rs`. `#[repr(u32)] enum PactError` with variants in the **identical source order** as the Anchor enum (variants 0..=27 → codes 6000..=6027). `impl From<PactError> for ProgramError { |e| ProgramError::Custom(6000 + e as u32) }`. Preserve variant names verbatim (SDK regex depends on name strings in logs — spec §6.1). Add unit test asserting `6000 + ProtocolPaused as u32 == 6000` and each well-known variant maps to its Anchor number.
+- **Scope:** port `packages/program/programs/pact-insurance/src/error.rs` to `packages/program/programs-pinocchio/pact-insurance-pinocchio/src/error.rs`. `#[repr(u32)] enum PactError` with variants in the **identical source order** as the Anchor enum (variants 0..=30 → codes 6000..=6030). `impl From<PactError> for ProgramError { |e| ProgramError::Custom(6000 + e as u32) }`. Preserve variant names verbatim (SDK regex depends on name strings in logs — spec §6.1). Add unit test asserting `6000 + ProtocolPaused as u32 == 6000` and each well-known variant maps to its Anchor number.
 - **Dependencies:** WP-1 merged.
 - **Exit criteria:**
-  - All 28 variants present in identical source order.
+  - All 31 variants present in identical source order.
   - `cargo test --manifest-path packages/program/programs-pinocchio/pact-insurance-pinocchio/Cargo.toml` passes the numeric-preservation unit test.
   - No behavior change in Anchor crate.
 - **Scope size:** S.
@@ -222,7 +229,7 @@ Naming: new Pinocchio crate begins life as `pact_insurance_pinocchio` at `packag
 
 ### WP-18: Backend wiring — `packages/backend/`
 
-- **Scope:** update backend's on-chain read paths to use Codama decoders instead of `@coral-xyz/anchor` `program.account.*.fetch` / `.all`. The error-code log regex already expects `6000..=6027` so it should not need updating — but ADD an explicit test asserting current backend error-string parsing still matches. If anything in `packages/backend/src/**` directly imported `anchor-client.ts`, retarget it at `kit-client.ts`.
+- **Scope:** update backend's on-chain read paths to use Codama decoders instead of `@coral-xyz/anchor` `program.account.*.fetch` / `.all`. The error-code log regex already expects `6000..=6030` so it should not need updating — but ADD an explicit test asserting current backend error-string parsing still matches. If anything in `packages/backend/src/**` directly imported `anchor-client.ts`, retarget it at `kit-client.ts`.
 - **Dependencies:** WP-17 merged.
 - **Exit criteria:**
   - Backend unit tests green.
@@ -313,7 +320,7 @@ Exit criteria:
 Alan's locked decisions (BINDING — do not violate):
 1. Fixed-size [u8; 64] for provider_hostname and agent_id. (WP-3 concern, but note now.)
 2. No migration instruction.
-3. Preserve Anchor error codes 6000..=6027.
+3. Preserve Anchor error codes 6000..=6030.
 4. Fix create_pool mint bug — but that lands in WP-8, not here.
 5. Cooldown-resets-on-every-deposit preserved.
 6. Tests migrate alongside handlers (not relevant to WP-1 — no handler).
@@ -351,7 +358,7 @@ Exit criteria:
 Alan's locked decisions (reminder):
 1. [u8; 64] fixed strings.
 2. No migration.
-3. **THIS WP — preserve 6000..=6027 mapping.**
+3. **THIS WP — preserve 6000..=6030 mapping.**
 4. create_pool mint check — WP-8.
 5. Cooldown-reset preserved.
 6. Tests alongside — no tests for this WP beyond the Rust unit check.
@@ -397,7 +404,7 @@ Exit criteria:
 Alan's locked decisions (reminder):
 1. **THIS WP — [u8; 64] for provider_hostname and agent_id (NOT 128 as spec §2.2 mentions).**
 2. No migration.
-3. 6000..=6027 preserved — WP-2's concern.
+3. 6000..=6030 preserved — WP-2's concern.
 4. create_pool mint check — WP-8.
 5. Cooldown-reset preserved.
 6. Tests alongside — N/A (pure Rust tests).
@@ -431,7 +438,7 @@ Exit criteria:
 Alan's locked decisions (reminder):
 1. [u8; 64] strings (WP-3).
 2. No migration.
-3. 6000..=6027 (WP-2).
+3. 6000..=6030 (WP-2).
 4. create_pool mint check (WP-8).
 5. Cooldown-reset preserved.
 6. Tests alongside — N/A here.
@@ -473,7 +480,7 @@ Exit criteria:
 Alan's locked decisions (reminder):
 1. [u8; 64] strings.
 2. **No migration — fresh layout; do not write a migration instruction.**
-3. 6000..=6027.
+3. 6000..=6030.
 4. create_pool mint check (WP-8).
 5. Cooldown-reset preserved.
 6. **THIS WP — migrate tests for initialize_protocol to Codama/@solana/kit in the same PR.**
@@ -901,7 +908,7 @@ Read first:
 
 Scope:
 - Replace `program.account.X.fetch` / `.all` with Codama decoders.
-- Preserve error-string regex matching — 6000..=6027 log format is unchanged, but add an explicit test confirming this.
+- Preserve error-string regex matching — 6000..=6030 log format is unchanged, but add an explicit test confirming this.
 - If any backend module imports the retired `anchor-client.ts`, retarget to `kit-client.ts`.
 - Add an integration test exercising a `listPolicies`-equivalent memcmp query with `offset: 8` to confirm the invariant from spec §7.2.
 
@@ -997,7 +1004,7 @@ Commit prefix: `refactor(samples): WP-20 retarget to Codama + @solana/kit`.
 |---|---|---|---|
 | `packages/program/` | Total rewrite | WP-1 .. WP-17 | Pinocchio crate replaces Anchor crate. |
 | `packages/insurance/` (`@q3labs/pact-insurance`) | Transport swap; public API preserved | WP-5 onward (generated/); WP-17 cut-over | `anchor-client.ts` deleted at WP-17. `client.ts` and `index.ts` export surface stays identical per spec §7.1. |
-| `packages/backend/` | Fetch / decode path rewrite | WP-18 | Error-regex unchanged due to preserved 6000..=6027. memcmp offset unchanged (8). |
+| `packages/backend/` | Fetch / decode path rewrite | WP-18 | Error-regex unchanged due to preserved 6000..=6030. memcmp offset unchanged (8). |
 | `packages/scorecard/` | Possibly minor — only if it imports the client directly | WP-20 | Sweep; likely just a hard-coded program ID. |
 | `packages/monitor/` | No change expected | — | Does not couple to the on-chain program. |
 | `samples/*` | Transport swap | WP-20 | Any demo that uses the SDK needs retargeting. |

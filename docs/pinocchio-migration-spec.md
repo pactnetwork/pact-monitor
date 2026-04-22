@@ -28,7 +28,7 @@ Source root: `packages/program/programs/pact-insurance/src/`
 | `lib.rs` | `declare_id!`, `#[program]` module with 11 instruction wrappers, optional deployer gate | `#[program]`, `declare_id!`, deployer feature flag, re-export glob |
 | `state.rs` | Five `#[account] #[derive(InitSpace)]` structs + two `#[derive(AnchorSerialize/Deserialize)]` enums; seed prefix constants | `#[account]` (auto 8-byte discriminator), `InitSpace`, `#[max_len(...)]`, Borsh serde for enums |
 | `constants.rs` | 13 plain `pub const` values (pure data) | none — copy verbatim |
-| `error.rs` | `PactError` enum with `#[error_code]`, 28 variants | `#[error_code]` macro — replace with `#[repr(u32)] enum + From<_> for ProgramError::Custom` |
+| `error.rs` | `PactError` enum with `#[error_code]`, 31 variants | `#[error_code]` macro — replace with `#[repr(u32)] enum + From<_> for ProgramError::Custom` |
 | `instructions/mod.rs` | Plain `pub mod` + glob re-export | unchanged |
 | `instructions/initialize_protocol.rs` | Creates `ProtocolConfig` PDA, writes defaults | `init` CreateAccount, `Signer`, feature-gated deployer check |
 | `instructions/update_config.rs` | Authority-gated partial updates with safety floors; `treasury`/`usdc_mint` frozen | `has_one = authority` |
@@ -362,7 +362,7 @@ Anchor `#[error_code]` starts at `6000`. To avoid silently breaking SDK clients 
 |---|---|
 | `ProtocolPaused` | 6000 |
 | `PoolAlreadyExists` | 6001 |
-| ... continue in source order (total 28 variants up to `InvalidOracleKey` = 6027) | |
+| ... continue in source order (total 31 variants up to `InvalidOracleKey` = 6027) | |
 
 Pinocchio impl: `ProgramError::Custom(6000 + variant as u32)`. The SDK/backend currently string-matches error names (e.g. `/Unauthorized/`, `/ConfigSafetyFloorViolation/`), so preserving names is mandatory; preserving numbers is strongly preferred (`AnchorError` log parsing uses them).
 
@@ -435,7 +435,7 @@ Instruction encoding: Anchor encodes ix data as `[8-byte sighash][borsh args]`. 
 1. **UNCLEAR — needs Alan's input:** `CoveragePool.provider_hostname` and `Policy.agent_id` are variable-length `String`s. Pinocchio zero-copy + bytemuck prefers fixed buffers (pay full rent always) vs. variable (no zero-copy). Recommendation: fix to `[u8; MAX_*]` + `u8 len`. Impact: slightly more rent per account (~128 bytes for pool, ~64 bytes for policy); simpler, faster code; preserves `memcmp` offsets.
 2. **UNCLEAR — needs Alan's input:** `create_pool` currently does not assert `usdc_mint == config.usdc_mint`. An attacker with authority (or if authority is compromised) could create a pool for an arbitrary mint. Is this intentional (multi-asset roadmap) or an oversight we should tighten during the port? Security-hardening.ts does not cover it.
 3. **UNCLEAR — needs Alan's input:** `deposit.rs` resets `position.deposit_timestamp` on every top-up, which restarts the withdrawal cooldown. Is this intended? (It looks like it's by design — incentivizes long deposits — but it's surprising UX.)
-4. **UNCLEAR — needs Alan's input:** Error code numbers. Do we commit to keeping `6000..=6027` (Anchor baseline) or are we free to assign fresh `Custom(0..)` codes and patch the backend/SDK error parsing? Preferring to keep the Anchor codes for zero friction.
+4. **UNCLEAR — needs Alan's input:** Error code numbers. Do we commit to keeping `6000..=6030` (Anchor baseline) or are we free to assign fresh `Custom(0..)` codes and patch the backend/SDK error parsing? Preferring to keep the Anchor codes for zero friction.
 5. **UNCLEAR — needs Alan's input:** Is the program ID `2Go74eCvY8vCco3WPuteGzrhKz8v3R7Pcp5tjuFpcmN3` already deployed anywhere important (devnet with real underwriter positions)? If yes, the Pinocchio port is a program upgrade (same ID, upgrade authority redeploys the new `.so`). If no, we can re-deploy fresh. Affects whether existing PDAs must deserialize under the new layout (they won't — accounts would need migration, which is expensive).
 6. **Risk:** `init_if_needed` in `deposit.rs` (position account) is an Anchor convenience that requires explicit two-branch handling in Pinocchio. Classic footgun: re-init must not wipe existing counters. The port must branch `if data_is_empty() { create + init fresh counters } else { verify owner+disc; leave counters untouched }`.
 7. **Risk:** Anchor's `#[account(init, token::mint = X, token::authority = Y)]` fuses System CreateAccount + SPL InitializeAccount3 + ownership transfer. In Pinocchio these are three explicit steps (CreateAccount with owner=TokenProgram, then InitializeAccount3 where `authority=pool_pda`). Easy to forget the `owner=TokenProgram` on CreateAccount; tests will fail at the subsequent transfer CPI because the account will not be owned by Token Program.
@@ -499,7 +499,7 @@ Backend (`packages/backend/**`) is out of scope but likely uses Anchor bindings 
 
 - [ ] **BLOCKER** §8.1 — fixed-size vs variable `String` decision for `CoveragePool.provider_hostname` and `Policy.agent_id`.
 - [ ] **BLOCKER** §8.5 — is program ID `2Go74...` deployed anywhere with non-test state? Determines migration vs fresh-deploy strategy.
-- [ ] **BLOCKER** §6.1 / §8.4 — commit to preserving Anchor error codes 6000..=6027 (recommended) or accept SDK/backend string-match regressions.
+- [ ] **BLOCKER** §6.1 / §8.4 — commit to preserving Anchor error codes 6000..=6030 (recommended) or accept SDK/backend string-match regressions.
 - [ ] §8.2 — should `create_pool` start enforcing `usdc_mint == config.usdc_mint` during the port, or preserve the looser behavior?
 - [ ] §8.3 — confirm cooldown-reset-on-every-deposit is intended.
 - [ ] §10.4 — green-light migrating tests from Anchor-TS to Codama-TS (recommended) vs LiteSVM-Rust.
