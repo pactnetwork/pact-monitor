@@ -24,18 +24,32 @@ These are repeated at the top of every per-WP spawn prompt in Section C. Violati
 - **Section F — Per-WP go/no-go gate**
 - **Section G — Open items for Alan**
 
+## WP-1 post-mortem — conventions locked in by reality (Apr 22, 2026)
+
+WP-1 landed at commit `2524cae` (SBF size 5.4 KiB vs Anchor's 461 KiB). Five deviations from the original plan that now apply to WP-2..WP-20:
+
+1. **Crate directory** is `packages/program/programs-pinocchio/pact-insurance-pinocchio/`, NOT `packages/program/programs/pact-insurance-pinocchio/`. Reason: Anchor 1.0's workspace auto-scans `programs/*` as Anchor crates and fails the test build if any subdir isn't Anchor. WP-17 collapses to a single `programs/` at cut-over.
+2. **`pinocchio-system` and `pinocchio-token` are NOT yet in `Cargo.toml`.** Version alignment: `pinocchio = "0.10"` is incompatible with both `pinocchio-system 0.4` (requires 0.9) and `0.6` (requires 0.11). The first CPI-touching WP (WP-8 `create_pool`) must either pin a git commit of those helpers that aligns with 0.10 or drop to hand-rolled CPI via `pinocchio::cpi::invoke_signed`. Flag as a mini-blocker for WP-8 planner.
+3. **`declare_id!`** comes from `solana-address = { version = "2", features = ["decode"] }` (added as direct dep), NOT from `pinocchio` or `pinocchio-pubkey`. Pinocchio 0.10 dropped `declare_id!`; `pinocchio-pubkey 0.3` targets the 0.9 Pubkey API. All instruction handlers should `use solana_address::Address` (which is what `pinocchio 0.10`'s `account::AccountView::key()` returns anyway).
+4. **Pinocchio 0.10 API paths** differ from the skill docs:
+   - `pinocchio::account_info::AccountInfo` → `pinocchio::account::AccountView`
+   - `pinocchio::pubkey::Pubkey` → `solana_address::Address` (via the new dep)
+   - `pinocchio::program_error::ProgramError` → `pinocchio::error::ProgramError`
+   The skill's `migration-from-anchor.md` still shows the 0.9 paths. Future WP agents: use the 0.10 paths; do not copy skill paths verbatim.
+5. **Entrypoint gating.** `entrypoint!(process_instruction)` is gated on the `bpf-entrypoint` feature (default OFF). This lets `cargo test`/`cargo check` on the library work without the SBF linker. `cargo build-sbf --features bpf-entrypoint` is the SBF-build invocation. Library-mode `cargo check` is the default.
+
 ---
 
 ## Section A — Work Packages
 
-Naming: new Pinocchio crate begins life as `pact_insurance_pinocchio` at `packages/program/programs/pact-insurance-pinocchio/`, parallel to the existing Anchor crate. At cut-over (WP-17) it is renamed to `pact_insurance` and the Anchor crate is deleted.
+Naming: new Pinocchio crate begins life as `pact_insurance_pinocchio` at `packages/program/programs-pinocchio/pact-insurance-pinocchio/`, parallel to the existing Anchor crate. At cut-over (WP-17) it is renamed to `pact_insurance` and the Anchor crate is deleted.
 
 ### WP-1: Scaffolding — parallel Pinocchio crate
 
-- **Scope:** create `packages/program/programs/pact-insurance-pinocchio/` with `Cargo.toml`, `src/lib.rs`, `src/entrypoint.rs`, `src/discriminator.rs`, `src/error.rs` (stub). Empty `process_instruction` that matches 1-byte disc 0..=10 and returns `ProgramError::Custom(u32::MAX)` ("unimplemented") for each. `declare_id!` matches existing Anchor ID `2Go74eCvY8vCco3WPuteGzrhKz8v3R7Pcp5tjuFpcmN3` (spec §0). Add the new crate to the root workspace `packages/program/Cargo.toml`. Do NOT touch `Anchor.toml` yet — both crates coexist.
+- **Scope:** create `packages/program/programs-pinocchio/pact-insurance-pinocchio/` with `Cargo.toml`, `src/lib.rs`, `src/entrypoint.rs`, `src/discriminator.rs`, `src/error.rs` (stub). Empty `process_instruction` that matches 1-byte disc 0..=10 and returns `ProgramError::Custom(u32::MAX)` ("unimplemented") for each. `declare_id!` matches existing Anchor ID `2Go74eCvY8vCco3WPuteGzrhKz8v3R7Pcp5tjuFpcmN3` (spec §0). Add the new crate to the root workspace `packages/program/Cargo.toml`. Do NOT touch `Anchor.toml` yet — both crates coexist.
 - **Dependencies:** none.
 - **Exit criteria:**
-  - `cargo build-sbf --manifest-path packages/program/programs/pact-insurance-pinocchio/Cargo.toml` succeeds.
+  - `cargo build-sbf --manifest-path packages/program/programs-pinocchio/pact-insurance-pinocchio/Cargo.toml` succeeds.
   - The existing `anchor build` in `packages/program/` still succeeds unchanged.
   - Binary size recorded in PR description (baseline for later WPs).
   - No TS/SDK/backend file modified.
@@ -44,18 +58,18 @@ Naming: new Pinocchio crate begins life as `pact_insurance_pinocchio` at `packag
 
 ### WP-2: Error module (numeric-preserving)
 
-- **Scope:** port `packages/program/programs/pact-insurance/src/error.rs` to `packages/program/programs/pact-insurance-pinocchio/src/error.rs`. `#[repr(u32)] enum PactError` with variants in the **identical source order** as the Anchor enum (variants 0..=27 → codes 6000..=6027). `impl From<PactError> for ProgramError { |e| ProgramError::Custom(6000 + e as u32) }`. Preserve variant names verbatim (SDK regex depends on name strings in logs — spec §6.1). Add unit test asserting `6000 + ProtocolPaused as u32 == 6000` and each well-known variant maps to its Anchor number.
+- **Scope:** port `packages/program/programs/pact-insurance/src/error.rs` to `packages/program/programs-pinocchio/pact-insurance-pinocchio/src/error.rs`. `#[repr(u32)] enum PactError` with variants in the **identical source order** as the Anchor enum (variants 0..=27 → codes 6000..=6027). `impl From<PactError> for ProgramError { |e| ProgramError::Custom(6000 + e as u32) }`. Preserve variant names verbatim (SDK regex depends on name strings in logs — spec §6.1). Add unit test asserting `6000 + ProtocolPaused as u32 == 6000` and each well-known variant maps to its Anchor number.
 - **Dependencies:** WP-1 merged.
 - **Exit criteria:**
   - All 28 variants present in identical source order.
-  - `cargo test --manifest-path packages/program/programs/pact-insurance-pinocchio/Cargo.toml` passes the numeric-preservation unit test.
+  - `cargo test --manifest-path packages/program/programs-pinocchio/pact-insurance-pinocchio/Cargo.toml` passes the numeric-preservation unit test.
   - No behavior change in Anchor crate.
 - **Scope size:** S.
 - **Risk flags:** off-by-one on variant order is silent and catastrophic. Include a table in the PR description mapping every variant → number, cross-checked against the Anchor enum.
 
 ### WP-3: State layout (bytemuck, zero-copy, memcmp-compatible)
 
-- **Scope:** port all five account structs to `packages/program/programs/pact-insurance-pinocchio/src/state.rs` as `#[repr(C)] #[derive(Pod, Zeroable)]` structs. Explicit 1-byte `discriminator: u8` as first field, then **7-byte padding**, so the first domain Pubkey lands at **offset 8** in every struct (required by `listPolicies` memcmp query — spec §7.2). Field order per spec §7.2: `ProtocolConfig.authority`, `CoveragePool.authority`, `UnderwriterPosition.pool`, `Policy.agent`, `Claim.policy` are all the first Pubkey after the 8-byte prefix. Use `[u8; 64]` + `u8 len` for `CoveragePool.provider_hostname` and `Policy.agent_id` (Alan's locked decision — constraint #1). Add `LEN` const via `core::mem::size_of::<Self>()`. Add `try_from_bytes` / `try_from_bytes_mut` helpers wrapping `bytemuck::try_from_bytes` with discriminator check. Add `DISCRIMINATOR: u8` const per struct (0..=4). **No handler logic yet** — structs, discriminators, helpers only.
+- **Scope:** port all five account structs to `packages/program/programs-pinocchio/pact-insurance-pinocchio/src/state.rs` as `#[repr(C)] #[derive(Pod, Zeroable)]` structs. Explicit 1-byte `discriminator: u8` as first field, then **7-byte padding**, so the first domain Pubkey lands at **offset 8** in every struct (required by `listPolicies` memcmp query — spec §7.2). Field order per spec §7.2: `ProtocolConfig.authority`, `CoveragePool.authority`, `UnderwriterPosition.pool`, `Policy.agent`, `Claim.policy` are all the first Pubkey after the 8-byte prefix. Use `[u8; 64]` + `u8 len` for `CoveragePool.provider_hostname` and `Policy.agent_id` (Alan's locked decision — constraint #1). Add `LEN` const via `core::mem::size_of::<Self>()`. Add `try_from_bytes` / `try_from_bytes_mut` helpers wrapping `bytemuck::try_from_bytes` with discriminator check. Add `DISCRIMINATOR: u8` const per struct (0..=4). **No handler logic yet** — structs, discriminators, helpers only.
 - **Dependencies:** WP-1 merged. **Can run in parallel with WP-2.**
 - **Exit criteria:**
   - `cargo test` (new crate) passes a round-trip test per struct: zero → fill → `bytes_of` → `try_from_bytes` → field equality.
@@ -66,7 +80,7 @@ Naming: new Pinocchio crate begins life as `pact_insurance_pinocchio` at `packag
 
 ### WP-4: Constants + seed helpers
 
-- **Scope:** verbatim copy of `packages/program/programs/pact-insurance/src/constants.rs` to `packages/program/programs/pact-insurance-pinocchio/src/constants.rs`. Add `src/pda.rs` with helpers: `protocol_seeds()`, `pool_seeds(hostname_bytes)`, `vault_seeds(pool_pubkey)`, `position_seeds(pool, underwriter)`, `policy_seeds(pool, agent)`, `claim_seeds(policy, call_id_hash)`. These return `&[&[u8]]`-shaped slice constants suitable for `find_program_address` and `create_program_address`.
+- **Scope:** verbatim copy of `packages/program/programs/pact-insurance/src/constants.rs` to `packages/program/programs-pinocchio/pact-insurance-pinocchio/src/constants.rs`. Add `src/pda.rs` with helpers: `protocol_seeds()`, `pool_seeds(hostname_bytes)`, `vault_seeds(pool_pubkey)`, `position_seeds(pool, underwriter)`, `policy_seeds(pool, agent)`, `claim_seeds(policy, call_id_hash)`. These return `&[&[u8]]`-shaped slice constants suitable for `find_program_address` and `create_program_address`.
 - **Dependencies:** WP-1. **Can run in parallel with WP-2 and WP-3.**
 - **Exit criteria:**
   - Unit test per seed helper proving PDA derivation matches the Anchor Rust crate's derivation for at least one hard-coded input (cross-crate assertion — import `pact_insurance::ID` into the test).
@@ -196,7 +210,7 @@ Naming: new Pinocchio crate begins life as `pact_insurance_pinocchio` at `packag
 
 ### WP-17: Cut-over — rename Pinocchio crate, delete Anchor crate
 
-- **Scope:** delete `packages/program/programs/pact-insurance/` (the Anchor crate). Rename `packages/program/programs/pact-insurance-pinocchio/` → `packages/program/programs/pact-insurance/`. Update crate name in `Cargo.toml` from `pact_insurance_pinocchio` to `pact_insurance`. Update the root workspace `packages/program/Cargo.toml`. Remove Anchor-specific `Anchor.toml` sections referencing anchor build steps; keep the deploy/cluster config. Delete old Anchor IDL shipping artifacts from `packages/insurance/src/idl/pact_insurance.json`. Finalize `packages/insurance/src/generated/` as the sole on-chain client surface. Delete `packages/insurance/src/anchor-client.ts`; replace with `packages/insurance/src/kit-client.ts` (Codama + `@solana/kit`). Update `packages/insurance/src/client.ts` and `packages/insurance/src/index.ts` so the exported `PactInsurance` class surface from spec §7.1 is **identical** — only the transport underneath changes.
+- **Scope:** delete `packages/program/programs/pact-insurance/` (the Anchor crate). Rename `packages/program/programs-pinocchio/pact-insurance-pinocchio/` → `packages/program/programs/pact-insurance/`. Update crate name in `Cargo.toml` from `pact_insurance_pinocchio` to `pact_insurance`. Update the root workspace `packages/program/Cargo.toml`. Remove Anchor-specific `Anchor.toml` sections referencing anchor build steps; keep the deploy/cluster config. Delete old Anchor IDL shipping artifacts from `packages/insurance/src/idl/pact_insurance.json`. Finalize `packages/insurance/src/generated/` as the sole on-chain client surface. Delete `packages/insurance/src/anchor-client.ts`; replace with `packages/insurance/src/kit-client.ts` (Codama + `@solana/kit`). Update `packages/insurance/src/client.ts` and `packages/insurance/src/index.ts` so the exported `PactInsurance` class surface from spec §7.1 is **identical** — only the transport underneath changes.
 - **Dependencies:** WP-16 merged.
 - **Exit criteria:**
   - `packages/program/` has exactly one crate named `pact_insurance`.
@@ -286,13 +300,13 @@ Read these files first:
 - packages/program/Cargo.toml (root workspace manifest)
 
 Your scope:
-- Create `packages/program/programs/pact-insurance-pinocchio/` parallel to the existing Anchor crate.
+- Create `packages/program/programs-pinocchio/pact-insurance-pinocchio/` parallel to the existing Anchor crate.
 - Stub: `Cargo.toml`, `src/lib.rs` with `declare_id!("2Go74eCvY8vCco3WPuteGzrhKz8v3R7Pcp5tjuFpcmN3")`, `src/entrypoint.rs` using Pinocchio's default entrypoint (NOT `no_allocator!` — spec §8.10), empty `process_instruction` that matches 1-byte disc 0..=10 and returns `ProgramError::Custom(u32::MAX)`.
 - Wire the crate into the workspace.
 - Do NOT modify `Anchor.toml`. Both crates must build side-by-side.
 
 Exit criteria:
-- `cargo build-sbf --manifest-path packages/program/programs/pact-insurance-pinocchio/Cargo.toml` succeeds.
+- `cargo build-sbf --manifest-path packages/program/programs-pinocchio/pact-insurance-pinocchio/Cargo.toml` succeeds.
 - `anchor build` in `packages/program/` still succeeds.
 - PR description records the Pinocchio-crate SBF binary size (baseline for later WPs).
 
@@ -324,14 +338,14 @@ Read first:
 - docs/pinocchio-port-plan.md WP-2
 
 Scope:
-- Port every variant from the Anchor enum to a `#[repr(u32)] pub enum PactError` in `packages/program/programs/pact-insurance-pinocchio/src/error.rs` in **IDENTICAL source order**.
+- Port every variant from the Anchor enum to a `#[repr(u32)] pub enum PactError` in `packages/program/programs-pinocchio/pact-insurance-pinocchio/src/error.rs` in **IDENTICAL source order**.
 - Implement `From<PactError> for ProgramError` emitting `ProgramError::Custom(6000 + variant as u32)`.
 - Preserve variant NAMES verbatim — SDK regex depends on them in log output.
 - Add a unit test cross-checking at least 5 well-known variants (ProtocolPaused=6000, Unauthorized, FrozenConfigField, InvalidOracleKey=6027, and one other) against their Anchor numbers.
 
 Exit criteria:
 - Rust unit test asserts `6000 + ProtocolPaused as u32 == 6000` and `6000 + InvalidOracleKey as u32 == 6027`.
-- `cargo test --manifest-path packages/program/programs/pact-insurance-pinocchio/Cargo.toml` green.
+- `cargo test --manifest-path packages/program/programs-pinocchio/pact-insurance-pinocchio/Cargo.toml` green.
 - PR description includes a full variant-to-number table.
 
 Alan's locked decisions (reminder):
@@ -363,7 +377,7 @@ Read first:
 - .claude/skills/pinocchio-development/docs/edge-cases.md
 
 Scope:
-- Create `packages/program/programs/pact-insurance-pinocchio/src/state.rs`.
+- Create `packages/program/programs-pinocchio/pact-insurance-pinocchio/src/state.rs`.
 - Five structs: ProtocolConfig, CoveragePool, UnderwriterPosition, Policy, Claim. All `#[repr(C)] #[derive(Pod, Zeroable, Copy, Clone)]`.
 - First field of EVERY struct: `pub discriminator: u8`, then `pub _pad: [u8; 7]` — this keeps the first domain Pubkey at byte offset 8 for SDK memcmp compatibility (spec §7.2).
 - Ordering after the padding (per spec §7.2): ProtocolConfig → authority first; CoveragePool → authority first; UnderwriterPosition → pool first; Policy → agent first; Claim → policy first.
@@ -377,7 +391,7 @@ NO HANDLER CODE. Structs + helpers + unit tests only.
 Exit criteria:
 - Per-struct round-trip test: zero → populate → bytes_of → try_from_bytes → field equality.
 - Per-struct padding test: the first Pubkey-typed field is at offset 8.
-- `cargo test --manifest-path packages/program/programs/pact-insurance-pinocchio/Cargo.toml` green.
+- `cargo test --manifest-path packages/program/programs-pinocchio/pact-insurance-pinocchio/Cargo.toml` green.
 - PR description records each struct's `size_of::<Self>()`.
 
 Alan's locked decisions (reminder):
@@ -407,8 +421,8 @@ Read first:
 - docs/pinocchio-port-plan.md WP-4
 
 Scope:
-- `packages/program/programs/pact-insurance-pinocchio/src/constants.rs` — exact verbatim copy.
-- `packages/program/programs/pact-insurance-pinocchio/src/pda.rs` — seed helpers for protocol, pool (takes hostname bytes), vault (takes pool pubkey), position (takes pool+underwriter), policy (takes pool+agent), claim (takes policy + 32-byte hashed call_id).
+- `packages/program/programs-pinocchio/pact-insurance-pinocchio/src/constants.rs` — exact verbatim copy.
+- `packages/program/programs-pinocchio/pact-insurance-pinocchio/src/pda.rs` — seed helpers for protocol, pool (takes hostname bytes), vault (takes pool pubkey), position (takes pool+underwriter), policy (takes pool+agent), claim (takes policy + 32-byte hashed call_id).
 - Seeds MUST match the Anchor crate's seed strings bit-for-bit.
 
 Exit criteria:
@@ -851,7 +865,7 @@ Read first:
 
 Scope:
 - Delete `packages/program/programs/pact-insurance/` (Anchor crate).
-- Rename `packages/program/programs/pact-insurance-pinocchio/` → `packages/program/programs/pact-insurance/`.
+- Rename `packages/program/programs-pinocchio/pact-insurance-pinocchio/` → `packages/program/programs/pact-insurance/`.
 - Rename crate identifier `pact_insurance_pinocchio` → `pact_insurance` in the new Cargo.toml.
 - Remove the old Anchor crate's entry from the workspace root manifest.
 - Remove `anchor build` references in CI workflows and deploy scripts; replace with `cargo build-sbf`.
