@@ -1,0 +1,8 @@
+//! Instruction handlers.
+//!
+//! Each submodule implements a single 1-byte-discriminated instruction whose
+//! index matches the variant of `crate::discriminator::Discriminator`.
+//! The entrypoint dispatches based on the leading byte of `instruction_data`
+//! and forwards the remaining payload bytes to the handler.
+
+pub mod initialize_protocol;

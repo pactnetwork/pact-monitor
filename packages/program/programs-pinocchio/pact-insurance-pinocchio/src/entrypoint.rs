@@ -1,21 +1,21 @@
 use pinocchio::{account::AccountView, address::Address, error::ProgramError, ProgramResult};
 
-use crate::discriminator::Discriminator;
+use crate::{discriminator::Discriminator, instructions};
 
 pub fn process_instruction(
     _program_id: &Address,
-    _accounts: &[AccountView],
+    accounts: &[AccountView],
     instruction_data: &[u8],
 ) -> ProgramResult {
-    let (disc_byte, _rest) = instruction_data
+    let (disc_byte, rest) = instruction_data
         .split_first()
         .ok_or(ProgramError::InvalidInstructionData)?;
 
     let disc = Discriminator::try_from(*disc_byte)?;
 
     match disc {
-        Discriminator::InitializeProtocol
-        | Discriminator::UpdateConfig
+        Discriminator::InitializeProtocol => instructions::initialize_protocol::process(accounts, rest),
+        Discriminator::UpdateConfig
         | Discriminator::UpdateOracle
         | Discriminator::CreatePool
         | Discriminator::Deposit
