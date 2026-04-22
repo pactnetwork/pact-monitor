@@ -35,9 +35,11 @@ import {
 
 import {
   getInitializeProtocolInstruction,
+  getUpdateConfigInstruction,
   findProtocolConfigPda,
   decodeProtocolConfig,
   PACT_INSURANCE_PROGRAM_ADDRESS,
+  type UpdateConfigArgs,
 } from '../../insurance/src/generated/index.js';
 
 // ---------------------------------------------------------------------------
@@ -201,93 +203,295 @@ async function sendInitialize(
 // Tests
 // ---------------------------------------------------------------------------
 
+/** Empty patch — every field `null` (encoded as Borsh `None`). */
+function emptyArgs(): UpdateConfigArgs {
+  return {
+    protocolFeeBps: null,
+    minPoolDeposit: null,
+    defaultInsuranceRateBps: null,
+    defaultMaxCoveragePerCall: null,
+    minPremiumBps: null,
+    withdrawalCooldownSeconds: null,
+    aggregateCapBps: null,
+    aggregateCapWindowSeconds: null,
+    claimWindowSeconds: null,
+    maxClaimsPerBatch: null,
+    paused: null,
+    treasury: null,
+    usdcMint: null,
+  };
+}
+
+async function sendUpdateConfig(
+  h: Harness,
+  payer: KeyPairSigner,
+  authority: KeyPairSigner,
+  config: Address,
+  args: UpdateConfigArgs,
+): Promise<void> {
+  const ix = getUpdateConfigInstruction({
+    config,
+    authority,
+    args,
+  });
+  const { value: latest } = await h.rpc.getLatestBlockhash().send();
+  const msg = pipe(
+    createTransactionMessage({ version: 0 }),
+    (m) => setTransactionMessageFeePayerSigner(payer, m),
+    (m) => setTransactionMessageLifetimeUsingBlockhash(latest, m),
+    (m) => appendTransactionMessageInstruction(ix, m),
+  );
+  const signed = await signTransactionMessageWithSigners(msg);
+  const wire = getBase64EncodedWireTransaction(signed);
+  const sig = await h.rpc
+    .sendTransaction(wire, { encoding: 'base64', preflightCommitment: 'confirmed' })
+    .send();
+  await waitForSignature(h, sig);
+}
+
+async function fetchConfig(h: Harness, pda: Address) {
+  const { value: acct } = await h.rpc
+    .getAccountInfo(pda, { encoding: 'base64' })
+    .send();
+  assert(acct, 'protocol config account should exist');
+  const raw = Buffer.from(acct.data[0], 'base64');
+  return decodeProtocolConfig(new Uint8Array(raw));
+}
+
+async function runCase(
+  label: string,
+  fn: () => Promise<void>,
+  counter: { failures: number },
+): Promise<void> {
+  try {
+    await fn();
+    console.log(`[wp6] PASS: ${label}`);
+  } catch (err) {
+    counter.failures++;
+    console.error(`[wp6] FAIL: ${label} —`, err);
+  }
+}
+
 async function run() {
-  console.log('[wp5] starting validator...');
+  console.log('[wp6] starting validator...');
   const h = await startValidator();
-  let failures = 0;
+  const counter = { failures: 0 };
   try {
     const [protocolPda] = await findProtocolConfigPda();
     const deployer = await fundedSigner(h, 10);
-    const authority = (await generateKeyPairSigner()).address;
+    // WP-6: authority is now a real signer so it can call update_config.
+    const authority = await fundedSigner(h, 2);
     const oracle = (await generateKeyPairSigner()).address;
     const treasury = (await generateKeyPairSigner()).address;
     const usdcMint = (await generateKeyPairSigner()).address;
 
-    // Test 1 — initializes the protocol config with a separate authority and oracle
-    try {
-      await sendInitialize(h, deployer, protocolPda, {
-        authority,
-        oracle,
-        treasury,
-        usdcMint,
-      });
-
-      const { value: acct } = await h.rpc
-        .getAccountInfo(protocolPda, { encoding: 'base64' })
-        .send();
-      assert(acct, 'protocol config account should exist');
-      const raw = Buffer.from(acct.data[0], 'base64');
-      const cfg = decodeProtocolConfig(new Uint8Array(raw));
-
-      assert.equal(cfg.discriminator, 0);
-      assert.equal(cfg.authority, authority);
-      assert.equal(cfg.oracle, oracle);
-      assert.equal(cfg.treasury, treasury);
-      assert.equal(cfg.usdcMint, usdcMint);
-      assert.notEqual(cfg.authority, deployer.address);
-      assert.notEqual(cfg.authority, cfg.oracle);
-      assert.equal(cfg.protocolFeeBps, 1500);
-      assert.equal(cfg.minPoolDeposit, 100_000_000n);
-      assert.equal(cfg.withdrawalCooldownSeconds, 604_800n);
-      assert.equal(cfg.aggregateCapBps, 3000);
-      assert.equal(cfg.aggregateCapWindowSeconds, 86_400n);
-      assert.equal(cfg.paused, 0);
-      console.log('[wp5] PASS: initializes the protocol config with a separate authority and oracle');
-    } catch (err) {
-      failures++;
-      console.error('[wp5] FAIL: initialize test —', err);
-    }
-
-    // Test 2 — rejects second initialization (PDA already exists)
-    try {
-      let threw = false;
-      try {
+    // ---- Test 1 (WP-5) — initialize with a separate authority and oracle ----
+    await runCase(
+      'initializes the protocol config with a separate authority and oracle',
+      async () => {
         await sendInitialize(h, deployer, protocolPda, {
-          authority,
+          authority: authority.address,
           oracle,
           treasury,
           usdcMint,
         });
+
+        const cfg = await fetchConfig(h, protocolPda);
+        assert.equal(cfg.discriminator, 0);
+        assert.equal(cfg.authority, authority.address);
+        assert.equal(cfg.oracle, oracle);
+        assert.equal(cfg.treasury, treasury);
+        assert.equal(cfg.usdcMint, usdcMint);
+        assert.notEqual(cfg.authority, deployer.address);
+        assert.notEqual(cfg.authority, cfg.oracle);
+        assert.equal(cfg.protocolFeeBps, 1500);
+        assert.equal(cfg.minPoolDeposit, 100_000_000n);
+        assert.equal(cfg.withdrawalCooldownSeconds, 604_800n);
+        assert.equal(cfg.aggregateCapBps, 3000);
+        assert.equal(cfg.aggregateCapWindowSeconds, 86_400n);
+        assert.equal(cfg.paused, 0);
+      },
+      counter,
+    );
+
+    // ---- Test 2 (WP-5) — reject second init ----
+    await runCase(
+      'rejects second initialization (PDA already exists)',
+      async () => {
+        let threw = false;
+        try {
+          await sendInitialize(h, deployer, protocolPda, {
+            authority: authority.address,
+            oracle,
+            treasury,
+            usdcMint,
+          });
+        } catch (err) {
+          threw = true;
+          const detail = JSON.stringify(err, Object.getOwnPropertyNames(err));
+          assert.match(
+            detail,
+            /already in use|AccountAlreadyInitialized|already initialized|0x0|custom program error|requires an uninitialized account/i,
+            `second init should surface account-already-in-use, got: ${detail}`,
+          );
+        }
+        assert(threw, 'second init must reject');
+      },
+      counter,
+    );
+
+    // Helper — drive an update_config tx that is EXPECTED to fail with a
+    // specific PactError code. The kit RPC surfaces this in two shapes:
+    //   1. `"Custom program error: #6022 (instruction #N)"` (decimal, `#` prefix)
+    //   2. `"custom program error: 0x1786"` (hex, raw validator output)
+    // The helper accepts the decimal code and matches both.
+    const expectReject = async (
+      args: UpdateConfigArgs,
+      expectedCode: number,
+      signer: KeyPairSigner = authority,
+    ) => {
+      const hex = expectedCode.toString(16);
+      const decPattern = `#${expectedCode}\\b`;
+      const hexPattern = `0x${hex}\\b`;
+      const pattern = new RegExp(`${decPattern}|${hexPattern}`, 'i');
+      let threw = false;
+      try {
+        await sendUpdateConfig(h, deployer, signer, protocolPda, args);
       } catch (err) {
         threw = true;
-        // The kit SolanaError can shape the preflight detail under a context
-        // object (`err.context.preflightErrorMessage`) or fold it into the
-        // message. Walk both surfaces so we match Anchor-style
-        // `already in use`, our own `AccountAlreadyInitialized`, or the
-        // runtime's `custom program error: 0x0` forms.
         const detail = JSON.stringify(err, Object.getOwnPropertyNames(err));
         assert.match(
           detail,
-          /already in use|AccountAlreadyInitialized|already initialized|0x0|custom program error|requires an uninitialized account/i,
-          `second init should surface account-already-in-use, got: ${detail}`,
+          pattern,
+          `expected custom error ${expectedCode} (0x${hex}), got: ${detail}`,
         );
       }
-      assert(threw, 'second init must reject');
-      console.log('[wp5] PASS: rejects second initialization (PDA already exists)');
-    } catch (err) {
-      failures++;
-      console.error('[wp5] FAIL: reject-second-init test —', err);
-    }
+      assert(threw, 'update_config must reject');
+    };
+
+    // ---- Test 3 — updates protocol_fee_bps when authority calls ----
+    await runCase(
+      'updates protocol_fee_bps when authority calls update_config',
+      async () => {
+        await sendUpdateConfig(h, deployer, authority, protocolPda, {
+          ...emptyArgs(),
+          protocolFeeBps: 2000,
+        });
+        const cfg = await fetchConfig(h, protocolPda);
+        assert.equal(cfg.protocolFeeBps, 2000);
+      },
+      counter,
+    );
+
+    // ---- Test 4 — rejects protocol_fee_bps above ABSOLUTE_MAX (3000) ----
+    await runCase(
+      'rejects protocol_fee_bps above ABSOLUTE_MAX (3000)',
+      async () => {
+        await expectReject(
+          { ...emptyArgs(), protocolFeeBps: 3500 },
+          6022,
+        );
+      },
+      counter,
+    );
+
+    // ---- Test 5 — rejects withdrawal_cooldown below ABSOLUTE_MIN (3600) ----
+    await runCase(
+      'rejects withdrawal_cooldown below ABSOLUTE_MIN (3600)',
+      async () => {
+        await expectReject(
+          { ...emptyArgs(), withdrawalCooldownSeconds: 1000n },
+          6022,
+        );
+      },
+      counter,
+    );
+
+    // ---- Test 6 — rejects aggregate_cap_bps above ABSOLUTE_MAX (8000) ----
+    await runCase(
+      'rejects aggregate_cap_bps above ABSOLUTE_MAX (8000)',
+      async () => {
+        await expectReject(
+          { ...emptyArgs(), aggregateCapBps: 9000 },
+          6022,
+        );
+      },
+      counter,
+    );
+
+    // ---- Test 7 — rejects update_config from non-authority ----
+    await runCase(
+      'rejects update_config from non-authority',
+      async () => {
+        const rando = await fundedSigner(h, 1);
+        await expectReject(
+          { ...emptyArgs(), protocolFeeBps: 500 },
+          6018,
+          rando,
+        );
+      },
+      counter,
+    );
+
+    // ---- Test 8 — rejects min_pool_deposit below ABSOLUTE_MIN (1_000_000) ----
+    await runCase(
+      'rejects min_pool_deposit below ABSOLUTE_MIN (1_000_000)',
+      async () => {
+        await expectReject(
+          { ...emptyArgs(), minPoolDeposit: 500_000n },
+          6022,
+        );
+      },
+      counter,
+    );
+
+    // ---- Test 9 — rejects claim_window_seconds below ABSOLUTE_MIN (60) ----
+    await runCase(
+      'rejects claim_window_seconds below ABSOLUTE_MIN (60)',
+      async () => {
+        await expectReject(
+          { ...emptyArgs(), claimWindowSeconds: 10n },
+          6022,
+        );
+      },
+      counter,
+    );
+
+    // ---- Test 10 (H-03) — rejects treasury mutation ----
+    await runCase(
+      'H-03: update_config rejects treasury mutation',
+      async () => {
+        const newTreasury = (await generateKeyPairSigner()).address;
+        await expectReject(
+          { ...emptyArgs(), treasury: newTreasury },
+          6026,
+        );
+      },
+      counter,
+    );
+
+    // ---- Test 11 (H-03) — rejects usdc_mint mutation ----
+    await runCase(
+      'H-03: update_config rejects usdc_mint mutation',
+      async () => {
+        const newMint = (await generateKeyPairSigner()).address;
+        await expectReject(
+          { ...emptyArgs(), usdcMint: newMint },
+          6026,
+        );
+      },
+      counter,
+    );
   } finally {
-    console.log('[wp5] stopping validator...');
+    console.log('[wp6] stopping validator...');
     await stopValidator(h);
   }
 
-  if (failures > 0) {
-    console.error(`[wp5] ${failures} test(s) failed`);
+  if (counter.failures > 0) {
+    console.error(`[wp6] ${counter.failures} test(s) failed`);
     process.exit(1);
   }
-  console.log('[wp5] all migrated tests passed');
+  console.log('[wp6] all migrated tests passed');
 }
 
 run().catch((err) => {

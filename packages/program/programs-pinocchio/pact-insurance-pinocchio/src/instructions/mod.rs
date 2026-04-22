@@ -6,3 +6,4 @@
 //! and forwards the remaining payload bytes to the handler.
 
 pub mod initialize_protocol;
+pub mod update_config;

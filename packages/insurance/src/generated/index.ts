@@ -6,5 +6,7 @@
 
 export * from './programs/pactInsurance.js';
 export * from './instructions/initializeProtocol.js';
+export * from './instructions/updateConfig.js';
 export * from './accounts/protocolConfig.js';
 export * from './types/initializeProtocolArgs.js';
+export * from './types/updateConfigArgs.js';
