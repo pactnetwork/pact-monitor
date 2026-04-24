@@ -7,6 +7,7 @@
 
 pub mod create_pool;
 pub mod deposit;
+pub mod disable_policy;
 pub mod enable_insurance;
 pub mod initialize_protocol;
 pub mod update_config;

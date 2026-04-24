@@ -1,4 +1,5 @@
-// WP-12 migration target: policy.ts — enable_insurance handler tests.
+// WP-12 / WP-13 migration target: policy.ts — enable_insurance +
+// disable_policy handler tests.
 //
 // Covers:
 //   1. rejects enable_insurance without prior SPL approve (DelegationMissing 6003)
@@ -8,6 +9,9 @@
 //   4. accepts referrer + share_bps=1000 and snapshots into Policy
 //   5. rejects share_bps > 3000 (MAX_REFERRER_SHARE_BPS) — RateOutOfBounds 6027
 //   6. rejects referrer_present=1 + share_bps=0 mutual-exclusion — InvalidRate 6014
+//   WP-13 additions:
+//   7. H-05: disable_policy sets active=false + decrements active_policies
+//   8. disable_policy rejects from non-agent signer (Unauthorized 6018)
 //
 // Run with:
 //   pnpm tsx tests-pinocchio/policy.ts
@@ -56,11 +60,13 @@ import {
   getInitializeProtocolInstruction,
   getCreatePoolInstruction,
   getEnableInsuranceInstruction,
+  getDisablePolicyInstruction,
   findProtocolConfigPda,
   findCoveragePoolPda,
   findCoveragePoolVaultPda,
   findPolicyPda,
   decodePolicy,
+  decodeCoveragePool,
   getPolicyAgentId,
   PACT_INSURANCE_PROGRAM_ADDRESS,
 } from '../../insurance/src/generated/index.js';
@@ -650,6 +656,131 @@ async function run() {
           );
         }
         assert(threw, 'share_bps > 3000 must reject');
+      },
+      counter,
+    );
+
+    // ---- WP-13 Test — H-05 disable_policy happy path ------------------
+    await runCase(
+      'H-05: disable_policy sets active=false + decrements active_policies',
+      async () => {
+        const hostname = 'disable-h05.example.com';
+        const { poolPda } = await makePool(hostname);
+        const agent = await makeAgent();
+        const [policyPda] = await findPolicyPda(poolPda, agent.signer.address);
+
+        // Enable first so we have an active policy to disable.
+        const approveIx = createApproveInstruction(
+          new PublicKey(agent.ata),
+          new PublicKey(poolPda),
+          agent.kp.publicKey,
+          10_000_000,
+        );
+        const enableIx = getEnableInsuranceInstruction({
+          config: protocolPda,
+          pool: poolPda,
+          policy: policyPda,
+          agentTokenAccount: agent.ata,
+          agent: agent.signer,
+          args: {
+            agentId: 'agent-disable-h05',
+            expiresAt: futureTs(),
+            referrer: new Uint8Array(32),
+            referrerPresent: 0,
+            referrerShareBps: 0,
+          },
+        });
+        await sendTxMany(h, agent.signer, [w3IxToKit(approveIx), enableIx]);
+
+        // Snapshot pool.active_policies before disable.
+        const poolRawBefore = await fetchAccountData(h, poolPda);
+        assert(poolRawBefore, 'pool exists before disable');
+        const poolBefore = decodeCoveragePool(poolRawBefore);
+        assert.equal(poolBefore.activePolicies, 1);
+
+        // Disable.
+        const disableIx = getDisablePolicyInstruction({
+          pool: poolPda,
+          policy: policyPda,
+          agent: agent.signer,
+        });
+        await sendTx(h, agent.signer, disableIx);
+
+        // Policy.active flipped to 0.
+        const policyRaw = await fetchAccountData(h, policyPda);
+        assert(policyRaw, 'policy still exists after disable');
+        const policy = decodePolicy(policyRaw);
+        assert.equal(policy.active, 0, 'policy.active == 0 post-disable');
+
+        // Pool.active_policies saturating-decremented by 1.
+        const poolRawAfter = await fetchAccountData(h, poolPda);
+        assert(poolRawAfter, 'pool exists after disable');
+        const poolAfter = decodeCoveragePool(poolRawAfter);
+        assert.equal(
+          poolAfter.activePolicies,
+          poolBefore.activePolicies - 1,
+          'active_policies decremented by 1',
+        );
+      },
+      counter,
+    );
+
+    // ---- WP-13 Test — reject disable_policy from non-agent signer ------
+    await runCase(
+      'disable_policy rejects from non-agent signer (Unauthorized 6018)',
+      async () => {
+        const hostname = 'disable-nonagent.example.com';
+        const { poolPda } = await makePool(hostname);
+        const agent = await makeAgent();
+        const [policyPda] = await findPolicyPda(poolPda, agent.signer.address);
+
+        const approveIx = createApproveInstruction(
+          new PublicKey(agent.ata),
+          new PublicKey(poolPda),
+          agent.kp.publicKey,
+          10_000_000,
+        );
+        const enableIx = getEnableInsuranceInstruction({
+          config: protocolPda,
+          pool: poolPda,
+          policy: policyPda,
+          agentTokenAccount: agent.ata,
+          agent: agent.signer,
+          args: {
+            agentId: 'agent-nonagent',
+            expiresAt: futureTs(),
+            referrer: new Uint8Array(32),
+            referrerPresent: 0,
+            referrerShareBps: 0,
+          },
+        });
+        await sendTxMany(h, agent.signer, [w3IxToKit(approveIx), enableIx]);
+
+        // Different signer attempts to disable.
+        const attacker = await fundedSigner(h, 5);
+        const disableIx = getDisablePolicyInstruction({
+          pool: poolPda,
+          policy: policyPda,
+          agent: attacker,
+        });
+
+        const expectedCode = 6018;
+        const hex = expectedCode.toString(16);
+        const pattern = new RegExp(`#${expectedCode}\\b|0x${hex}\\b`, 'i');
+
+        let threw = false;
+        try {
+          await sendTx(h, attacker, disableIx);
+        } catch (err) {
+          threw = true;
+          const detail = JSON.stringify(err, Object.getOwnPropertyNames(err));
+          assert.match(
+            detail,
+            pattern,
+            `expected Unauthorized (${expectedCode}/0x${hex}), got: ${detail}`,
+          );
+        }
+        assert(threw, 'non-agent signer must be rejected');
       },
       counter,
     );

@@ -314,6 +314,34 @@
       }
     },
     {
+      "name": "disablePolicy",
+      "accounts": [
+        {
+          "name": "pool",
+          "isMut": true,
+          "isSigner": false,
+          "docs": ["Coverage pool PDA — seeds = [\"pool\", providerHostname]. Writable (active_policies saturating_sub 1)."]
+        },
+        {
+          "name": "policy",
+          "isMut": true,
+          "isSigner": false,
+          "docs": ["Policy PDA — seeds = [\"policy\", pool, agent]. Writable (active flipped to 0)."]
+        },
+        {
+          "name": "agent",
+          "isMut": false,
+          "isSigner": true,
+          "docs": ["Agent wallet. Must match `policy.agent` (has_one). No rent payment — read-only signer."]
+        }
+      ],
+      "args": [],
+      "discriminant": {
+        "type": "u8",
+        "value": 6
+      }
+    },
+    {
       "name": "withdraw",
       "accounts": [
         {
