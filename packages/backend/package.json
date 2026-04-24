@@ -10,6 +10,7 @@
     "seed": "tsx src/scripts/seed.ts",
     "generate-key": "tsx src/scripts/generate-key.ts",
     "migrate:canonicalize-hostnames": "tsx migrations/20260422-canonicalize-hostnames.ts",
+    "migrate:referrer-schema": "tsx migrations/20260424-referrer-schema.ts",
     "test": "tsx --test src/utils/*.test.ts src/routes/*.test.ts migrations/*.test.ts"
   },
   "dependencies": {

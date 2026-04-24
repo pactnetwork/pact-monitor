@@ -13,6 +13,7 @@ import { claimsSubmitRoute } from "./routes/claims-submit.js";
 import { poolsRoute } from "./routes/pools.js";
 import { premiumRoutes } from "./routes/premium.js";
 import { sandboxRoutes } from "./routes/sandbox.js";
+import { partnersRoutes } from "./routes/partners.js";
 import { startCrank } from "./crank/index.js";
 import { adminRoutes } from "./routes/admin.js";
 import { faucetRoutes } from "./routes/faucet.js";
@@ -49,6 +50,7 @@ await app.register(premiumRoutes);
 // mainnet-deployed instances is safe — every request 403s until network
 // detection reports devnet.
 await app.register(sandboxRoutes);
+await app.register(partnersRoutes);
 await app.register(adminRoutes);
 await app.register(faucetRoutes);
 
