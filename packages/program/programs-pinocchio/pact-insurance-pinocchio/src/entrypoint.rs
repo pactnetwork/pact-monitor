@@ -18,8 +18,8 @@ pub fn process_instruction(
         Discriminator::UpdateConfig => instructions::update_config::process(accounts, rest),
         Discriminator::UpdateOracle => instructions::update_oracle::process(accounts, rest),
         Discriminator::CreatePool => instructions::create_pool::process(accounts, rest),
-        Discriminator::Deposit
-        | Discriminator::EnableInsurance
+        Discriminator::Deposit => instructions::deposit::process(accounts, rest),
+        Discriminator::EnableInsurance
         | Discriminator::DisablePolicy
         | Discriminator::SettlePremium
         | Discriminator::Withdraw

@@ -163,6 +163,69 @@
         "type": "u8",
         "value": 3
       }
+    },
+    {
+      "name": "deposit",
+      "accounts": [
+        {
+          "name": "config",
+          "isMut": false,
+          "isSigner": false,
+          "docs": ["Protocol config PDA — seeds = [\"protocol\"]. Read-only."]
+        },
+        {
+          "name": "pool",
+          "isMut": true,
+          "isSigner": false,
+          "docs": ["Coverage pool PDA — seeds = [\"pool\", providerHostname]."]
+        },
+        {
+          "name": "vault",
+          "isMut": true,
+          "isSigner": false,
+          "docs": ["SPL-Token vault PDA — seeds = [\"vault\", pool]. Destination of the transfer."]
+        },
+        {
+          "name": "position",
+          "isMut": true,
+          "isSigner": false,
+          "docs": ["Underwriter position PDA — seeds = [\"position\", pool, underwriter]. init_if_needed; handler branches on is_data_empty."]
+        },
+        {
+          "name": "underwriterTokenAccount",
+          "isMut": true,
+          "isSigner": false,
+          "docs": ["SPL-Token account source of the transfer. mint must equal pool.usdcMint; owner must equal underwriter."]
+        },
+        {
+          "name": "underwriter",
+          "isMut": true,
+          "isSigner": true,
+          "docs": ["Underwriter wallet. Signs the transfer and pays rent for position init."]
+        },
+        {
+          "name": "tokenProgram",
+          "isMut": false,
+          "isSigner": false,
+          "docs": ["SPL Token Program — `TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA`."]
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false,
+          "docs": ["System Program — `11111111111111111111111111111111`."]
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ],
+      "discriminant": {
+        "type": "u8",
+        "value": 4
+      }
     }
   ],
   "accounts": [
@@ -219,6 +282,25 @@
           { "name": "providerHostnameLen", "type": "u8" },
           { "name": "bump", "type": "u8" },
           { "name": "padTail", "type": { "array": ["u8", 6] } }
+        ]
+      }
+    },
+    {
+      "name": "UnderwriterPosition",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          { "name": "discriminator", "type": "u8" },
+          { "name": "pad", "type": { "array": ["u8", 7] } },
+          { "name": "pool", "type": "publicKey" },
+          { "name": "underwriter", "type": "publicKey" },
+          { "name": "deposited", "type": "u64" },
+          { "name": "earnedPremiums", "type": "u64" },
+          { "name": "lossesAbsorbed", "type": "u64" },
+          { "name": "depositTimestamp", "type": "i64" },
+          { "name": "lastClaimTimestamp", "type": "i64" },
+          { "name": "bump", "type": "u8" },
+          { "name": "padTail", "type": { "array": ["u8", 7] } }
         ]
       }
     }

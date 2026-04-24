@@ -6,11 +6,11 @@
 //! pin. The SPL-Token instruction layout we need (`InitializeAccount3`) is
 //! stable, so encoding it directly is smaller than chasing a compatible fork.
 //!
-//! This module covers only what WP-8's `create_pool` needs: binding an
-//! already-System-created token account to `(mint, owner)` via
-//! `InitializeAccount3` (discriminant byte 18). No sign-via-PDA is required
-//! here — the SPL Token Program reads the owner pubkey from the instruction
-//! payload rather than from a signer.
+//! WP-8 added `InitializeAccount3` for the vault binding; WP-9 extends with
+//! `Transfer` (discriminant byte 3) to move USDC from a user-signed source
+//! token account into the pool vault on `deposit`. Same encoding strategy —
+//! a few bytes of instruction data and three account metas — so we stay
+//! inside the zero-dep posture.
 
 use pinocchio::{
     account::AccountView,
@@ -70,4 +70,47 @@ pub fn initialize_account3(
     };
 
     invoke::<2>(&instruction, &[account, mint])
+}
+
+// ---------------------------------------------------------------------------
+// SPL-Token `Transfer` (discriminant 3)
+// ---------------------------------------------------------------------------
+
+/// Discriminant of `TokenInstruction::Transfer { amount }`. Historically the
+/// third variant of the `spl-token` enum — byte `0x03`.
+const TRANSFER_DISC: u8 = 3;
+
+/// Encoded payload length: 1-byte disc + u64 LE amount.
+const TRANSFER_DATA_LEN: usize = 1 + 8;
+
+/// CPI into SPL-Token `Transfer`, user-authority variant.
+///
+/// Moves `amount` base units from `source` to `destination`. `authority` must
+/// be a `Signer` on the outer transaction (the user underwriter for WP-9's
+/// `deposit` flow). No signer seeds — the authority signs the caller tx, not
+/// a PDA.
+#[inline]
+pub fn transfer_user_signed(
+    source: &AccountView,
+    destination: &AccountView,
+    authority: &AccountView,
+    amount: u64,
+) -> ProgramResult {
+    let mut data = [0u8; TRANSFER_DATA_LEN];
+    data[0] = TRANSFER_DISC;
+    data[1..9].copy_from_slice(&amount.to_le_bytes());
+
+    let accounts = [
+        InstructionAccount::new(source.address(), true, false),
+        InstructionAccount::new(destination.address(), true, false),
+        InstructionAccount::new(authority.address(), false, true),
+    ];
+
+    let instruction = InstructionView {
+        program_id: &SPL_TOKEN_PROGRAM_ID,
+        accounts: &accounts,
+        data: &data,
+    };
+
+    invoke::<3>(&instruction, &[source, destination, authority])
 }
