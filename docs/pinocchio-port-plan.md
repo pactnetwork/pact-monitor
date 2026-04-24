@@ -56,7 +56,11 @@ WP-1 landed at commit `2524cae` (SBF size 5.4 KiB vs Anchor's 461 KiB). Five dev
 
 14. **SPL Token InitializeAccount3 CPI is hand-rolled** at `src/token.rs` (sibling of `src/system.rs`). Same version-conflict reason — no `pinocchio-token` dep. Instruction data: `[disc=18 u8, owner: [u8; 32]]`. Accounts: `[vault (writable), mint, rent sysvar]`. SPL Token program ID `TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA`.
 15. **Vault PDA must be owned by `spl_token::ID` at CreateAccount time.** Spec §8.7 footgun. The `create_pool` handler creates the vault with `owner = spl_token::ID`, THEN invokes InitializeAccount3. Do not set owner to our program ID.
-16. **`CoveragePool.vault_bump` is stashed in `_pad_tail[0]`** — WP-8 reused the first byte of the state struct's 6-byte trailing pad instead of adding a named field (WP-3's compile-time size/offset asserts pin the layout). **WP-9 (`deposit`), WP-10 (`withdraw`), WP-12 (`enable_insurance`), WP-14 (`settle_premium`) read `pool._pad_tail[0]` to get the vault bump** for their pool-authority signer seeds. Document this inline in each handler. If Phase 5 F1 lands `reserved: [u8; 64]` on CoveragePool as project-wide convention, the vault_bump can be promoted to a named field inside the reserved pad — re-evaluate then.
+16. **CoveragePool bump storage (refined at WP-10):**
+    - `CoveragePool.bump` — **named field** (for the pool PDA itself). Used by any handler that signs CPIs with pool-PDA authority.
+    - `CoveragePool._pad_tail[0]` — holds `vault_bump` (for the `[b"vault", pool]` PDA). Used by withdraw/settle_premium when signing transfers FROM the vault.
+    - WP-10 added `src/pda.rs::pool_signer_seeds(hostname, bump)` and `src/pda.rs::vault_signer_seeds(pool_pubkey, bump)` as shared stack-friendly builders. **WP-12/14/15 MUST reuse these** instead of building signer seeds inline; see WP-10 commit `c000d7c` for the expected shape.
+    - Signer-seed lifetime (spec §8.8 footgun): build as `[Seed; N]` stack-locals in the handler frame; use Pinocchio 0.10's `cpi::Signer::from(&[Seed])` passed into `invoke_signed::<N>`. **NEVER `.to_vec()` or heap-allocate the seed slices** — they get dropped before the CPI executes.
 
 ---
 
