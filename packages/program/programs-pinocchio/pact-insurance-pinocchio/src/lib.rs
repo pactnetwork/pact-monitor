@@ -8,6 +8,7 @@ pub mod instructions;
 pub mod pda;
 pub mod state;
 pub mod system;
+pub mod token;
 
 #[cfg(feature = "bpf-entrypoint")]
 pinocchio::entrypoint!(entrypoint::process_instruction);

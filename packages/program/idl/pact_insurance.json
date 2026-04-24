@@ -98,6 +98,71 @@
         "type": "u8",
         "value": 2
       }
+    },
+    {
+      "name": "createPool",
+      "accounts": [
+        {
+          "name": "config",
+          "isMut": false,
+          "isSigner": false,
+          "docs": ["Protocol config PDA — seeds = [\"protocol\"]. Read-only."]
+        },
+        {
+          "name": "pool",
+          "isMut": true,
+          "isSigner": false,
+          "docs": ["Coverage pool PDA — seeds = [\"pool\", providerHostname]. Created by this instruction."]
+        },
+        {
+          "name": "vault",
+          "isMut": true,
+          "isSigner": false,
+          "docs": ["SPL-Token vault PDA — seeds = [\"vault\", pool]. Created owned by the Token Program; authority = pool."]
+        },
+        {
+          "name": "poolUsdcMint",
+          "isMut": false,
+          "isSigner": false,
+          "docs": ["USDC mint. Handler enforces equality with `config.usdcMint` (Unauthorized 6018 otherwise)."]
+        },
+        {
+          "name": "authority",
+          "isMut": true,
+          "isSigner": true,
+          "docs": ["Protocol authority; must match `config.authority`. Pays rent."]
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false,
+          "docs": ["System Program — `11111111111111111111111111111111`."]
+        },
+        {
+          "name": "tokenProgram",
+          "isMut": false,
+          "isSigner": false,
+          "docs": ["SPL Token Program — `TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA`."]
+        },
+        {
+          "name": "rent",
+          "isMut": false,
+          "isSigner": false,
+          "docs": ["Rent sysvar. Kept for account-list compatibility with the Anchor builder; unused by the handler."]
+        }
+      ],
+      "args": [
+        {
+          "name": "args",
+          "type": {
+            "defined": "CreatePoolArgs"
+          }
+        }
+      ],
+      "discriminant": {
+        "type": "u8",
+        "value": 3
+      }
     }
   ],
   "accounts": [
@@ -125,6 +190,35 @@
           { "name": "paused", "type": "u8" },
           { "name": "bump", "type": "u8" },
           { "name": "padTail", "type": { "array": ["u8", 5] } }
+        ]
+      }
+    },
+    {
+      "name": "CoveragePool",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          { "name": "discriminator", "type": "u8" },
+          { "name": "pad", "type": { "array": ["u8", 7] } },
+          { "name": "authority", "type": "publicKey" },
+          { "name": "usdcMint", "type": "publicKey" },
+          { "name": "vault", "type": "publicKey" },
+          { "name": "providerHostname", "type": { "array": ["u8", 64] } },
+          { "name": "totalDeposited", "type": "u64" },
+          { "name": "totalAvailable", "type": "u64" },
+          { "name": "totalPremiumsEarned", "type": "u64" },
+          { "name": "totalClaimsPaid", "type": "u64" },
+          { "name": "maxCoveragePerCall", "type": "u64" },
+          { "name": "payoutsThisWindow", "type": "u64" },
+          { "name": "windowStart", "type": "i64" },
+          { "name": "createdAt", "type": "i64" },
+          { "name": "updatedAt", "type": "i64" },
+          { "name": "activePolicies", "type": "u32" },
+          { "name": "insuranceRateBps", "type": "u16" },
+          { "name": "minPremiumBps", "type": "u16" },
+          { "name": "providerHostnameLen", "type": "u8" },
+          { "name": "bump", "type": "u8" },
+          { "name": "padTail", "type": { "array": ["u8", 6] } }
         ]
       }
     }
@@ -162,9 +256,30 @@
           { "name": "usdcMint", "type": { "option": "publicKey" } }
         ]
       }
+    },
+    {
+      "name": "CreatePoolArgs",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          { "name": "providerHostname", "type": "string" },
+          { "name": "insuranceRateBps", "type": { "option": "u16" } },
+          { "name": "maxCoveragePerCall", "type": { "option": "u64" } }
+        ]
+      }
     }
   ],
   "errors": [
+    {
+      "code": 6000,
+      "name": "ProtocolPaused",
+      "msg": "Protocol is paused."
+    },
+    {
+      "code": 6015,
+      "name": "HostnameTooLong",
+      "msg": "Provider hostname exceeds the 64-byte on-disk limit."
+    },
     {
       "code": 6018,
       "name": "Unauthorized",

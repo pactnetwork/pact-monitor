@@ -5,6 +5,7 @@
 //! The entrypoint dispatches based on the leading byte of `instruction_data`
 //! and forwards the remaining payload bytes to the handler.
 
+pub mod create_pool;
 pub mod initialize_protocol;
 pub mod update_config;
 pub mod update_oracle;
