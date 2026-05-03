@@ -6,11 +6,22 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 import pg from "pg";
 import { canonicalHostname } from "../src/utils/hostname.js";
 
 const CONNECTION =
   process.env.DATABASE_URL || "postgresql://pact:pact@localhost:5433/pact";
+
+// Resolve the migration script relative to this test file so the suite
+// runs on any developer machine and in CI. The original commit had an
+// absolute path tied to the author's laptop.
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const MIGRATION_SCRIPT = resolve(
+  __dirname,
+  "20260422-canonicalize-hostnames.ts",
+);
 
 // Inline the planning helper so the test doesn't depend on export surface.
 interface ProviderRow {
@@ -113,10 +124,7 @@ describe("hostname canonicalization migration", () => {
     const { spawnSync } = await import("node:child_process");
     const result = spawnSync(
       "npx",
-      [
-        "tsx",
-        "/Users/q3labsadmin/Q3/Solder/pact-network-phase5/packages/backend/migrations/20260422-canonicalize-hostnames.ts",
-      ],
+      ["tsx", MIGRATION_SCRIPT],
       {
         env: { ...process.env, DATABASE_URL: CONNECTION },
         encoding: "utf-8",
