@@ -204,21 +204,18 @@ mod tests {
         addr_from_bytes(0xDD)
     }
 
-    /// Compute the same derivation the Anchor crate would compute, using the
-    /// same seed prefix literals from Anchor's `state.rs` (`b"protocol"`,
-    /// `b"pool"`, `b"vault"`, `b"position"`, `b"policy"`, `b"claim"`) and
-    /// the same program `ID`. Any divergence in either value fails the
-    /// assertion and surfaces a seed-string typo.
+    /// WP-19 promoted Pinocchio to a fresh program ID; the legacy Anchor
+    /// crate keeps its own ID as a rollback fallback (see PR #45 description).
+    /// Pin the Pinocchio-side ID so a stray edit to `lib.rs::declare_id!` is
+    /// caught here before it cascades into every PDA fixture below. The
+    /// Anchor program ID lives separately in `programs/pact-insurance/src/lib.rs`
+    /// and is no longer expected to match.
     #[test]
-    fn program_id_matches_anchor_crate() {
-        // Anchor's `declare_id!("2Go74eCvY8vCco3WPuteGzrhKz8v3R7Pcp5tjuFpcmN3")`
-        // (see packages/program/programs/pact-insurance/src/lib.rs) MUST equal
-        // the pinocchio crate's declared ID. This is the anchor of all PDA
-        // derivations — if it drifts, every test below becomes meaningless.
-        let expected = "2Go74eCvY8vCco3WPuteGzrhKz8v3R7Pcp5tjuFpcmN3"
+    fn program_id_matches_pinocchio_declaration() {
+        let expected = "7i9zJMwaTRw4Tdy7SAfXJdDkYQD39xyKmkBhWuUSgDJU"
             .parse::<Address>()
             .expect("valid base58");
-        assert_eq!(ID, expected, "program ID drift");
+        assert_eq!(ID, expected, "Pinocchio program ID drift");
     }
 
     #[test]
@@ -293,11 +290,16 @@ mod tests {
 
     // ---- Hard-coded fixture pins ------------------------------------------
     //
-    // These lock the derived PDAs to concrete base58 strings. If any seed
-    // prefix literal is accidentally edited (e.g. `b"policy"` → `b"Policy"`),
-    // the derivation shifts and these tests fail loudly. Values generated
-    // once via `cargo test -- --nocapture` against the implementation above
-    // and then pinned here.
+    // These lock the derived PDAs to concrete base58 strings under the
+    // post-WP-19 Pinocchio program ID `7i9zJ…`. If any seed prefix literal
+    // is accidentally edited (e.g. `b"policy"` → `b"Policy"`), or the
+    // declared program ID drifts, the derivation shifts and these tests
+    // fail loudly. Values were regenerated once after the fresh-ID redeploy
+    // (PR #45 / WP-19) via `cargo test -- --nocapture` and pinned here.
+    //
+    // Note: the protocol fixture matches the on-chain seeded
+    // ProtocolConfig PDA `HLU6tUmmJtBYwjzCenvNeEEcwSezzkE7cTTsW18uK5MK`
+    // verifiable via `solana account HLU6tUmm... --url devnet`.
 
     fn assert_pda_eq(got: Address, expected_base58: &str, label: &str) {
         let expected = expected_base58
@@ -309,20 +311,20 @@ mod tests {
     #[test]
     fn pinned_fixture_protocol() {
         let (pda, _bump) = derive_protocol();
-        assert_pda_eq(pda, "EDoHJLmyMx3nuBeKLssf9JppQAXJ1zKp7ZNJKVc8eGKt", "protocol");
+        assert_pda_eq(pda, "HLU6tUmmJtBYwjzCenvNeEEcwSezzkE7cTTsW18uK5MK", "protocol");
     }
 
     #[test]
     fn pinned_fixture_pool_openai() {
         let (pda, _bump) = derive_pool(b"api.openai.com");
-        assert_pda_eq(pda, "3Y3u6wWA738U9j2XboVkSfTmggYyqyVADagoApxdGmjr", "pool");
+        assert_pda_eq(pda, "7VSVcQMfqTdsiSGmjrg3ceQJDso7aeBuh6iaTAX7ux8c", "pool");
     }
 
     #[test]
     fn pinned_fixture_vault() {
         let pool = test_pool_key();
         let (pda, _bump) = derive_vault(&pool);
-        assert_pda_eq(pda, "6W24jTcgUfKgd9qKwmeu8ikvhgzcm199xwMqown8No7Q", "vault");
+        assert_pda_eq(pda, "C9pRQChsRsJ914CVGarSkTBPmjw9rZy9QrHcV6HSo7an", "vault");
     }
 
     #[test]
@@ -330,7 +332,7 @@ mod tests {
         let pool = test_pool_key();
         let uw = test_underwriter_key();
         let (pda, _bump) = derive_position(&pool, &uw);
-        assert_pda_eq(pda, "CVmkmA4hpFcZvrovZCXtnooPbcghq3R6YTdVvRqbPwZc", "position");
+        assert_pda_eq(pda, "81dqp356ja99aaQ9LiQugmyjWzTA7JxbpY494C5hPLBL", "position");
     }
 
     #[test]
@@ -338,7 +340,7 @@ mod tests {
         let pool = test_pool_key();
         let agent = test_agent_key();
         let (pda, _bump) = derive_policy(&pool, &agent);
-        assert_pda_eq(pda, "8aJYR6JH7aTDjzsuvTt9mLu84LSr393QZ1kS4LeyXJ7u", "policy");
+        assert_pda_eq(pda, "6sjLrUhd9fDEqtg2GTtVS19iXrauP8W1nkzGgfX7ezSe", "policy");
     }
 
     #[test]
@@ -346,6 +348,6 @@ mod tests {
         let policy = test_policy_key();
         let call_id_hash: [u8; 32] = [0x42; 32];
         let (pda, _bump) = derive_claim(&policy, &call_id_hash);
-        assert_pda_eq(pda, "54eJrfuZV2bjVWVwcDgdzAXhEATFp7bG3M5JbC9Wn7Ro", "claim");
+        assert_pda_eq(pda, "9vaDmGjEtX1koXgb8w2gQGsaGNhk8rNBtDUt7MzExHbE", "claim");
     }
 }

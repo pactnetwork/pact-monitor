@@ -11,11 +11,18 @@ name = "pact_insurance_pinocchio"
 [features]
 default = []
 bpf-entrypoint = []
-# When enabled, `initialize_protocol` requires the transaction-level deployer
-# signer to match the baked-in `DEPLOYER_PUBKEY`. Left OFF by default so that
-# `cargo test` / localnet integration tests can initialize with an arbitrary
-# payer. The mainnet / devnet build must enable this feature.
-enforce-deployer = []
+# C-01 / WP-5 deployer guard is ON BY DEFAULT for SBF builds. Any
+# `cargo build-sbf --manifest-path .../Cargo.toml --features bpf-entrypoint`
+# emits a binary that rejects `initialize_protocol` calls signed by anyone
+# other than the baked-in `DEPLOYER_PUBKEY`. This is the safe default — the
+# mainnet / devnet artifact must NOT need any extra flag to be hardened.
+#
+# Integration tests that need to call `initialize_protocol` from an arbitrary
+# payer build the SBF binary with `--features bpf-entrypoint,unsafe-bypass-deployer`.
+# This feature MUST NEVER be enabled for a production artifact; the CI
+# `Build Pinocchio (mainnet artifact)` job bakes the safe defaults, and a
+# separate `Build Pinocchio (test artifact)` job opts into the bypass.
+unsafe-bypass-deployer = []
 
 [dependencies]
 # `cpi` feature exposes `pinocchio::cpi::{invoke_signed, Seed, Signer}` — used

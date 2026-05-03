@@ -69,9 +69,15 @@ pub fn process(accounts: &[AccountView], data: &[u8]) -> ProgramResult {
         return Err(ProgramError::InvalidAccountData);
     }
 
-    // Optional mainnet / devnet guard. Default build leaves this OFF so that
-    // `cargo test` / localnet tests can use an arbitrary payer.
-    #[cfg(feature = "enforce-deployer")]
+    // C-01 deployer guard. Enforced for ALL SBF builds by default; only the
+    // explicit `unsafe-bypass-deployer` feature (CI test-artifact job, never
+    // production) skips it. Host `cargo test` builds don't link the SBF
+    // entrypoint and don't run this handler in attack scenarios — but the
+    // check still compiles and is exercised by unit tests below for
+    // determinism. Re-evaluating the gate at runtime instead of compile-time
+    // would burn extra CU on mainnet for no benefit, so the bypass is a
+    // build-time `cfg` rather than a runtime flag.
+    #[cfg(not(feature = "unsafe-bypass-deployer"))]
     {
         use crate::error::PactError;
         use crate::DEPLOYER_PUBKEY;

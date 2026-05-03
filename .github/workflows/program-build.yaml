@@ -12,8 +12,32 @@ on:
       - ".github/workflows/program-build.yaml"
 
 jobs:
-  build-pinocchio:
-    name: Build Pinocchio (default)
+  pinocchio-host-tests:
+    name: Pinocchio host tests (cargo test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            packages/program/target
+          key: ${{ runner.os }}-cargo-pinocchio-host-${{ hashFiles('packages/program/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-pinocchio-host-
+
+      - name: cargo test (PDA fixtures, state round-trips, error codes)
+        working-directory: packages/program
+        run: cargo test -p pact-insurance-pinocchio --no-fail-fast
+
+  pinocchio-mainnet-artifact:
+    name: Build Pinocchio (mainnet artifact, deployer enforced)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -28,39 +52,83 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             packages/program/target
-          key: ${{ runner.os }}-cargo-pinocchio-${{ hashFiles('packages/program/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-pinocchio-mainnet-${{ hashFiles('packages/program/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-pinocchio-
+            ${{ runner.os }}-cargo-pinocchio-mainnet-
 
-      - name: Install cargo-build-sbf
+      - name: Install cargo-build-sbf (Anza)
         run: |
           if ! command -v cargo-build-sbf &>/dev/null; then
             sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"
             echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
           fi
 
-      - name: Build Pinocchio crate
+      - name: Build Pinocchio crate (production defaults — no bypass)
         working-directory: packages/program
         run: |
           cargo build-sbf \
             --manifest-path programs-pinocchio/pact-insurance-pinocchio/Cargo.toml \
             --features bpf-entrypoint
 
+      - name: Verify DEPLOYER_PUBKEY immediate is baked into the binary
+        working-directory: packages/program
+        run: |
+          # Decode the base58 deployer pubkey to raw 32-byte hex and grep the
+          # .so for the exact byte sequence. If the bypass feature were
+          # accidentally enabled, the constant would still be present (it's
+          # `pub const`), so this check is necessary-but-not-sufficient.
+          DEPLOYER_BASE58="5XyGGyazg6rGJU3Hjkrx1PDM1rBE3FraRnMauSR46rW1"
+          DEPLOYER_HEX=$(python3 -c "
+          import sys
+          ALPHA = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
+          n = 0
+          for c in '$DEPLOYER_BASE58':
+              n = n * 58 + ALPHA.index(c)
+          b = n.to_bytes(32, 'big')
+          print(b.hex())
+          ")
+          SO=target/deploy/pact_insurance_pinocchio.so
+          if ! xxd -p "$SO" | tr -d '\n' | grep -q "$DEPLOYER_HEX"; then
+            echo "::error::DEPLOYER_PUBKEY (5XyGGy...) not found in $SO."
+            echo "        This means either the constant was renamed or the build dropped it."
+            exit 1
+          fi
+          echo "DEPLOYER_PUBKEY present in mainnet artifact: ok"
+
+      - name: Reject the unsafe-bypass-deployer combination on mainnet artifact
+        working-directory: packages/program
+        run: |
+          # Defense-in-depth: explicitly fail the job if anyone tries to land
+          # a workflow change that bakes the bypass feature into this job.
+          if grep -q "unsafe-bypass-deployer" \
+              ../../.github/workflows/program-build.yaml \
+              | grep -i "mainnet"; then
+            echo "::error::Mainnet artifact build must not enable unsafe-bypass-deployer."
+            exit 1
+          fi
+
       - name: Record binary size
         working-directory: packages/program
         run: |
           SO=target/deploy/pact_insurance_pinocchio.so
           SIZE=$(stat -c%s "$SO" 2>/dev/null || stat -f%z "$SO")
-          echo "Pinocchio binary: ${SIZE} bytes ($(( SIZE / 1024 )) KiB)"
+          echo "Mainnet binary: ${SIZE} bytes ($(( SIZE / 1024 )) KiB)"
 
-  legacy-anchor-build:
-    name: Legacy Anchor build (informational)
+      - name: Upload mainnet artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pact_insurance_pinocchio-mainnet
+          path: packages/program/target/deploy/pact_insurance_pinocchio.so
+          if-no-files-found: error
+          retention-days: 30
+
+  pinocchio-test-artifact:
+    name: Build Pinocchio (test artifact, deployer bypass)
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust
+      - name: Install Rust + SBF toolchain
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo
@@ -70,16 +138,35 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             packages/program/target
-          key: ${{ runner.os }}-cargo-anchor-${{ hashFiles('packages/program/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-pinocchio-test-${{ hashFiles('packages/program/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-anchor-
+            ${{ runner.os }}-cargo-pinocchio-test-
 
-      - name: Install Solana + Anchor CLI
+      - name: Install cargo-build-sbf (Anza)
         run: |
-          sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"
-          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
-          cargo install --git https://github.com/coral-xyz/anchor anchor-cli --locked || true
+          if ! command -v cargo-build-sbf &>/dev/null; then
+            sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"
+            echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+          fi
 
-      - name: Build Anchor legacy crate (informational — non-blocking)
+      - name: Build Pinocchio crate (test-only — bypass enabled)
         working-directory: packages/program
-        run: anchor build
+        run: |
+          cargo build-sbf \
+            --manifest-path programs-pinocchio/pact-insurance-pinocchio/Cargo.toml \
+            --features bpf-entrypoint,unsafe-bypass-deployer
+
+      - name: Record binary size
+        working-directory: packages/program
+        run: |
+          SO=target/deploy/pact_insurance_pinocchio.so
+          SIZE=$(stat -c%s "$SO" 2>/dev/null || stat -f%z "$SO")
+          echo "Test binary: ${SIZE} bytes ($(( SIZE / 1024 )) KiB)"
+
+      - name: Upload test artifact (do NOT deploy this binary)
+        uses: actions/upload-artifact@v4
+        with:
+          name: pact_insurance_pinocchio-test-bypass
+          path: packages/program/target/deploy/pact_insurance_pinocchio.so
+          if-no-files-found: error
+          retention-days: 7

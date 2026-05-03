@@ -137,12 +137,21 @@ pub fn process(accounts: &[AccountView], data: &[u8]) -> ProgramResult {
     }
 
     // ---- expiry gate (H-05: no `active` gate) -----------------------------
-    let (policy_expires_at, policy_pool, policy_referrer, policy_referrer_present) = {
+    let (
+        policy_expires_at,
+        policy_pool,
+        policy_agent,
+        policy_agent_token_account,
+        policy_referrer,
+        policy_referrer_present,
+    ) = {
         let policy_data = policy_acct.try_borrow()?;
         let policy = Policy::try_from_bytes(&policy_data)?;
         (
             policy.expires_at,
             policy.pool,
+            policy.agent,
+            policy.agent_token_account,
             policy.referrer,
             policy.referrer_present,
         )
@@ -155,6 +164,12 @@ pub fn process(accounts: &[AccountView], data: &[u8]) -> ProgramResult {
     // Policy must belong to this pool.
     if policy_pool != *pool_acct.address() {
         return Err(PactError::Unauthorized.into());
+    }
+    // Mirror Anchor constraint `agent_token_account.key() == policy.agent_token_account`.
+    // Without this, an oracle-signed crank can debit any same-mint token account
+    // delegated to the pool while crediting the wrong policy's premium counter.
+    if agent_ata_acct.address() != &policy_agent_token_account {
+        return Err(PactError::TokenAccountMismatch.into());
     }
 
     // ---- pool snapshot: rate, usdc_mint, vault, hostname, bump -----------
@@ -210,13 +225,21 @@ pub fn process(accounts: &[AccountView], data: &[u8]) -> ProgramResult {
         }
     }
 
-    // Agent ATA: mint, delegation, premium math.
+    // Agent ATA: mint, owner, delegation, premium math.
     let agent_amount;
     let agent_delegated_amount;
     {
         let a_data = agent_ata_acct.try_borrow()?;
         let a_mint = token_account::read_mint(&a_data)?;
         if a_mint != pool_usdc_mint.as_ref() {
+            return Err(PactError::TokenAccountMismatch.into());
+        }
+        // Defense-in-depth: even though the address pin above ties this account
+        // to `policy.agent_token_account`, also confirm SPL ownership matches
+        // `policy.agent`. Catches a stale/closed-and-rebound ATA where the pin
+        // address is correct but the underlying owner has changed.
+        let a_owner = token_account::read_owner(&a_data)?;
+        if a_owner != policy_agent.as_ref() {
             return Err(PactError::TokenAccountMismatch.into());
         }
         let delegate = token_account::read_delegate(&a_data)?;
