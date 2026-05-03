@@ -10,8 +10,19 @@ import { PactInsurance } from "./client.js";
 import { createAnchorClient } from "./legacy-anchor-client.js";
 import {
   findCoveragePoolPda,
+  findPolicyPda,
+  findProtocolConfigPda,
   getEnableInsuranceInstruction,
+  COVERAGE_POOL_SEED,
+  POLICY_SEED,
+  PROTOCOL_CONFIG_SEED,
+  PACT_INSURANCE_PROGRAM_ADDRESS,
 } from "./generated/index.js";
+import {
+  fixEncoderSize,
+  getAddressEncoder,
+  getProgramDerivedAddress,
+} from "@solana/kit";
 
 // Regression test for the kit/web3 instruction-shape bug. Prior version of
 // kit-client.ts called createApproveInstruction() (web3.js shape:
@@ -82,6 +93,62 @@ describe("kit instruction shape — regression for the 'length 9' bug", () => {
         `accounts[${i}].address must be a base58 string of length 32-44. Got: ${typeof acct.address}: ${String(acct.address)}`,
       );
     }
+  });
+});
+
+// Regression test for the programId override hole flagged in PR #47 review:
+// the SDK's PactInsurance({ programId }) config used to be a half-truth.
+// withProgramAddress() rewrote the program target on the built instruction,
+// but the PDAs (protocol config, pool, policy) were still derived against
+// the baked-in default via the Codama-generated find*Pda helpers. Pointing
+// the SDK at a non-default deploy would silently send to the right program
+// but reference accounts that exist under the wrong one — guaranteed
+// failure. The kit-client now derives every PDA from client.programId.
+//
+// This test asserts: for a custom programId, deriving the SAME seeds
+// against the custom id and against the baked-in default produces
+// DIFFERENT PDAs. Invariant: if find*Pda() and the SDK agreed for a
+// non-default programId, this assertion would fail and we'd be back in
+// the silent-divergence world.
+describe("programId override — PDA derivation must use configured programId", () => {
+  const customProgramId = address("4Z1Y3W49U2Cn6bz9UpkahVP7LaeobQ4cAaEt3uNaqSob");
+
+  async function deriveLocal(programId: typeof customProgramId, seeds: Uint8Array[]) {
+    return getProgramDerivedAddress({ programAddress: programId, seeds });
+  }
+
+  it("protocol config PDA differs between custom and default programId", async () => {
+    const [defaultPda] = await findProtocolConfigPda();
+    const [customPda] = await deriveLocal(customProgramId, [PROTOCOL_CONFIG_SEED]);
+    assert.notEqual(
+      String(customPda),
+      String(defaultPda),
+      "PDAs derived under different program IDs must not collide — if they did, the test setup is wrong",
+    );
+    assert.notEqual(String(customPda), String(PACT_INSURANCE_PROGRAM_ADDRESS));
+  });
+
+  it("coverage pool PDA differs between custom and default programId for same hostname", async () => {
+    const hostname = "api.example.com";
+    const [defaultPda] = await findCoveragePoolPda(hostname);
+    const [customPda] = await deriveLocal(customProgramId, [
+      COVERAGE_POOL_SEED,
+      new TextEncoder().encode(hostname),
+    ]);
+    assert.notEqual(String(customPda), String(defaultPda));
+  });
+
+  it("policy PDA differs between custom and default programId for same (pool, agent)", async () => {
+    const dummyPool = address("11111111111111111111111111111111");
+    const dummyAgent = address("11111111111111111111111111111112");
+    const addrEnc = fixEncoderSize(getAddressEncoder(), 32);
+    const [defaultPda] = await findPolicyPda(dummyPool, dummyAgent);
+    const [customPda] = await deriveLocal(customProgramId, [
+      POLICY_SEED,
+      addrEnc.encode(dummyPool),
+      addrEnc.encode(dummyAgent),
+    ]);
+    assert.notEqual(String(customPda), String(defaultPda));
   });
 });
 
