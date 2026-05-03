@@ -37,7 +37,7 @@ describe("PactMonitor events", () => {
 
     assert.equal(failures.length, 1);
     assert.equal(failures[0]!.statusCode, 500);
-    assert.equal(failures[0]!.classification, "error");
+    assert.equal(failures[0]!.classification, "server_error");
   });
 
   it("emits 'billed' on every call (success and failure)", async () => {
@@ -116,7 +116,7 @@ describe("PactMonitor events", () => {
     );
 
     assert.equal(failures.length, 1);
-    assert.equal(failures[0]!.classification, "error");
+    assert.equal(failures[0]!.classification, "server_error");
   });
 });
 

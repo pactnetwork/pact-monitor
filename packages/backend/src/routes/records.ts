@@ -12,7 +12,7 @@ interface RecordInput {
   timestamp: string;
   status_code: number;
   latency_ms: number;
-  classification: "success" | "timeout" | "error" | "schema_mismatch";
+  classification: "success" | "timeout" | "client_error" | "server_error" | "schema_mismatch";
   payment_protocol?: "x402" | "mpp" | null;
   payment_amount?: number | null;
   payment_asset?: string | null;
