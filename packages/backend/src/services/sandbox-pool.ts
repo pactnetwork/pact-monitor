@@ -5,6 +5,16 @@
 // out, fires a claim on its behalf, and releases it. When all keypairs are
 // in-flight concurrently, the route returns 503 with Retry-After.
 //
+// Concurrency model: SINGLE-PROCESS. The `inUse[idx] = true|false` mutation
+// is safe under Node's single-threaded event loop, but breaks under cluster
+// mode, multiple replicas, or PM2 workers — two pods would simultaneously
+// hand out the same keypair and double-spend devnet SOL on its behalf. F3
+// is a devnet-only path so the blast radius is limited, but if this backend
+// ever scales horizontally, replace the in-process boolean array with a
+// DB-backed lease (e.g. `SELECT FOR UPDATE SKIP LOCKED` over a
+// sandbox_keypair_leases table). Don't add cluster mode without doing
+// that first.
+//
 // Why fixed-size instead of lazy generation:
 //   - pre-funding with SOL + USDC is manual ops via topup-sandbox-pool.sh.
 //     Generating ad-hoc keypairs would push that cost to request time and

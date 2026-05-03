@@ -17,7 +17,11 @@
 //   pnpm exec tsx scripts/register-referrer.ts --api-key-label=<label> --clear
 //
 // Env
-//   BACKEND_URL  default http://localhost:3001
+//   BACKEND_URL  default http://localhost:3001 — MUST be set when running
+//                from outside the backend host, otherwise the script
+//                silently PATCHes a localhost backend that may not exist
+//                and exit 2 with a fetch error. Set explicitly in any
+//                staging/prod runbook.
 //   ADMIN_TOKEN  required — must match the backend's ADMIN_TOKEN
 //
 // Exit codes
@@ -165,6 +169,10 @@ async function main(): Promise<void> {
   }
 
   const url = `${backendUrl}/api/v1/admin/api-keys/${encodeURIComponent(parsed.apiKeyLabel)}/referrer`;
+  // Echo the target URL so ops sees exactly which backend we're hitting
+  // before we mutate anything. Especially important in shared envs where
+  // the default localhost can mask "you forgot to set BACKEND_URL".
+  console.error(`PATCH ${url}`);
   const res = await fetch(url, {
     method: "PATCH",
     headers: {

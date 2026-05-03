@@ -87,6 +87,11 @@ CREATE TABLE IF NOT EXISTS api_keys (
 
 ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS agent_pubkey TEXT;
 ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';
+-- Drop any pre-existing index with the same name (legacy dev DBs may have a
+-- non-unique variant), then recreate as UNIQUE. Tiny table, so the brief
+-- AccessExclusiveLock during drop is microseconds and runs at boot before
+-- traffic is accepted.
+DROP INDEX IF EXISTS idx_api_keys_label;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_label ON api_keys(label);
 CREATE INDEX IF NOT EXISTS idx_api_keys_agent_pubkey ON api_keys(agent_pubkey);
 

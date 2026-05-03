@@ -188,12 +188,16 @@ export function createSandboxRoutes(options: RouteOptions = {}) {
               hostname,
             });
           }
-          const message = err instanceof Error ? err.message : String(err);
+          // Log the raw error server-side (tx hashes, RPC URLs, keypair
+          // info, etc. all stay in the structured log). The public
+          // response gets a generic message so internal details don't
+          // leak to the integrator's terminal or any error-tracking SaaS
+          // that captures HTTP responses.
           request.log.error({ err }, "Sandbox failure injection failed");
           return reply.code(500).send({
             schema_version: 1,
             error: "sandbox_failure",
-            message,
+            message: "Sandbox claim failed; backend logged details",
           });
         } finally {
           lease.release();
