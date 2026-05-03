@@ -7,7 +7,7 @@ import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import Fastify from "fastify";
-import { query, getOne, pool as pgPool } from "../db.js";
+import { initDb, query, getOne, pool as pgPool } from "../db.js";
 import { adminRoutes } from "./admin.js";
 import { partnersRoutes } from "./partners.js";
 
@@ -36,6 +36,10 @@ describe("F1 referrer registration + partners read endpoint", () => {
 
   before(async () => {
     process.env.ADMIN_TOKEN = ADMIN_TOKEN;
+    // Apply schema.sql so a stale dev DB (or fresh CI Postgres) gets the
+    // post-Phase-3 ALTERs needed by the records ingest end-to-end test
+    // (call_records.agent_pubkey, api_keys.referrer_pubkey, etc.). Idempotent.
+    await initDb();
     app = await buildApp();
 
     // Seed: one key to become a referrer; one key that stays an outsider.
@@ -360,6 +364,168 @@ describe("F1 referrer registration + partners read endpoint", () => {
       });
       assert.equal(res.statusCode, 400);
       assert.equal(res.json().error, "invalid_cursor");
+    });
+
+    it("rejects cursor in the future", async () => {
+      const future = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/partners/${REFERRER_PUBKEY}/policies?cursor=${encodeURIComponent(future)}`,
+        headers: { authorization: `Bearer ${ADMIN_TOKEN}` },
+      });
+      assert.equal(res.statusCode, 400);
+      assert.equal(res.json().error, "invalid_cursor");
+      assert.match(res.json().message, /must not be in the future/);
+    });
+
+    it("claims_paid_usdc is the WINDOW total, not the page total", async () => {
+      // Seed 3 claims totalling 3.00 USDC (3 * 1_000_000 raw). Request
+      // limit=1; the headline total must still report the full window
+      // (3.00), not just the single returned row (1.00).
+      const provRow = await getOne<{ id: string }>(
+        `INSERT INTO providers (name, base_url) VALUES ($1, $2) RETURNING id`,
+        [`partners-window-${randomUUID()}`, `partners-window-${randomUUID()}.example`],
+      );
+      const claimIds: string[] = [];
+      for (let i = 0; i < 3; i++) {
+        const cr = await getOne<{ id: string }>(
+          `INSERT INTO call_records
+             (provider_id, endpoint, timestamp, status_code, latency_ms, classification, agent_id)
+             VALUES ($1, '/x', NOW() - ($2 || ' minutes')::interval, 500, 100, 'error', 'partners-window-test-agent')
+             RETURNING id`,
+          [provRow!.id, String(i)],
+        );
+        const c = await getOne<{ id: string }>(
+          `INSERT INTO claims
+             (call_record_id, provider_id, agent_id, trigger_type, refund_pct, refund_amount, referrer_pubkey)
+             VALUES ($1, $2, 'partners-window-test-agent', 'error', 100, 1000000, $3)
+             RETURNING id`,
+          [cr!.id, provRow!.id, REFERRER_PUBKEY],
+        );
+        claimIds.push(c!.id);
+      }
+
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/partners/${REFERRER_PUBKEY}/policies?limit=1`,
+        headers: { authorization: `Bearer ${ADMIN_TOKEN}` },
+      });
+      assert.equal(res.statusCode, 200);
+      const body = res.json();
+      // Page is bounded by limit, but the headline total covers the window.
+      assert.equal(body.pagination.limit, 1);
+      assert.equal(body.totals.claims_paid_usdc, "3.00");
+
+      // Cleanup
+      await query("DELETE FROM claims WHERE id = ANY($1::uuid[])", [claimIds]);
+      await query(
+        "DELETE FROM call_records WHERE agent_id = $1 AND provider_id = $2",
+        ["partners-window-test-agent", provRow!.id],
+      );
+      await query("DELETE FROM providers WHERE id = $1", [provRow!.id]);
+    });
+  });
+
+  describe("end-to-end: records ingest writes claims.referrer_pubkey", () => {
+    // Reviewer's High finding: registering a referrer on an API key was a
+    // no-op for analytics because the records → claims path never carried
+    // referrer_pubkey through. This test exercises the full chain:
+    // PATCH the api_keys.referrer_pubkey, then POST a failure record using
+    // that key, then assert the claims row picked up the referrer snapshot.
+
+    it("populates claims.referrer_pubkey from the API key's registration", async () => {
+      // Lazy-load records routes here so the harness wires up the
+      // requireApiKey middleware.
+      const { recordsRoutes } = await import("./records.js");
+      const subApp = Fastify();
+      await subApp.register(recordsRoutes);
+      try {
+        // 1. Make sure the referrer is registered on the test API key.
+        await query(
+          "UPDATE api_keys SET referrer_pubkey = $1, referrer_share_bps = $2 WHERE label = $3",
+          [REFERRER_PUBKEY, 1000, REF_LABEL],
+        );
+
+        // 2. POST a failing record under that key. payment_amount must be
+        //    > 0 so maybeCreateClaim actually inserts a claim.
+        const provHostname = `partners-e2e-${randomUUID()}.example`;
+        const res = await subApp.inject({
+          method: "POST",
+          url: "/api/v1/records",
+          headers: {
+            authorization: `Bearer ${REF_API_KEY}`,
+            "content-type": "application/json",
+          },
+          payload: {
+            records: [
+              {
+                hostname: provHostname,
+                endpoint: "/v0/x",
+                timestamp: new Date().toISOString(),
+                status_code: 500,
+                latency_ms: 100,
+                classification: "error",
+                payment_amount: 1_000_000,
+              },
+            ],
+          },
+        });
+        assert.equal(res.statusCode, 200);
+        const body = res.json();
+        assert.equal(body.accepted, 1);
+
+        // 3. The claim row should carry the referrer snapshot.
+        const provRow = await getOne<{ id: string }>(
+          "SELECT id FROM providers WHERE base_url = $1",
+          [provHostname],
+        );
+        assert.ok(provRow, "provider row must exist after ingest");
+        const claim = await getOne<{
+          referrer_pubkey: string | null;
+          status: string;
+        }>(
+          `SELECT referrer_pubkey, status
+             FROM claims
+             WHERE provider_id = $1 AND agent_id = $2
+             ORDER BY created_at DESC LIMIT 1`,
+          [provRow!.id, REF_LABEL],
+        );
+        assert.ok(claim, "claim row must exist after ingest");
+        assert.equal(
+          claim!.referrer_pubkey,
+          REFERRER_PUBKEY,
+          "claims.referrer_pubkey should be the api_keys.referrer_pubkey snapshot",
+        );
+
+        // 4. And the partners endpoint should now see the payout.
+        const partnersRes = await app.inject({
+          method: "GET",
+          url: `/api/v1/partners/${REFERRER_PUBKEY}/policies`,
+          headers: { authorization: `Bearer ${ADMIN_TOKEN}` },
+        });
+        assert.equal(partnersRes.statusCode, 200);
+        // At least 1.00 USDC from this claim is in the window total.
+        const totalUsdc = parseFloat(
+          partnersRes.json().totals.claims_paid_usdc,
+        );
+        assert.ok(
+          totalUsdc >= 1.0,
+          `claims_paid_usdc should reflect the e2e claim, got ${partnersRes.json().totals.claims_paid_usdc}`,
+        );
+
+        // Cleanup
+        await query(
+          "DELETE FROM claims WHERE provider_id = $1 AND agent_id = $2",
+          [provRow!.id, REF_LABEL],
+        );
+        await query(
+          "DELETE FROM call_records WHERE provider_id = $1",
+          [provRow!.id],
+        );
+        await query("DELETE FROM providers WHERE id = $1", [provRow!.id]);
+      } finally {
+        await subApp.close();
+      }
     });
   });
 });

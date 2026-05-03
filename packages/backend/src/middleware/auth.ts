@@ -21,8 +21,19 @@ export async function requireApiKey(
   const key = header.slice(7);
   const hash = hashKey(key);
 
-  const row = await getOne<{ id: string; label: string; agent_pubkey: string | null; status: string }>(
-    "SELECT id, label, agent_pubkey, status FROM api_keys WHERE key_hash = $1",
+  // referrer_pubkey is loaded here (not in records.ts) so every authenticated
+  // route gets the F1 attribution snapshot for free — the partners endpoint
+  // and any future referrer-aware route reads from `request.referrerPubkey`
+  // without an extra round-trip per call. Will be NULL for keys not registered
+  // via PATCH /api/v1/admin/api-keys/:label/referrer.
+  const row = await getOne<{
+    id: string;
+    label: string;
+    agent_pubkey: string | null;
+    referrer_pubkey: string | null;
+    status: string;
+  }>(
+    "SELECT id, label, agent_pubkey, referrer_pubkey, status FROM api_keys WHERE key_hash = $1",
     [hash],
   );
 
@@ -34,9 +45,11 @@ export async function requireApiKey(
   const r = request as FastifyRequest & {
     agentId: string;
     agentPubkey: string | null;
+    referrerPubkey: string | null;
   };
   r.agentId = row.label;
   r.agentPubkey = row.agent_pubkey;
+  r.referrerPubkey = row.referrer_pubkey;
 }
 
 const REQUIRE_SIGNATURES = process.env.REQUIRE_RECORD_SIGNATURES === "true";

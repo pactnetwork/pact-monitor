@@ -106,15 +106,27 @@ export async function partnersRoutes(app: FastifyInstance): Promise<void> {
         : DEFAULT_LIMIT;
       const cursor = request.query.cursor;
       const cursorDate = cursor ? new Date(cursor) : null;
-      if (cursor && cursorDate && Number.isNaN(cursorDate.getTime())) {
+      if (cursorDate && Number.isNaN(cursorDate.getTime())) {
         return reply.code(400).send({
           schema_version: SCHEMA_VERSION,
           error: "invalid_cursor",
         });
       }
+      const now = new Date();
+      // A cursor in the future would silently return an empty page (the
+      // SQL filter is `created_at < cursor`, and no future rows exist) —
+      // which looks identical to "no data" and confuses integrators. Reject
+      // explicitly so the API surfaces the misuse.
+      if (cursorDate && cursorDate.getTime() > now.getTime()) {
+        return reply.code(400).send({
+          schema_version: SCHEMA_VERSION,
+          error: "invalid_cursor",
+          message: "cursor must not be in the future",
+        });
+      }
 
       const windowFrom = new Date(Date.now() - WINDOW_DAYS * 24 * 60 * 60 * 1000);
-      const windowTo = new Date();
+      const windowTo = now;
 
       // Policies listing: on-chain fields aren't backfilled yet, so this is
       // deliberately empty. Wiring the shape up now so the endpoint
@@ -134,6 +146,13 @@ export async function partnersRoutes(app: FastifyInstance): Promise<void> {
       }> = [];
 
       // Claims paid: the only referrer-tagged totals available today.
+      // `referrer_pubkey` is denormalized onto each claim at write time
+      // (see utils/claims.ts). Clearing the api_keys.referrer_pubkey via
+      // the admin PATCH is *not* retroactive — historical claims keep the
+      // pubkey snapshot they were written with, so this endpoint continues
+      // to surface prior-period earnings for a referrer even after
+      // unregistration. That's the intended behavior (denormalized history
+      // record, not a live view of the current registration).
       const claimRows = await getMany<ClaimRow>(
         `SELECT id, refund_amount, created_at
            FROM claims
@@ -151,10 +170,19 @@ export async function partnersRoutes(app: FastifyInstance): Promise<void> {
         ? trimmed[trimmed.length - 1].created_at.toISOString()
         : null;
 
-      const claimsPaidRaw = trimmed.reduce(
-        (acc, r) => acc + (r.refund_amount ? BigInt(r.refund_amount) : 0n),
-        0n,
+      // claims_paid_usdc must be the WINDOW total, not the paginated-page
+      // total. If a referrer has 200 claims in 30d and the caller requests
+      // limit=100, the page-sum would understate by ~50%. A separate
+      // aggregate query keeps the headline number truthful regardless of
+      // pagination cursor or page size. The cost is one extra round-trip;
+      // the partial idx_claims_referrer keeps it index-only.
+      const totalRow = await getOne<{ total: string }>(
+        `SELECT COALESCE(SUM(refund_amount), 0)::text AS total
+           FROM claims
+           WHERE referrer_pubkey = $1 AND created_at >= $2`,
+        [referrer_pubkey, windowFrom.toISOString()],
       );
+      const claimsPaidRaw = totalRow ? BigInt(totalRow.total) : 0n;
       // 6-decimal USDC, rendered as a fixed decimal string for consistency
       // with the F2 premium endpoint + rest of the public API.
       const claimsPaidUsdc = formatUsdc(claimsPaidRaw);

@@ -28,6 +28,12 @@ interface ClaimInput {
   // settlement in addition to the DB claim row. The SDK/records route will
   // start populating these once Phase 3 lands end-to-end.
   agentPubkey?: string | null;
+  // F1: referrer snapshotted from api_keys.referrer_pubkey at auth time.
+  // Denormalized onto the claims row so the partners endpoint can sum
+  // claim payouts per-referrer without joining back to api_keys (which
+  // would lose attribution if the referrer is later cleared). NULL for
+  // keys with no referrer registered.
+  referrerPubkey?: string | null;
   providerHostname?: string | null;
   latencyMs?: number | null;
   statusCode?: number | null;
@@ -50,9 +56,9 @@ export async function maybeCreateClaim(input: ClaimInput): Promise<string | null
         "Skipping claim creation: agent is flagged",
       );
       await query(
-        `INSERT INTO claims (call_record_id, provider_id, agent_id, trigger_type, call_cost, refund_pct, refund_amount, status)
-         VALUES ($1, $2, $3, $4, $5, 0, 0, 'frozen')`,
-        [callRecordId, providerId, agentId, classification, paymentAmount],
+        `INSERT INTO claims (call_record_id, provider_id, agent_id, trigger_type, call_cost, refund_pct, refund_amount, status, referrer_pubkey)
+         VALUES ($1, $2, $3, $4, $5, 0, 0, 'frozen', $6)`,
+        [callRecordId, providerId, agentId, classification, paymentAmount, input.referrerPubkey ?? null],
       );
       return null;
     }
@@ -93,10 +99,10 @@ export async function maybeCreateClaim(input: ClaimInput): Promise<string | null
   const row = await getOne<{ id: string }>(
     `INSERT INTO claims (
       call_record_id, provider_id, agent_id, trigger_type,
-      call_cost, refund_pct, refund_amount, status
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'simulated')
+      call_cost, refund_pct, refund_amount, status, referrer_pubkey
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'simulated', $8)
     RETURNING id`,
-    [callRecordId, providerId, agentId, triggerType, clampedCallCost, refundPct, refundAmount],
+    [callRecordId, providerId, agentId, triggerType, clampedCallCost, refundPct, refundAmount, input.referrerPubkey ?? null],
   );
 
   const claimRowId = row?.id ?? null;

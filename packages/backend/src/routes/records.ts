@@ -67,6 +67,7 @@ export async function recordsRoutes(app: FastifyInstance): Promise<void> {
       const authed = request as FastifyRequest & {
         agentId: string;
         agentPubkey: string | null;
+        referrerPubkey: string | null;
       };
 
       // DB-backed hourly rate limit (works across instances and restarts)
@@ -90,6 +91,9 @@ export async function recordsRoutes(app: FastifyInstance): Promise<void> {
 
       const agentId = authed.agentId;
       const agentPubkey = authed.agentPubkey;
+      // Snapshotted at auth-time so that clearing the referrer mid-batch
+      // doesn't retroactively re-attribute earlier records in the same POST.
+      const referrerPubkey = authed.referrerPubkey;
       const providerIds = new Set<string>();
       let accepted = 0;
 
@@ -155,6 +159,7 @@ export async function recordsRoutes(app: FastifyInstance): Promise<void> {
           classification: rec.classification,
           paymentAmount: rec.payment_amount ?? null,
           agentPubkey,
+          referrerPubkey,
           providerHostname: canonicalHost,
           latencyMs: rec.latency_ms,
           statusCode: rec.status_code,
