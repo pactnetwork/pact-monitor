@@ -65,6 +65,14 @@ describe("canonicalHostname", () => {
     );
   });
 
+  it("strips trailing dots (FQDN form) so foo.com. == foo.com", () => {
+    assert.equal(canonicalHostname("foo.com."), "foo.com");
+    assert.equal(canonicalHostname("FOO.com."), "foo.com");
+    assert.equal(canonicalHostname("https://api.example.com./v0/x"), "api.example.com");
+    // Multiple trailing dots are still a single canonical host.
+    assert.equal(canonicalHostname("api.example.com..."), "api.example.com");
+  });
+
   it("throws on empty or whitespace-only input", () => {
     assert.throws(() => canonicalHostname(""));
     assert.throws(() => canonicalHostname("   "));

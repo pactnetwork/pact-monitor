@@ -29,7 +29,11 @@ export function canonicalHostname(input: string): string {
     throw new Error(`canonicalHostname: invalid hostname '${input}'`);
   }
 
-  const host = url.hostname.toLowerCase();
+  // WHATWG URL preserves trailing dots on FQDNs (`foo.com.` !== `foo.com`),
+  // which would let `https://foo.com./x` and `foo.com` derive distinct pool
+  // PDAs and split the scoreboard. Strip them so the canonical form
+  // round-trips through the resolver in either direction.
+  const host = url.hostname.toLowerCase().replace(/\.+$/, "");
   if (host.length === 0) {
     throw new Error(`canonicalHostname: invalid hostname '${input}'`);
   }

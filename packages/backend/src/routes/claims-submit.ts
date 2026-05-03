@@ -33,10 +33,9 @@ export async function claimsSubmitRoute(app: FastifyInstance): Promise<void> {
       }
 
       // The provider row's base_url is stored in canonical form (F2). SDK
-      // clients may still send mixed-case or URL-with-path, so canonicalize
-      // the incoming value before the equality check against api_provider.
-      // TODO(F2 follow-up): trailing-dot variants (foo.com vs foo.com.) still
-      // split into separate pools — see review flag #2.
+      // clients may still send mixed-case, URL-with-path, or trailing-dot
+      // FQDN form, so canonicalize the incoming value before the equality
+      // check against api_provider.
       let canonicalProviderHostname: string;
       try {
         canonicalProviderHostname = canonicalHostname(providerHostname);
