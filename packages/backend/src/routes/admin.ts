@@ -279,9 +279,18 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
   // (inherited from the onRequest hook above). Writes referrer_pubkey +
   // referrer_share_bps atomically so the two columns never disagree.
   //
-  // Scope: MAX_REFERRER_SHARE_BPS = 3000 (30%). Nulling both is allowed
-  // (clears the referrer). Passing one without the other is a 400 — the
-  // DB CHECK + callers both assume they're written as a pair.
+  // Scope: MAX_REFERRER_SHARE_BPS = 3000 (30%), MIN = 1 when registering.
+  // Nulling both is allowed (clears the referrer). Passing one without the
+  // other — or share_bps=0 with a present pubkey — is a 400. The on-chain
+  // Pinocchio policy rejects (referrer_present=1, share_bps=0) as
+  // InvalidRate, so we mirror that here to fail at registration time
+  // instead of policy-creation time.
+  //
+  // Note on clearing: clearing a referrer here does NOT detach historical
+  // claims. The denormalized claims.referrer_pubkey snapshot keeps the
+  // partners endpoint surfacing prior-period earnings for the cleared
+  // referrer. That's deliberate — analytics readers want a stable history
+  // record, not a live view of the current registration.
   app.patch<{
     Params: { label: string };
     Body: {
@@ -310,13 +319,18 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
           error: "referrer_pubkey is not a plausible Solana pubkey",
         });
       }
+      // Bounds are [1, 3000]: zero is rejected when a pubkey is present
+      // because the on-chain Pinocchio Policy args (PR #45) reject the
+      // tuple `(referrer_present=1, referrer_share_bps=0)` as InvalidRate.
+      // Use clearing (both fields null) for "remove the referrer" — that's
+      // what callers actually want when share_bps would otherwise be 0.
       if (
         !Number.isInteger(referrer_share_bps) ||
-        (referrer_share_bps as number) < 0 ||
+        (referrer_share_bps as number) < 1 ||
         (referrer_share_bps as number) > 3000
       ) {
         return reply.code(400).send({
-          error: "referrer_share_bps must be an integer in [0, 3000] (30% hard ceiling)",
+          error: "referrer_share_bps must be an integer in [1, 3000] when a referrer is set; use both fields = null to clear",
         });
       }
     }

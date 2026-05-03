@@ -56,7 +56,21 @@ describe("register-referrer.ts CLI", () => {
       { ADMIN_TOKEN: "tok" },
     );
     assert.equal(r.code, 1);
-    assert.match(r.stderr, /\[0, 3000\]/);
+    assert.match(r.stderr, /\[1, 3000\]/);
+  });
+
+  it("exits 1 on --share-bps=0 (must use --clear instead)", () => {
+    const r = run(
+      [
+        "--api-key-label=some-key",
+        "--referrer-pubkey=RefPubkey111111111111111111111111111111111",
+        "--share-bps=0",
+      ],
+      { ADMIN_TOKEN: "tok" },
+    );
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /\[1, 3000\]/);
+    assert.match(r.stderr, /--clear/);
   });
 
   it("exits 1 on --share-bps negative", () => {

@@ -8,7 +8,8 @@
 //
 // Adds:
 //   api_keys.referrer_pubkey       TEXT NULL
-//   api_keys.referrer_share_bps    INTEGER NULL  CHECK 0..3000
+//   api_keys.referrer_share_bps    INTEGER NULL
+//   api_keys_referrer_pair_check   CHECK (both null) OR (both set, share_bps 1..3000)
 //   idx_api_keys_referrer          partial index (WHERE referrer_pubkey IS NOT NULL)
 //   claims.referrer_pubkey         TEXT NULL
 //   idx_claims_referrer            partial index (WHERE referrer_pubkey IS NOT NULL)
@@ -43,16 +44,29 @@ async function run(): Promise<void> {
       sql: "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS referrer_share_bps INTEGER NULL",
     },
     {
-      label: "api_keys_referrer_share_bps_check",
+      // Strict pair check: both columns null OR both set with share_bps in
+      // [1, 3000]. Drops the older `api_keys_referrer_share_bps_check`
+      // (which permitted share_bps=0) so re-running the migration after the
+      // tightening transitions cleanly. See the matching block in
+      // packages/backend/src/schema.sql for the rationale.
+      label: "api_keys_referrer_pair_check",
       sql: `
         DO $$
         BEGIN
-          IF NOT EXISTS (
+          IF EXISTS (
             SELECT 1 FROM pg_constraint WHERE conname = 'api_keys_referrer_share_bps_check'
           ) THEN
+            ALTER TABLE api_keys DROP CONSTRAINT api_keys_referrer_share_bps_check;
+          END IF;
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint WHERE conname = 'api_keys_referrer_pair_check'
+          ) THEN
             ALTER TABLE api_keys
-              ADD CONSTRAINT api_keys_referrer_share_bps_check
-              CHECK (referrer_share_bps IS NULL OR (referrer_share_bps >= 0 AND referrer_share_bps <= 3000));
+              ADD CONSTRAINT api_keys_referrer_pair_check
+              CHECK (
+                (referrer_pubkey IS NULL AND referrer_share_bps IS NULL)
+                OR (referrer_pubkey IS NOT NULL AND referrer_share_bps BETWEEN 1 AND 3000)
+              );
           END IF;
         END $$;
       `,

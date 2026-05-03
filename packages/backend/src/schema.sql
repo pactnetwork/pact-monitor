@@ -98,14 +98,27 @@ CREATE INDEX IF NOT EXISTS idx_api_keys_agent_pubkey ON api_keys(agent_pubkey);
 -- before.
 ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS referrer_pubkey TEXT NULL;
 ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS referrer_share_bps INTEGER NULL;
+-- Enforces the (pubkey, share_bps) pair invariant: both null (cleared) or
+-- both set with share_bps in [1, 3000]. The earlier check name allowed
+-- share_bps=0 paired with a non-null pubkey, which the on-chain Pinocchio
+-- policy rejects as InvalidRate. Drop-then-add inside a DO block so this is
+-- safe to re-apply on boot regardless of whether the older constraint exists.
 DO $$
 BEGIN
-  IF NOT EXISTS (
+  IF EXISTS (
     SELECT 1 FROM pg_constraint WHERE conname = 'api_keys_referrer_share_bps_check'
   ) THEN
+    ALTER TABLE api_keys DROP CONSTRAINT api_keys_referrer_share_bps_check;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'api_keys_referrer_pair_check'
+  ) THEN
     ALTER TABLE api_keys
-      ADD CONSTRAINT api_keys_referrer_share_bps_check
-      CHECK (referrer_share_bps IS NULL OR (referrer_share_bps >= 0 AND referrer_share_bps <= 3000));
+      ADD CONSTRAINT api_keys_referrer_pair_check
+      CHECK (
+        (referrer_pubkey IS NULL AND referrer_share_bps IS NULL)
+        OR (referrer_pubkey IS NOT NULL AND referrer_share_bps BETWEEN 1 AND 3000)
+      );
   END IF;
 END $$;
 CREATE INDEX IF NOT EXISTS idx_api_keys_referrer ON api_keys(referrer_pubkey) WHERE referrer_pubkey IS NOT NULL;

@@ -83,7 +83,7 @@ function usage(): void {
       "Register:",
       "  --api-key-label=<label>      api_keys.label of the key being updated",
       "  --referrer-pubkey=<pubkey>   Solana pubkey (base58)",
-      "  --share-bps=<0..3000>        referrer cut in basis points (30% cap)",
+      "  --share-bps=<1..3000>        referrer cut in basis points (30% cap; use --clear for none)",
       "",
       "Clear:",
       "  --api-key-label=<label> --clear",
@@ -136,13 +136,16 @@ async function main(): Promise<void> {
     }
     // Local bounds check so we fail fast without a round-trip. Backend
     // enforces the same bounds in the UPDATE CHECK + explicit validation.
+    // Zero is rejected here (and at the route + DB) because the on-chain
+    // Policy args reject (referrer_present=1, share_bps=0) as InvalidRate.
+    // Pass --clear instead if the intent is "no referrer".
     if (
       !Number.isInteger(parsed.shareBps) ||
-      parsed.shareBps < 0 ||
+      parsed.shareBps < 1 ||
       parsed.shareBps > 3000
     ) {
       console.error(
-        `error: --share-bps must be an integer in [0, 3000] (got ${parsed.shareBps})`,
+        `error: --share-bps must be an integer in [1, 3000] when registering a referrer (got ${parsed.shareBps}); use --clear to remove a referrer`,
       );
       process.exit(1);
     }

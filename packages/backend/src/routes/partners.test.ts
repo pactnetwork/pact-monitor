@@ -95,6 +95,46 @@ describe("F1 referrer registration + partners read endpoint", () => {
       assert.equal(row?.referrer_share_bps, null);
     });
 
+    it("rejects share_bps=0 with a referrer_pubkey set (use clear instead)", async () => {
+      // The on-chain Pinocchio Policy args reject (referrer_present=1,
+      // share_bps=0) as InvalidRate. Mirror that at registration so an
+      // integrator can't end up in a state that fails policy creation later.
+      const res = await app.inject({
+        method: "PATCH",
+        url: `/api/v1/admin/api-keys/${REF_LABEL}/referrer`,
+        headers: {
+          authorization: `Bearer ${ADMIN_TOKEN}`,
+          "content-type": "application/json",
+        },
+        payload: { referrer_pubkey: REFERRER_PUBKEY, referrer_share_bps: 0 },
+      });
+      assert.equal(res.statusCode, 400);
+      assert.match(res.json().error, /\[1, 3000\]/);
+      // Row stayed empty.
+      const row = await getOne<{
+        referrer_pubkey: string | null;
+        referrer_share_bps: number | null;
+      }>(
+        "SELECT referrer_pubkey, referrer_share_bps FROM api_keys WHERE label = $1",
+        [REF_LABEL],
+      );
+      assert.equal(row?.referrer_pubkey, null);
+      assert.equal(row?.referrer_share_bps, null);
+    });
+
+    it("rejects share_bps=1000 with bogus pubkey shape (length guard)", async () => {
+      const res = await app.inject({
+        method: "PATCH",
+        url: `/api/v1/admin/api-keys/${REF_LABEL}/referrer`,
+        headers: {
+          authorization: `Bearer ${ADMIN_TOKEN}`,
+          "content-type": "application/json",
+        },
+        payload: { referrer_pubkey: "too-short", referrer_share_bps: 1000 },
+      });
+      assert.equal(res.statusCode, 400);
+    });
+
     it("rejects half-set registration (pubkey without share)", async () => {
       const res = await app.inject({
         method: "PATCH",
