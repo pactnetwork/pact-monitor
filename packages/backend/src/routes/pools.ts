@@ -18,6 +18,7 @@ import {
   kitFetchAccountBytes,
   kitGetProgramAccounts,
 } from "../utils/kit-rpc.js";
+import { canonicalHostname } from "../utils/hostname.js";
 import { query } from "../db.js";
 
 interface CachedPoolList {
@@ -116,9 +117,20 @@ export async function poolsRoute(app: FastifyInstance): Promise<void> {
     async (request, reply) => {
       const cfg = getConfigOr503(reply);
       if (!cfg) return;
+      let hostname: string;
+      try {
+        hostname = canonicalHostname(request.params.hostname);
+      } catch {
+        return reply.code(400).send({ error: "Invalid hostname" });
+      }
       try {
         const client = await createKitSolanaClient(cfg.config);
-        const [poolAddr] = await findCoveragePoolPda(request.params.hostname);
+        // PDA derived from the canonical hostname so `/pools/API.OPENAI.COM`
+        // and `/pools/api.openai.com` resolve to the same pool. Pre-WP-18
+        // the route used `request.params.hostname` raw, which silently 404'd
+        // any non-canonical request even though the pool existed. PR #46
+        // (F2) introduced canonicalization for /premium; same fix here.
+        const [poolAddr] = await findCoveragePoolPda(hostname);
         const poolAddrStr = poolAddr as string;
 
         const poolBytes = await kitFetchAccountBytes(client, poolAddrStr);
@@ -166,7 +178,7 @@ export async function poolsRoute(app: FastifyInstance): Promise<void> {
            JOIN providers p ON p.id = c.provider_id
            WHERE c.status = 'settled' AND p.base_url = $1
            ORDER BY c.created_at DESC LIMIT 50`,
-          [request.params.hostname],
+          [hostname],
         );
 
         return reply.send({
