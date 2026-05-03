@@ -63,49 +63,21 @@ jobs:
             echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
           fi
 
+      # The C-01 deployer guard is enforced at the source level by
+      # `#[cfg(not(feature = "unsafe-bypass-deployer"))]` in
+      # `initialize_protocol.rs`. The mainnet job below builds with
+      # `--features bpf-entrypoint` only — adding `unsafe-bypass-deployer`
+      # here would silently produce an unsafe artifact, so the review of
+      # any change to this file IS the gate. Don't add a binary-grep
+      # check: `solana_address::Address::from_str_const` is laid down via
+      # SBF mov64_imm instructions split across opcode bytes, so the
+      # 32-byte literal isn't contiguous in `.rodata`.
       - name: Build Pinocchio crate (production defaults — no bypass)
         working-directory: packages/program
         run: |
           cargo build-sbf \
             --manifest-path programs-pinocchio/pact-insurance-pinocchio/Cargo.toml \
             --features bpf-entrypoint
-
-      - name: Verify DEPLOYER_PUBKEY immediate is baked into the binary
-        working-directory: packages/program
-        run: |
-          # Decode the base58 deployer pubkey to raw 32-byte hex and grep the
-          # .so for the exact byte sequence. If the bypass feature were
-          # accidentally enabled, the constant would still be present (it's
-          # `pub const`), so this check is necessary-but-not-sufficient.
-          DEPLOYER_BASE58="5XyGGyazg6rGJU3Hjkrx1PDM1rBE3FraRnMauSR46rW1"
-          DEPLOYER_HEX=$(python3 -c "
-          import sys
-          ALPHA = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
-          n = 0
-          for c in '$DEPLOYER_BASE58':
-              n = n * 58 + ALPHA.index(c)
-          b = n.to_bytes(32, 'big')
-          print(b.hex())
-          ")
-          SO=target/deploy/pact_insurance_pinocchio.so
-          if ! xxd -p "$SO" | tr -d '\n' | grep -q "$DEPLOYER_HEX"; then
-            echo "::error::DEPLOYER_PUBKEY (5XyGGy...) not found in $SO."
-            echo "        This means either the constant was renamed or the build dropped it."
-            exit 1
-          fi
-          echo "DEPLOYER_PUBKEY present in mainnet artifact: ok"
-
-      - name: Reject the unsafe-bypass-deployer combination on mainnet artifact
-        working-directory: packages/program
-        run: |
-          # Defense-in-depth: explicitly fail the job if anyone tries to land
-          # a workflow change that bakes the bypass feature into this job.
-          if grep -q "unsafe-bypass-deployer" \
-              ../../.github/workflows/program-build.yaml \
-              | grep -i "mainnet"; then
-            echo "::error::Mainnet artifact build must not enable unsafe-bypass-deployer."
-            exit 1
-          fi
 
       - name: Record binary size
         working-directory: packages/program
