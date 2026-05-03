@@ -21,10 +21,10 @@ import {
 } from '@solana/kit';
 import { Keypair, PublicKey } from '@solana/web3.js';
 import {
-  createApproveInstruction,
   getAccount,
   getAssociatedTokenAddressSync,
 } from '@solana/spl-token';
+import { getApproveInstruction } from '@solana-program/token';
 import {
   findProtocolConfigPda,
   findCoveragePoolPda,
@@ -121,6 +121,17 @@ function toPublicKey(addr: Address): PublicKey {
   return new PublicKey(addr as string);
 }
 
+// Override the hardcoded programAddress baked into Codama-generated
+// instructions so the SDK honors the programId passed to PactInsurance.
+// Without this, pointing the SDK at a different deploy via config silently
+// sends to the wrong program.
+function withProgramAddress<T extends { programAddress: Address }>(
+  ix: T,
+  programAddress: Address,
+): T {
+  return { ...ix, programAddress };
+}
+
 async function fetchBase64Account(
   rpc: Rpc<SolanaRpcApi>,
   addr: Address,
@@ -145,13 +156,14 @@ export async function kitEnableInsurance(
 
   const usdcMint = toPublicKey(config.usdcMint);
   const agentAta = getAssociatedTokenAddressSync(usdcMint, client.agentKeypair.publicKey);
+  const agentAtaAddr = address(agentAta.toBase58());
 
-  const approveIx = createApproveInstruction(
-    agentAta,
-    toPublicKey(poolAddr),
-    client.agentKeypair.publicKey,
-    args.allowanceUsdc,
-  ) as unknown as Instruction;
+  const approveIx = getApproveInstruction({
+    source: agentAtaAddr,
+    delegate: poolAddr,
+    owner: client.signer,
+    amount: args.allowanceUsdc,
+  });
 
   const ZERO_REFERRER = new Uint8Array(32);
   const generatedArgs: GeneratedEnableInsuranceArgs = {
@@ -162,14 +174,17 @@ export async function kitEnableInsurance(
     referrerShareBps: 0,
   };
 
-  const enableIx = getEnableInsuranceInstruction({
-    config: protocolConfigAddr,
-    pool: poolAddr,
-    policy: policyAddr,
-    agentTokenAccount: toAddress(agentAta),
-    agent: client.signer,
-    args: generatedArgs,
-  });
+  const enableIx = withProgramAddress(
+    getEnableInsuranceInstruction({
+      config: protocolConfigAddr,
+      pool: poolAddr,
+      policy: policyAddr,
+      agentTokenAccount: agentAtaAddr,
+      agent: client.signer,
+      args: generatedArgs,
+    }),
+    client.programId,
+  );
 
   return sendTx(client, [approveIx, enableIx]);
 }
@@ -187,13 +202,14 @@ export async function kitTopUpDelegation(
 
   const usdcMint = toPublicKey(config.usdcMint);
   const agentAta = getAssociatedTokenAddressSync(usdcMint, client.agentKeypair.publicKey);
+  const agentAtaAddr = address(agentAta.toBase58());
 
-  const approveIx = createApproveInstruction(
-    agentAta,
-    toPublicKey(poolAddr),
-    client.agentKeypair.publicKey,
-    args.newTotalAllowanceUsdc,
-  ) as unknown as Instruction;
+  const approveIx = getApproveInstruction({
+    source: agentAtaAddr,
+    delegate: poolAddr,
+    owner: client.signer,
+    amount: args.newTotalAllowanceUsdc,
+  });
 
   return sendTx(client, [approveIx]);
 }
