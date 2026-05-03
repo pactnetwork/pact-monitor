@@ -26,23 +26,38 @@ You'll also need a small amount of **devnet SOL** (for transaction rent). Run `s
 
 Every API provider listed on the scorecard has an on-chain **pool** keyed by hostname (e.g. `api.coingecko.com`). To insure your calls to that provider, you create a **policy** — a PDA derived from (pool, your wallet) — and pre-fund it with TEST-USDC. The protocol deducts premiums from that balance as you make calls, and pays out refunds from the pool vault when calls fail.
 
-The easiest way to see this end-to-end is the bundled demo:
+The easiest way to see this end-to-end is the bundled external-agent demo. It works without Phantom mint authority — anyone can run it:
 
 ```bash
 cd samples/demo
 pnpm install
-pnpm tsx insured-agent.ts api.coingecko.com 5
+pnpm tsx external-agent.ts api.coingecko.com 3
 ```
 
 The script:
 1. Loads or generates a demo agent keypair at `~/.config/solana/pact-demo-agent.json`.
-2. Funds it with SOL and TEST-USDC from your Phantom deployer wallet (used as the mint authority).
-3. Calls `enable_insurance` to create a policy on the target pool.
-4. Runs 5 successful calls to the provider through `@pact-network/monitor`, tagging each record with the agent's on-chain pubkey.
-5. Runs 1 deliberate failure (a 404 endpoint) — classified as `error`.
-6. Prints pool balance deltas and Solana Explorer links.
+2. Tops up SOL via `solana airdrop` (or skips if balance is OK).
+3. Drips TEST-USDC from the public faucet at `POST /api/v1/faucet/drip` — no Phantom required.
+4. Calls `enable_insurance` to create a policy on the target pool (or `top_up_delegation` if a policy already exists for this agent + hostname).
+5. Runs 3 successful calls through `@pact-network/monitor`.
+6. Runs 1 forced timeout (latency budget = 1ms) — classified as `timeout`, **claimable**.
+7. Runs 1 forced 404 — classified as `client_error`, **NOT claimable**.
+8. Prints pool deltas and Solana Explorer links.
 
-Watch for the "submit_claim" step after the failed call — that's the backend oracle noticing the error classification and filing a refund against the pool vault.
+> The full `insured-agent.ts` demo is also bundled but requires the Pact deployer's Phantom mint-authority keypair. Prefer `external-agent.ts` unless you have direct mint access.
+
+Watch for the "submit_claim" step after the timeout call — that's the backend oracle noticing the claimable classification and filing a refund against the pool vault. The 404 call is intentionally not refunded: 4xx is an agent-side issue (wrong URL, bad auth, rate-limited), not a provider failure, so it should never trigger an insurance payout.
+
+### Claim eligibility table
+
+| Classification | When? | Refund |
+|---|---|---|
+| `success` | 2xx + valid body + within latency budget | — |
+| `timeout` | 2xx but latency exceeded the agent's threshold | 100% |
+| `server_error` | 5xx, network unreachable, DNS failure, connection reset | 100% |
+| `schema_mismatch` | 2xx but response body fails the agent's expected shape | 75% |
+| `client_error` | 4xx (404, 400, 401, 403, 429, ...) | **none** |
+| `latency_sla` | latency-SLA breach surfaced by the backend later | 50% |
 
 ---
 
