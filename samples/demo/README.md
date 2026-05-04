@@ -16,10 +16,16 @@ Optionally add Helius/QuickNode keys for more providers.
 
 ## Monitor demos
 
+> **All demos are invoked as `pnpm run <name>`** (not `pnpm tsx <file>`).
+> The `pnpm run` form chains a `build:deps` step that builds the workspace
+> SDKs first, so the demos work from a fresh clone with no prior `pnpm
+> build`. Running `pnpm tsx insurance-basic.ts` directly will fail with
+> `ERR_MODULE_NOT_FOUND` until the SDKs are built.
+
 ### `monitor.ts` — live reliability monitoring
 ```bash
-pnpm tsx monitor.ts          # default 5 rounds
-pnpm tsx monitor.ts 10       # custom rounds
+pnpm run monitor          # default 5 rounds
+pnpm run monitor 10       # custom rounds
 ```
 
 Open the scorecard at http://localhost:5173 to see results appear live.
@@ -28,7 +34,7 @@ Open the scorecard at http://localhost:5173 to see results appear live.
 
 ### `external-agent.ts` — full happy path (recommended for first-time external agents)
 ```bash
-pnpm tsx external-agent.ts api.coingecko.com 3
+pnpm run external-agent api.coingecko.com 3
 ```
 End-to-end: load/generate keypair, fund SOL + USDC via the public faucet
 (no Phantom mint authority required), self-provision an API key via
@@ -39,18 +45,19 @@ claimable), verify the on-chain refund. This is the demo
 
 ### `insurance-basic.ts` — read-only SDK demo (safe to run cold)
 ```bash
-pnpm tsx insurance-basic.ts api.coingecko.com
+pnpm run insurance-basic api.coingecko.com
 ```
 **Read-only**: calls `estimateCoverage` and `getPolicy` only. Does not
 send a transaction, does not need a funded keypair, does not need
-TEST-USDC. Safe to run from a fresh clone with zero pre-reqs — if the
-keypair file doesn't exist, the demo generates an ephemeral one. Use
-this to confirm the SDK can talk to the chain before running the full
-write flow in `external-agent.ts`.
+TEST-USDC. Safe to run from a fresh clone with zero pre-reqs — the
+`build:deps` chain builds the SDKs and the demo generates an ephemeral
+keypair if the configured path doesn't exist. Use this to confirm the
+SDK can talk to the chain before running the full write flow in
+`external-agent.ts`.
 
 ### `monitor-plus-insurance.ts` — both SDKs composed
 ```bash
-pnpm tsx monitor-plus-insurance.ts api.coingecko.com
+pnpm run monitor-plus-insurance api.coingecko.com
 ```
 Wires both SDKs: `monitor.fetch()` records calls with a signed batch keypair,
 `PactInsurance` owns the on-chain policy, `monitor.on("failure")` hooks
