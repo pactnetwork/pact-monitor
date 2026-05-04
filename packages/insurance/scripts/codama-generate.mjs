@@ -4,7 +4,7 @@
 // The hand-authored files under src/generated/ mirror what @codama/renderers-js
 // emits. Running this script regenerates them from the canonical IDL.
 // If @codama/nodes-from-anchor is not installed, install it first:
-//   pnpm --filter @pact-network/insurance add -D @codama/nodes-from-anchor
+//   pnpm --filter @q3labs/pact-insurance add -D @codama/nodes-from-anchor
 
 import { readFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
