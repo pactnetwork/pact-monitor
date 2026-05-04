@@ -6,9 +6,11 @@
     "setup": "bash scripts/setup.sh",
     "dev:backend": "pnpm --filter @pact-network/backend dev",
     "dev:scorecard": "pnpm --filter @pact-network/scorecard dev",
+    "dev": "turbo dev",
     "build:sdk": "pnpm --filter @pact-network/monitor build",
-    "build": "pnpm --filter @pact-network/monitor build && pnpm --filter @pact-network/backend build && pnpm --filter @pact-network/scorecard build",
-    "test": "pnpm run test:sdk && pnpm run test:backend",
+    "build": "turbo build",
+    "test": "turbo test",
+    "typecheck": "turbo typecheck",
     "test:sdk": "pnpm --filter @pact-network/monitor test",
     "test:backend": "pnpm --filter @pact-network/backend test",
     "test:smoke": "bash scripts/smoke.sh",
@@ -19,5 +21,8 @@
     "db:down": "docker compose -f docker-compose.dev.yml down",
     "db:logs": "docker compose -f docker-compose.dev.yml logs -f postgres",
     "db:reset": "docker compose -f docker-compose.dev.yml down -v && docker compose -f docker-compose.dev.yml up -d"
+  },
+  "devDependencies": {
+    "turbo": "^2.3.0"
   }
 }
