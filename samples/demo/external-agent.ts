@@ -256,10 +256,20 @@ async function main() {
       `active=${poolBefore.activePolicies}`,
   );
 
-  // -------- USDC: check balance first, drip only if low --------
+  // -------- USDC + SOL: drip if EITHER is low --------
+  // Codex review on PR #51: prior version only called the faucet when USDC
+  // was low. An agent with enough USDC but < 0.01 SOL (e.g. a wallet that
+  // ran a previous demo and burned SOL on tx fees) would skip the faucet
+  // entirely and then fail at enable_insurance/topUp signing time with
+  // "no record of a prior credit". The faucet now tops up SOL too (PR 51
+  // backend change), so the right gate is "drip if EITHER currency is
+  // below threshold" — the faucet handles each leg independently.
   const { getAssociatedTokenAddressSync: ataSync } = await import("@solana/spl-token");
   const agentAta = ataSync(usdcMint, agent.publicKey);
   const minRequiredUsdcLamports = ALLOWANCE_USDC + BigInt((SUCCESS_CALLS + 2) * CALL_COST_USDC * 1_000_000);
+  // 0.01 SOL — same threshold the faucet's shouldTopUpSol policy uses.
+  // Below this, even a couple of rent-paying instructions will fail.
+  const MIN_SOL_LAMPORTS = 0.01 * LAMPORTS_PER_SOL;
   let agentUsdcBalance = 0n;
   try {
     const ta = await getAccount(connection, agentAta);
@@ -267,25 +277,48 @@ async function main() {
   } catch {
     // ATA doesn't exist yet — drip will create it
   }
-  if (agentUsdcBalance >= minRequiredUsdcLamports) {
-    log("usdc", `balance OK: ${formatUsdc(agentUsdcBalance)} (skipping faucet)`);
+  const agentSolBalance = await connection.getBalance(agent.publicKey);
+
+  const usdcLow = agentUsdcBalance < minRequiredUsdcLamports;
+  const solLow = agentSolBalance < MIN_SOL_LAMPORTS;
+
+  if (!usdcLow && !solLow) {
+    log(
+      "balances",
+      `OK: ${formatUsdc(agentUsdcBalance)} USDC, ${(agentSolBalance / LAMPORTS_PER_SOL).toFixed(4)} SOL (skipping faucet)`,
+    );
   } else {
     log(
-      "usdc",
-      `balance=${formatUsdc(agentUsdcBalance)} < required ${formatUsdc(minRequiredUsdcLamports)}; requesting drip`,
+      "balances",
+      `low (usdc=${formatUsdc(agentUsdcBalance)} sol=${(agentSolBalance / LAMPORTS_PER_SOL).toFixed(4)}); requesting drip`,
     );
     try {
-      await dripUsdc(agent.publicKey.toBase58(), FAUCET_AMOUNT_USDC);
+      const drip = await dripUsdc(agent.publicKey.toBase58(), FAUCET_AMOUNT_USDC);
+      // After the drip, re-check SOL. If the faucet skipped the SOL leg
+      // (faucet keypair below its reserve, or our recipient was at
+      // threshold and not below it) AND we still need SOL, fail loudly
+      // BEFORE enable_insurance attempts to sign with zero SOL.
+      if (solLow && drip.solTransferred === 0) {
+        const after = await connection.getBalance(agent.publicKey);
+        if (after < MIN_SOL_LAMPORTS) {
+          throw new Error(
+            `faucet did not top up SOL (current balance ${(after / LAMPORTS_PER_SOL).toFixed(4)} SOL, ` +
+              `need >= ${(MIN_SOL_LAMPORTS / LAMPORTS_PER_SOL).toFixed(4)} SOL). ` +
+              `The backend faucet keypair may be below its reserve. Page ops or fund the wallet manually:\n` +
+              `  solana transfer <amount> ${agent.publicKey.toBase58()} --url devnet`,
+          );
+        }
+      }
     } catch (err) {
       const msg = (err as Error).message;
       if (msg.includes("429")) {
         log(
-          "usdc",
-          `faucet rate-limited and current balance ${formatUsdc(agentUsdcBalance)} is below ${formatUsdc(minRequiredUsdcLamports)}.`,
+          "balances",
+          `faucet rate-limited and current balances are below threshold (usdc=${formatUsdc(agentUsdcBalance)}, sol=${(agentSolBalance / LAMPORTS_PER_SOL).toFixed(4)}).`,
         );
         log(
-          "usdc",
-          `Wait the indicated minutes and re-run, or set ALLOWANCE_USDC lower in the script.`,
+          "balances",
+          `Wait the indicated minutes and re-run, or fund the wallet manually with solana transfer / spl-token transfer.`,
         );
         throw err;
       }
