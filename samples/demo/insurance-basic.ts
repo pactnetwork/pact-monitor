@@ -16,8 +16,14 @@
 //     monitor.fetch(), file a claim — see `external-agent.ts`.
 //   - top_up_delegation, submit_claim, or any other write.
 //
-// Run:
-//   pnpm --filter @pact-network/sample-demo exec tsx insurance-basic.ts [hostname]
+// Run (from samples/demo, after `pnpm install` at the repo root):
+//   pnpm run insurance-basic [hostname]
+//
+// The `pnpm run` form chains a `build:deps` step that compiles
+// @pact-network/monitor and @pact-network/insurance to their dist/
+// directories first. Invoking `pnpm tsx insurance-basic.ts ...`
+// directly will fail with ERR_MODULE_NOT_FOUND on a fresh clone until
+// those packages are built.
 //
 // Env (all optional):
 //   SOLANA_RPC_URL              default: https://api.devnet.solana.com
@@ -105,10 +111,7 @@ if (policy) {
   console.log(`[policy] none — this agent has no policy on "${HOSTNAME}".`);
   console.log("");
   console.log("To enable insurance and run the full happy-path demo:");
-  console.log(
-    "  pnpm --filter @pact-network/sample-demo exec tsx external-agent.ts " +
-      HOSTNAME,
-  );
+  console.log(`  pnpm --filter @pact-network/sample-demo run external-agent ${HOSTNAME}`);
   console.log("");
   console.log(
     "external-agent.ts handles the full lifecycle: fund SOL + USDC via the",
