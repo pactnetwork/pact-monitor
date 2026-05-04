@@ -65,7 +65,7 @@ pnpm install
 
 # Build all workspace packages in dependency order (monitor → insurance →
 # backend → scorecard). Required before `pnpm dev:backend` because the
-# backend's tsc resolves @pact-network/insurance from its dist/.
+# backend's tsc resolves @q3labs/pact-insurance from its dist/.
 pnpm build
 
 # Start PostgreSQL (port 5433)
