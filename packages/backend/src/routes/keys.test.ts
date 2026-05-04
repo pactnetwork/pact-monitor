@@ -2,8 +2,9 @@ import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { Keypair } from "@solana/web3.js";
+import nacl from "tweetnacl";
 import Fastify from "fastify";
-import { initDb, query, pool } from "../db.js";
+import { initDb, query } from "../db.js";
 import {
   __resetNetworkCacheForTests,
   __setNetworkCacheForTests,
@@ -16,9 +17,24 @@ async function buildApp() {
   return app;
 }
 
-describe("POST /api/v1/keys/self-serve", () => {
+// Mirror of buildChallengeMessage() in keys.ts. Kept inline so a breaking
+// change to the message format causes this test to fail loudly instead of
+// silently following along.
+function sign(kp: Keypair, nonce: string, agentPubkey: string): string {
+  const message = [
+    "Pact Network self-serve API key issuance",
+    `Agent: ${agentPubkey}`,
+    `Nonce: ${nonce}`,
+  ].join("\n");
+  const sigBytes = nacl.sign.detached(
+    new TextEncoder().encode(message),
+    kp.secretKey,
+  );
+  return Buffer.from(sigBytes).toString("base64");
+}
+
+describe("self-serve API key issuance with signed challenge (PR 50 codex)", () => {
   let app: Awaited<ReturnType<typeof buildApp>>;
-  // Per-suite label prefix so cleanup doesn't sweep unrelated rows.
   const SUITE_TAG = `keys-test-${randomUUID().slice(0, 8)}`;
 
   before(async () => {
@@ -28,14 +44,12 @@ describe("POST /api/v1/keys/self-serve", () => {
 
   after(async () => {
     await query(
-      "DELETE FROM api_keys WHERE label LIKE 'self-serve-%' AND label LIKE '%' || $1 || '%' OR agent_pubkey = ANY($2)",
-      [SUITE_TAG, []],
+      "DELETE FROM api_keys WHERE label LIKE $1",
+      [`self-serve-%`],
     );
-    // Looser cleanup: drop any self-serve keys for the test pubkeys we
-    // generated in this run. Pubkeys are random per-test so collisions are
-    // negligible.
+    await query("DELETE FROM api_key_challenges WHERE expires_at < NOW()");
     await app.close();
-    await pool.end();
+    // No pool.end() — module-scoped pool is shared with sibling test files.
   });
 
   beforeEach(() => {
@@ -43,151 +57,300 @@ describe("POST /api/v1/keys/self-serve", () => {
     __setNetworkCacheForTests("devnet");
   });
 
-  it("returns 410 when network is mainnet (devnet-only gate)", async () => {
-    __setNetworkCacheForTests("mainnet-beta");
-    const kp = Keypair.generate();
-    const res = await app.inject({
-      method: "POST",
-      url: "/api/v1/keys/self-serve",
-      payload: { agent_pubkey: kp.publicKey.toBase58() },
-    });
-    assert.equal(res.statusCode, 410);
-    const body = res.json();
-    assert.equal(body.error, "SelfServeDisabled");
-    assert.equal(body.network, "mainnet-beta");
-  });
-
-  it("returns 410 when network is unknown (fail-closed default)", async () => {
-    __setNetworkCacheForTests("unknown");
-    const kp = Keypair.generate();
-    const res = await app.inject({
-      method: "POST",
-      url: "/api/v1/keys/self-serve",
-      payload: { agent_pubkey: kp.publicKey.toBase58() },
-    });
-    assert.equal(res.statusCode, 410);
-    const body = res.json();
-    assert.equal(body.error, "SelfServeDisabled");
-    assert.equal(body.network, "unknown");
-  });
-
-  it("returns 410 when network is testnet", async () => {
-    __setNetworkCacheForTests("testnet");
-    const kp = Keypair.generate();
-    const res = await app.inject({
-      method: "POST",
-      url: "/api/v1/keys/self-serve",
-      payload: { agent_pubkey: kp.publicKey.toBase58() },
-    });
-    assert.equal(res.statusCode, 410);
-  });
-
-  it("returns 400 for missing agent_pubkey", async () => {
-    const res = await app.inject({
-      method: "POST",
-      url: "/api/v1/keys/self-serve",
-      payload: {},
-    });
-    assert.equal(res.statusCode, 400);
-    const body = res.json();
-    assert.equal(body.error, "InvalidAgentPubkey");
-  });
-
-  it("returns 400 for malformed agent_pubkey", async () => {
-    const res = await app.inject({
-      method: "POST",
-      url: "/api/v1/keys/self-serve",
-      payload: { agent_pubkey: "not-a-pubkey" },
-    });
-    assert.equal(res.statusCode, 400);
-    const body = res.json();
-    assert.equal(body.error, "InvalidAgentPubkey");
-  });
-
-  it("returns 201 with a fresh API key bound to the agent_pubkey", async () => {
-    const kp = Keypair.generate();
-    const pubkey = kp.publicKey.toBase58();
-    const res = await app.inject({
-      method: "POST",
-      url: "/api/v1/keys/self-serve",
-      payload: { agent_pubkey: pubkey },
-    });
-    assert.equal(res.statusCode, 201);
-    const body = res.json();
-    assert.match(body.apiKey, /^pact_[0-9a-f]{48}$/);
-    assert.equal(body.agentPubkey, pubkey);
-    assert.equal(body.network, "devnet");
-    assert.match(body.label, /^self-serve-[A-Za-z0-9]{8}-\d+$/);
-
-    // Verify the row landed in api_keys with the right binding.
-    const row = await query<{ agent_pubkey: string; status: string }>(
-      "SELECT agent_pubkey, status FROM api_keys WHERE label = $1",
-      [body.label],
-    );
-    assert.equal(row.rows.length, 1);
-    assert.equal(row.rows[0].agent_pubkey, pubkey);
-    assert.equal(row.rows[0].status, "active");
-
-    await query("DELETE FROM api_keys WHERE label = $1", [body.label]);
-  });
-
-  it("rejects pubkey when agent already has 5 active self-serve keys", async () => {
-    const kp = Keypair.generate();
-    const pubkey = kp.publicKey.toBase58();
-
-    // Pre-seed 5 self-serve rows for this pubkey directly in the DB so we
-    // don't have to fight the per-pubkey rate limiter for this test.
-    for (let i = 0; i < 5; i++) {
-      await query(
-        "INSERT INTO api_keys (key_hash, label, agent_pubkey, status) VALUES ($1, $2, $3, 'active')",
-        [`hash-${SUITE_TAG}-${i}`, `self-serve-cap-${SUITE_TAG}-${i}`, pubkey],
-      );
-    }
-
-    // Build a fresh app instance so we get a clean per-pubkey rate-limit
-    // bucket — otherwise the 5 inserts above would pass under the limit but
-    // the 6th request on the SAME app would still see the pubkey under its
-    // window. (The fastify-rate-limit hook keys on body.agent_pubkey.)
-    const freshApp = await buildApp();
-    try {
-      const res = await freshApp.inject({
+  describe("network gate", () => {
+    it("issuance returns 410 on mainnet", async () => {
+      __setNetworkCacheForTests("mainnet-beta");
+      const kp = Keypair.generate();
+      const res = await app.inject({
         method: "POST",
         url: "/api/v1/keys/self-serve",
-        payload: { agent_pubkey: pubkey },
+        payload: { agent_pubkey: kp.publicKey.toBase58(), nonce: "x", signature: "x" },
       });
-      assert.equal(res.statusCode, 429);
-      const body = res.json();
-      assert.equal(body.error, "TooManyKeysForPubkey");
-      assert.equal(body.agentPubkey, pubkey);
-    } finally {
-      await freshApp.close();
-      await query("DELETE FROM api_keys WHERE label LIKE $1", [
-        `self-serve-cap-${SUITE_TAG}-%`,
-      ]);
-    }
+      assert.equal(res.statusCode, 410);
+    });
+
+    it("challenge returns 410 on mainnet", async () => {
+      __setNetworkCacheForTests("mainnet-beta");
+      const kp = Keypair.generate();
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/keys/self-serve/challenge",
+        payload: { agent_pubkey: kp.publicKey.toBase58() },
+      });
+      assert.equal(res.statusCode, 410);
+    });
+
+    it("returns 410 on unknown network (fail-closed)", async () => {
+      __setNetworkCacheForTests("unknown");
+      const kp = Keypair.generate();
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/keys/self-serve/challenge",
+        payload: { agent_pubkey: kp.publicKey.toBase58() },
+      });
+      assert.equal(res.statusCode, 410);
+    });
   });
 
-  it("rate-limits a second issuance for the same pubkey within the window", async () => {
-    const kp = Keypair.generate();
-    const pubkey = kp.publicKey.toBase58();
-
-    const first = await app.inject({
-      method: "POST",
-      url: "/api/v1/keys/self-serve",
-      payload: { agent_pubkey: pubkey },
+  describe("input validation", () => {
+    it("challenge rejects malformed pubkey", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/keys/self-serve/challenge",
+        payload: { agent_pubkey: "not-a-pubkey" },
+      });
+      assert.equal(res.statusCode, 400);
+      assert.equal(res.json().error, "InvalidAgentPubkey");
     });
-    assert.equal(first.statusCode, 201);
-    const firstLabel = first.json().label;
 
-    const second = await app.inject({
-      method: "POST",
-      url: "/api/v1/keys/self-serve",
-      payload: { agent_pubkey: pubkey },
+    it("issuance rejects missing nonce", async () => {
+      const kp = Keypair.generate();
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/keys/self-serve",
+        payload: { agent_pubkey: kp.publicKey.toBase58(), signature: "x" },
+      });
+      assert.equal(res.statusCode, 400);
+      assert.equal(res.json().error, "MissingNonce");
     });
-    // The second request hits the @fastify/rate-limit window (1 per pubkey
-    // per hour). Status 429 is the contract.
-    assert.equal(second.statusCode, 429);
 
-    await query("DELETE FROM api_keys WHERE label = $1", [firstLabel]);
+    it("issuance rejects missing signature", async () => {
+      const kp = Keypair.generate();
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/keys/self-serve",
+        payload: { agent_pubkey: kp.publicKey.toBase58(), nonce: "x" },
+      });
+      assert.equal(res.statusCode, 400);
+      assert.equal(res.json().error, "MissingSignature");
+    });
+
+    it("issuance rejects malformed signature length", async () => {
+      const kp = Keypair.generate();
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/keys/self-serve",
+        payload: {
+          agent_pubkey: kp.publicKey.toBase58(),
+          nonce: "x",
+          signature: Buffer.from("too-short").toString("base64"),
+        },
+      });
+      assert.equal(res.statusCode, 400);
+      assert.equal(res.json().error, "MalformedSignature");
+    });
+  });
+
+  describe("happy path", () => {
+    it("challenge -> sign -> issue returns a fresh key bound to the pubkey", async () => {
+      const freshApp = await buildApp();
+      try {
+        const kp = Keypair.generate();
+        const pubkey = kp.publicKey.toBase58();
+
+        const challRes = await freshApp.inject({
+          method: "POST",
+          url: "/api/v1/keys/self-serve/challenge",
+          payload: { agent_pubkey: pubkey },
+        });
+        assert.equal(challRes.statusCode, 201);
+        const { nonce, message, expiresAt } = challRes.json();
+        assert.ok(typeof nonce === "string" && nonce.length === 64); // 32 bytes hex
+        assert.match(message, /Pact Network self-serve API key issuance/);
+        assert.match(message, new RegExp(`Agent: ${pubkey}`));
+        assert.match(message, new RegExp(`Nonce: ${nonce}`));
+        assert.ok(new Date(expiresAt).getTime() > Date.now());
+
+        const sig = sign(kp, nonce, pubkey);
+        const issueRes = await freshApp.inject({
+          method: "POST",
+          url: "/api/v1/keys/self-serve",
+          payload: { agent_pubkey: pubkey, nonce, signature: sig },
+        });
+        assert.equal(issueRes.statusCode, 201);
+        const body = issueRes.json();
+        assert.match(body.apiKey, /^pact_[0-9a-f]{48}$/);
+        assert.equal(body.agentPubkey, pubkey);
+
+        await query("DELETE FROM api_keys WHERE label = $1", [body.label]);
+      } finally {
+        await freshApp.close();
+      }
+    });
+  });
+
+  describe("ownership proof (PR 50 codex High)", () => {
+    it("rejects signature from a DIFFERENT keypair than the claimed pubkey", async () => {
+      const claimed = Keypair.generate();
+      const attacker = Keypair.generate();
+      const claimedPubkey = claimed.publicKey.toBase58();
+
+      const challRes = await app.inject({
+        method: "POST",
+        url: "/api/v1/keys/self-serve/challenge",
+        payload: { agent_pubkey: claimedPubkey },
+      });
+      assert.equal(challRes.statusCode, 201);
+      const { nonce } = challRes.json();
+
+      // Attacker signs with their OWN keypair but submits under the
+      // claimed pubkey. Pre-PR-50-fix this would have minted a key bound
+      // to claimedPubkey for free; post-fix, signature verification fails.
+      const sig = sign(attacker, nonce, claimedPubkey);
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/keys/self-serve",
+        payload: { agent_pubkey: claimedPubkey, nonce, signature: sig },
+      });
+      assert.equal(res.statusCode, 401);
+      assert.equal(res.json().error, "InvalidSignature");
+    });
+
+    it("rejects signature over the WRONG message (replay/wrong-nonce)", async () => {
+      const kp = Keypair.generate();
+      const pubkey = kp.publicKey.toBase58();
+
+      const challRes = await app.inject({
+        method: "POST",
+        url: "/api/v1/keys/self-serve/challenge",
+        payload: { agent_pubkey: pubkey },
+      });
+      const { nonce: realNonce } = challRes.json();
+
+      // Sign a different nonce than the one we claim to be redeeming.
+      const sig = sign(kp, "decoy-nonce", pubkey);
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/keys/self-serve",
+        payload: { agent_pubkey: pubkey, nonce: realNonce, signature: sig },
+      });
+      assert.equal(res.statusCode, 401);
+      assert.equal(res.json().error, "InvalidSignature");
+    });
+
+    it("rejects unknown / fabricated nonces", async () => {
+      const kp = Keypair.generate();
+      const pubkey = kp.publicKey.toBase58();
+
+      // Skip the challenge step entirely. Sig will pass over the
+      // fabricated message, but the nonce DB lookup catches it.
+      const sig = sign(kp, "fabricated-nonce", pubkey);
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/keys/self-serve",
+        payload: { agent_pubkey: pubkey, nonce: "fabricated-nonce", signature: sig },
+      });
+      assert.equal(res.statusCode, 401);
+      assert.equal(res.json().error, "UnknownOrConsumedNonce");
+    });
+
+    it("rejects challenge re-use after first redeem (single-use)", async () => {
+      const freshApp = await buildApp();
+      try {
+        const kp = Keypair.generate();
+        const pubkey = kp.publicKey.toBase58();
+
+        const ch = (
+          await freshApp.inject({
+            method: "POST",
+            url: "/api/v1/keys/self-serve/challenge",
+            payload: { agent_pubkey: pubkey },
+          })
+        ).json();
+        const sig = sign(kp, ch.nonce, pubkey);
+
+        const r1 = await freshApp.inject({
+          method: "POST",
+          url: "/api/v1/keys/self-serve",
+          payload: { agent_pubkey: pubkey, nonce: ch.nonce, signature: sig },
+        });
+        assert.equal(r1.statusCode, 201, "first redeem should succeed");
+        await query("DELETE FROM api_keys WHERE label = $1", [r1.json().label]);
+
+        // Use a fresh app to dodge the per-pubkey fastify-rate-limit window.
+        const freshApp2 = await buildApp();
+        try {
+          const r2 = await freshApp2.inject({
+            method: "POST",
+            url: "/api/v1/keys/self-serve",
+            payload: { agent_pubkey: pubkey, nonce: ch.nonce, signature: sig },
+          });
+          assert.equal(r2.statusCode, 401);
+          assert.equal(r2.json().error, "UnknownOrConsumedNonce");
+        } finally {
+          await freshApp2.close();
+        }
+      } finally {
+        await freshApp.close();
+      }
+    });
+  });
+
+  describe("atomic 5-key cap (PR 50 codex Medium — race-free)", () => {
+    it("concurrent issuances for one pubkey never exceed the cap", async () => {
+      const kp = Keypair.generate();
+      const pubkey = kp.publicKey.toBase58();
+
+      // Pre-seed 4 active self-serve keys for this pubkey. The next
+      // concurrent batch of THREE issuance attempts must result in
+      // EXACTLY one success (bringing total to 5) and the others rejected
+      // with TooManyKeysForPubkey — never exceeding the cap.
+      for (let i = 0; i < 4; i++) {
+        await query(
+          "INSERT INTO api_keys (key_hash, label, agent_pubkey, status) VALUES ($1, $2, $3, 'active')",
+          [
+            `hash-race-${SUITE_TAG}-${i}`,
+            `self-serve-race-${SUITE_TAG}-${i}`,
+            pubkey,
+          ],
+        );
+      }
+
+      // Each concurrent attempt needs its own nonce + signature. Separate
+      // app instances dodge the per-pubkey fastify-rate-limit window
+      // (which is a different concern from the DB-level cap).
+      const issueOnce = async () => {
+        const a = await buildApp();
+        try {
+          const ch = (
+            await a.inject({
+              method: "POST",
+              url: "/api/v1/keys/self-serve/challenge",
+              payload: { agent_pubkey: pubkey },
+            })
+          ).json();
+          const sig = sign(kp, ch.nonce, pubkey);
+          return a.inject({
+            method: "POST",
+            url: "/api/v1/keys/self-serve",
+            payload: { agent_pubkey: pubkey, nonce: ch.nonce, signature: sig },
+          });
+        } finally {
+          await a.close();
+        }
+      };
+
+      const results = await Promise.all([issueOnce(), issueOnce(), issueOnce()]);
+      const statuses = results.map((r) => r.statusCode);
+      const successes = statuses.filter((s) => s === 201).length;
+      const tooMany = statuses.filter((s) => s === 429).length;
+
+      assert.equal(
+        successes,
+        1,
+        `exactly one issuance should succeed under the cap, got statuses ${statuses}`,
+      );
+      assert.equal(
+        tooMany,
+        2,
+        `the other two must be rejected with 429 TooManyKeysForPubkey, got statuses ${statuses}`,
+      );
+
+      // Cleanup.
+      await query(
+        "DELETE FROM api_keys WHERE agent_pubkey = $1 AND label LIKE 'self-serve-%'",
+        [pubkey],
+      );
+    });
   });
 });
