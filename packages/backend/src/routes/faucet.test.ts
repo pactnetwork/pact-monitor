@@ -1,7 +1,11 @@
-import { describe, test, afterEach } from "node:test";
+import { describe, test, afterEach, it } from "node:test";
 import assert from "node:assert/strict";
-import { Keypair } from "@solana/web3.js";
+import { Keypair, LAMPORTS_PER_SOL } from "@solana/web3.js";
 import bs58 from "bs58";
+import {
+  shouldTopUpSol,
+  __faucetSolPolicyForTests,
+} from "../services/faucet.js";
 
 // These tests deliberately skip the live-validator `mint_to` path. Unit scope
 // here is:
@@ -12,6 +16,56 @@ import bs58 from "bs58";
 // The actual mint_to call is covered by manual testing against devnet on the
 // hackathon timeline; a solana-test-validator integration harness is a
 // follow-up if the faucet stays in the codebase.
+
+// PR 2: SOL top-up policy. Pure decision tested directly so the on-chain
+// drip path doesn't need a live validator to verify the policy is right.
+describe("shouldTopUpSol", () => {
+  const { thresholdLamports, topUpLamports, minReserveLamports } =
+    __faucetSolPolicyForTests;
+
+  it("does not top up when recipient already has SOL above threshold", () => {
+    const d = shouldTopUpSol(thresholdLamports, 1 * LAMPORTS_PER_SOL);
+    assert.equal(d.topUp, false);
+    assert.equal(d.lamports, 0);
+    assert.match(d.reason, /already has enough SOL/);
+  });
+
+  it("does not top up when recipient is exactly at the threshold (>= rule)", () => {
+    const d = shouldTopUpSol(thresholdLamports, 1 * LAMPORTS_PER_SOL);
+    assert.equal(d.topUp, false);
+  });
+
+  it("does top up when recipient is below threshold and faucet has reserve", () => {
+    const d = shouldTopUpSol(0, 1 * LAMPORTS_PER_SOL);
+    assert.equal(d.topUp, true);
+    assert.equal(d.lamports, topUpLamports);
+  });
+
+  it("refuses to top up when faucet reserve would dip below MIN_RESERVE after the transfer", () => {
+    // Faucet has just barely enough that one drip would knock it under
+    // the floor — the policy must refuse to drain the keypair below the
+    // monitoring tripwire.
+    const d = shouldTopUpSol(0, minReserveLamports + topUpLamports);
+    assert.equal(d.topUp, false);
+    assert.equal(d.lamports, 0);
+    assert.match(d.reason, /below reserve/);
+  });
+
+  it("does top up when faucet has just over MIN_RESERVE + topUp", () => {
+    const d = shouldTopUpSol(0, minReserveLamports + topUpLamports + 1);
+    assert.equal(d.topUp, true);
+    assert.equal(d.lamports, topUpLamports);
+  });
+
+  it("constants are sane: threshold < topUp < minReserve", () => {
+    // Threshold ~= 0.01 SOL must be smaller than the top-up amount (so
+    // one top-up actually moves the recipient above the bar) and the
+    // minReserve must be larger than the top-up (so we don't drain on
+    // a single drip).
+    assert.ok(thresholdLamports < topUpLamports);
+    assert.ok(topUpLamports < minReserveLamports);
+  });
+});
 
 describe("faucet keypair loader", () => {
   afterEach(async () => {

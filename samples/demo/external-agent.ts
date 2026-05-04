@@ -115,21 +115,18 @@ async function ensureSol(connection: Connection, agent: Keypair, minLamports: nu
     log("sol", `balance OK: ${(bal / LAMPORTS_PER_SOL).toFixed(4)} SOL`);
     return;
   }
-  log("sol", `requesting devnet airdrop (${minLamports / LAMPORTS_PER_SOL} SOL)`);
-  try {
-    const sig = await connection.requestAirdrop(agent.publicKey, minLamports);
-    await connection.confirmTransaction(sig, "confirmed");
-    log("sol", `airdrop OK: ${sig.slice(0, 16)}...`);
-  } catch (err) {
-    log(
-      "sol",
-      `airdrop failed (rate-limited?): ${(err as Error).message}. ` +
-        `Fund the wallet manually with: solana airdrop 1 ${agent.publicKey.toBase58()} --url devnet`,
-    );
-  }
+  // The Pact faucet now sends SOL alongside USDC when the recipient is
+  // low — see PR 2. We don't try `solana airdrop` first because devnet's
+  // public airdrop is heavily rate-limited and 429s on every fresh keypair.
+  // The drip-USDC step below will top up SOL too; if SOL is STILL below
+  // threshold after that, log a clear instruction for the user.
+  log(
+    "sol",
+    `balance low (${(bal / LAMPORTS_PER_SOL).toFixed(4)} SOL); the faucet will top up SOL alongside USDC`,
+  );
 }
 
-async function dripUsdc(recipient: string, amount: number): Promise<{ ata: string }> {
+async function dripUsdc(recipient: string, amount: number): Promise<{ ata: string; solTransferred: number }> {
   const res = await globalThis.fetch(`${BACKEND_URL}/api/v1/faucet/drip`, {
     method: "POST",
     headers: {
@@ -142,9 +139,18 @@ async function dripUsdc(recipient: string, amount: number): Promise<{ ata: strin
     const txt = await res.text();
     throw new Error(`faucet drip ${res.status}: ${txt}`);
   }
-  const body = (await res.json()) as { signature: string; ata: string };
-  log("faucet", `drip OK: ${body.signature.slice(0, 16)}... -> ATA ${body.ata.slice(0, 8)}...`);
-  return { ata: body.ata };
+  const body = (await res.json()) as {
+    signature: string;
+    ata: string;
+    solTransferred?: number;
+  };
+  const solTransferred = body.solTransferred ?? 0;
+  log(
+    "faucet",
+    `drip OK: ${body.signature.slice(0, 16)}... -> ATA ${body.ata.slice(0, 8)}...` +
+      (solTransferred > 0 ? ` + ${(solTransferred / LAMPORTS_PER_SOL).toFixed(4)} SOL top-up` : ""),
+  );
+  return { ata: body.ata, solTransferred };
 }
 
 async function ensureApiKey(agentPubkey: string): Promise<string> {
