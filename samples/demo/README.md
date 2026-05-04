@@ -26,16 +26,27 @@ Open the scorecard at http://localhost:5173 to see results appear live.
 
 ## Insurance demos
 
-All insurance demos require a funded Solana keypair (SOL for fees + USDC
-in ATA), an existing pool on-chain for the target hostname, and
-`$PACT_AGENT_KEYPAIR_PATH` set (defaults to `~/.config/solana/id.json`).
+### `external-agent.ts` — full happy path (recommended for first-time external agents)
+```bash
+pnpm tsx external-agent.ts api.coingecko.com 3
+```
+End-to-end: load/generate keypair, fund SOL + USDC via the public faucet
+(no Phantom mint authority required), self-provision an API key via
+`POST /api/v1/keys/self-serve`, enable insurance, run 3 successful
+`monitor.fetch()` calls, force a `timeout` (claimable) and a `404` (not
+claimable), verify the on-chain refund. This is the demo
+`docs/agent-quickstart.md` points new developers at.
 
-### `insurance-basic.ts` — standalone insurance SDK
+### `insurance-basic.ts` — read-only SDK demo (safe to run cold)
 ```bash
 pnpm tsx insurance-basic.ts api.coingecko.com
 ```
-`PactInsurance` by itself: enable a policy, estimate per-call premium,
-read policy state. No monitor wiring.
+**Read-only**: calls `estimateCoverage` and `getPolicy` only. Does not
+send a transaction, does not need a funded keypair, does not need
+TEST-USDC. Safe to run from a fresh clone with zero pre-reqs — if the
+keypair file doesn't exist, the demo generates an ephemeral one. Use
+this to confirm the SDK can talk to the chain before running the full
+write flow in `external-agent.ts`.
 
 ### `monitor-plus-insurance.ts` — both SDKs composed
 ```bash
@@ -44,16 +55,10 @@ pnpm tsx monitor-plus-insurance.ts api.coingecko.com
 Wires both SDKs: `monitor.fetch()` records calls with a signed batch keypair,
 `PactInsurance` owns the on-chain policy, `monitor.on("failure")` hooks
 local alerting. Backend auto-submits claims; shows the manual
-`insurance.submitClaim()` path too.
+`insurance.submitClaim()` path too. Pre-reqs: existing policy on-chain
+(run `external-agent.ts` first).
 
-### `insured-agent.ts` — full end-to-end flow
-```bash
-pnpm tsx insured-agent.ts api.dexscreener.com 3
-pnpm tsx insured-agent.ts api.coingecko.com 5
-```
-Flagship demo: generates a fresh agent, funds it with test USDC from a
-phantom mint authority, enables insurance, runs N successful + 1 forced
-failure call, and prints on-chain pool deltas + explorer links.
-
-Pre-reqs: backend + postgres running, pools seeded (`seed-devnet-pools.ts`),
-Phantom wallet funded on devnet.
+### `insured-agent.ts` — INTERNAL ONLY (requires Phantom mint authority)
+The team's reference demo for the full Phase 3 flow. Requires
+`~/.config/solana/phantom-devnet.json` (the test-USDC mint authority).
+External developers should use `external-agent.ts` instead.
