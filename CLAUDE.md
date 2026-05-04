@@ -80,7 +80,7 @@ cd packages/backend && npm run generate-key <label>
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **pact-network** (1604 symbols, 3332 relationships, 125 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **pr47-review** (1718 symbols, 3587 relationships, 133 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -96,7 +96,7 @@ This project is indexed by GitNexus as **pact-network** (1604 symbols, 3332 rela
 
 1. `gitnexus_query({query: "<error or symptom>"})` — find execution flows related to the issue
 2. `gitnexus_context({name: "<suspect function>"})` — see all callers, callees, and process participation
-3. `READ gitnexus://repo/pact-network/process/{processName}` — trace the full execution flow step by step
+3. `READ gitnexus://repo/pr47-review/process/{processName}` — trace the full execution flow step by step
 4. For regressions: `gitnexus_detect_changes({scope: "compare", base_ref: "main"})` — see what your branch changed
 
 ## When Refactoring
@@ -135,10 +135,10 @@ This project is indexed by GitNexus as **pact-network** (1604 symbols, 3332 rela
 
 | Resource | Use for |
 |----------|---------|
-| `gitnexus://repo/pact-network/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/pact-network/clusters` | All functional areas |
-| `gitnexus://repo/pact-network/processes` | All execution flows |
-| `gitnexus://repo/pact-network/process/{name}` | Step-by-step execution trace |
+| `gitnexus://repo/pr47-review/context` | Codebase overview, check index freshness |
+| `gitnexus://repo/pr47-review/clusters` | All functional areas |
+| `gitnexus://repo/pr47-review/processes` | All execution flows |
+| `gitnexus://repo/pr47-review/process/{name}` | Step-by-step execution trace |
 
 ## Self-Check Before Finishing
 
