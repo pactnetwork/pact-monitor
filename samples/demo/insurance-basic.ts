@@ -20,7 +20,7 @@
 //   pnpm run insurance-basic [hostname]
 //
 // The `pnpm run` form chains a `build:deps` step that compiles
-// @pact-network/monitor and @pact-network/insurance to their dist/
+// @q3labs/pact-monitor and @q3labs/pact-insurance to their dist/
 // directories first. Invoking `pnpm tsx insurance-basic.ts ...`
 // directly will fail with ERR_MODULE_NOT_FOUND on a fresh clone until
 // those packages are built.
@@ -37,7 +37,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { Keypair } from "@solana/web3.js";
-import { PactInsurance, generated } from "@pact-network/insurance";
+import { PactInsurance, generated } from "@q3labs/pact-insurance";
 
 const HOSTNAME = process.argv[2] || "api.coingecko.com";
 const RPC_URL = process.env.SOLANA_RPC_URL || "https://api.devnet.solana.com";

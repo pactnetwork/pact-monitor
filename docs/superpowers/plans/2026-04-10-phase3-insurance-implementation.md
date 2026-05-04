@@ -4,7 +4,7 @@
 
 **Goal:** Implement the Solana on-chain parametric insurance layer for Pact Network, deployable to devnet by Monday 2026-04-13 and mainnet after a clean 24-hour devnet soak.
 
-**Architecture:** Single Anchor program (`pact-insurance`) with configurable `ProtocolConfig`, per-hostname `CoveragePool` PDAs, prepaid-balance `Policy` accounts drained by a backend-hosted crank, auto-approved `Claim` PDAs with PDA-collision dedupe. Backend (Fastify + PostgreSQL) acts as the trusted oracle and runs crank loops in-process. A new `@pact-network/insurance` SDK provides agent-facing APIs with per-call UX layered over batched settlement. Two safety features are configurable with hardcoded absolute floors: withdrawal cooldown (default 7 days, 1-hour floor) and aggregate payout cap (default 30% per 24h, 80% ceiling).
+**Architecture:** Single Anchor program (`pact-insurance`) with configurable `ProtocolConfig`, per-hostname `CoveragePool` PDAs, prepaid-balance `Policy` accounts drained by a backend-hosted crank, auto-approved `Claim` PDAs with PDA-collision dedupe. Backend (Fastify + PostgreSQL) acts as the trusted oracle and runs crank loops in-process. A new `@q3labs/pact-insurance` SDK provides agent-facing APIs with per-call UX layered over batched settlement. Two safety features are configurable with hardcoded absolute floors: withdrawal cooldown (default 7 days, 1-hour floor) and aggregate payout cap (default 30% per 24h, 80% ceiling).
 
 **Tech Stack:** Anchor 0.31+, Solana 2.0+, Rust 1.89+, TypeScript, Fastify 5, PostgreSQL, Vite + React, `@coral-xyz/anchor`, `@solana/web3.js`, `@solana/spl-token`, node:test (backend), vitest (scorecard), Docker.
 
@@ -4189,7 +4189,7 @@ mkdir -p packages/insurance/src packages/insurance/tests
 cd packages/insurance
 cat > package.json <<'EOF'
 {
-  "name": "@pact-network/insurance",
+  "name": "@q3labs/pact-insurance",
   "version": "0.1.0",
   "type": "module",
   "main": "dist/index.js",
@@ -4204,7 +4204,7 @@ cat > package.json <<'EOF'
     "@solana/spl-token": "^0.4.8"
   },
   "peerDependencies": {
-    "@pact-network/monitor": "workspace:*"
+    "@q3labs/pact-monitor": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.8.3",
@@ -4267,7 +4267,7 @@ Add `packages/insurance` to the root `pnpm-workspace.yaml` (should already be co
 
 ## Phase D: Monitor SDK Update
 
-### Task 27: Add `'failure'` event to `@pact-network/monitor`
+### Task 27: Add `'failure'` event to `@q3labs/pact-monitor`
 
 Modify `packages/sdk/src/wrapper.ts` to emit events using a lightweight EventEmitter.
 
@@ -4486,7 +4486,7 @@ Seed mainnet pools with real USDC. Run demo through scorecard UI.
 - [x] pools routes (Task 19)
 - [x] Crank loops (Task 20)
 - [x] maybeCreateClaim wires to oracle (Task 22)
-- [x] @pact-network/insurance SDK (Tasks 23-26)
+- [x] @q3labs/pact-insurance SDK (Tasks 23-26)
 - [x] Monitor failure event (Task 27)
 - [x] Scorecard UI (Tasks 28-32)
 - [x] Simulation integration tests (Tasks 33-36)

@@ -106,13 +106,13 @@ jobs:
           pnpm --filter @pact-network/backend run migrate:canonicalize-hostnames
           pnpm --filter @pact-network/backend run migrate:referrer-schema
 
-      - name: Build @pact-network/insurance (workspace dep)
-        # Backend `tsc` resolves @pact-network/insurance via its package.json
+      - name: Build @q3labs/pact-insurance (workspace dep)
+        # Backend `tsc` resolves @q3labs/pact-insurance via its package.json
         # `main`/`types`, both of which point at `dist/`. Without this step
         # the backend typecheck fails with TS2307 on the four files that
         # import the SDK (pools, premium-settler, rate-updater,
         # claim-settlement). Pre-existing CI gap landed via PR #46.
-        run: pnpm --filter @pact-network/insurance run build
+        run: pnpm --filter @q3labs/pact-insurance run build
 
       - name: Typecheck backend
         run: pnpm --filter @pact-network/backend run build

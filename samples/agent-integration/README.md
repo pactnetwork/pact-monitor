@@ -1,6 +1,6 @@
 # Pact Monitor — Agent Integration Examples
 
-Copy-paste examples for the `@pact-network/monitor` SDK (no Solana deps).
+Copy-paste examples for the `@q3labs/pact-monitor` SDK (no Solana deps).
 For the full insurance flow (on-chain policy + claims), see [`samples/demo/external-agent.ts`](../demo/external-agent.ts) — that's the recommended end-to-end demo for external agents.
 
 ## Classification reference

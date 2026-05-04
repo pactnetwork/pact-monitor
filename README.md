@@ -19,8 +19,8 @@ Provider tiers:
 
 ```
 packages/
-  sdk/        @pact-network/monitor    TypeScript SDK wrapping fetch()
-  insurance/  @pact-network/insurance  Agent-side SDK for on-chain policies (Phase 3)
+  sdk/        @q3labs/pact-monitor    TypeScript SDK wrapping fetch()
+  insurance/  @q3labs/pact-insurance  Agent-side SDK for on-chain policies (Phase 3)
   backend/    @pact-network/backend    Fastify API server + PostgreSQL + Solana crank
   scorecard/  @pact-network/scorecard  Vite + React + Tailwind dashboard
   program/                             Anchor program (Solana on-chain insurance)
@@ -65,7 +65,7 @@ pnpm install
 
 # Build all workspace packages in dependency order (monitor → insurance →
 # backend → scorecard). Required before `pnpm dev:backend` because the
-# backend's tsc resolves @pact-network/insurance from its dist/.
+# backend's tsc resolves @q3labs/pact-insurance from its dist/.
 pnpm build
 
 # Start PostgreSQL (port 5433)
@@ -88,7 +88,7 @@ pnpm dev:scorecard
 ## SDK Usage
 
 ```typescript
-import { pactMonitor } from "@pact-network/monitor";
+import { pactMonitor } from "@q3labs/pact-monitor";
 
 const monitor = pactMonitor({
   backendUrl: "https://pactnetwork.io/api/v1",

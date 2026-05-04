@@ -19,7 +19,7 @@ importers:
       '@fastify/rate-limit':
         specifier: ^10.3.0
         version: 10.3.0
-      '@pact-network/insurance':
+      '@q3labs/pact-insurance':
         specifier: workspace:*
         version: link:../insurance
       '@solana/kit':
@@ -219,10 +219,10 @@ importers:
 
   samples/demo:
     dependencies:
-      '@pact-network/insurance':
+      '@q3labs/pact-insurance':
         specifier: workspace:*
         version: link:../../packages/insurance
-      '@pact-network/monitor':
+      '@q3labs/pact-monitor':
         specifier: workspace:*
         version: link:../../packages/monitor
       '@solana/kit':

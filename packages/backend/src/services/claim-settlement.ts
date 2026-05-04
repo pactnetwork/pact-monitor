@@ -2,7 +2,7 @@ import { PublicKey, type TransactionSignature } from "@solana/web3.js";
 import { getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { createHash } from "crypto";
 import { address } from "@solana/kit";
-import { generated } from "@pact-network/insurance";
+import { generated } from "@q3labs/pact-insurance";
 const {
   decodeProtocolConfig,
   decodeClaim,

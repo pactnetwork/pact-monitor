@@ -18,7 +18,7 @@
     "@anchor-lang/core": "^1.0.0",
     "@fastify/cors": "^11.2.0",
     "@fastify/rate-limit": "^10.3.0",
-    "@pact-network/insurance": "workspace:*",
+    "@q3labs/pact-insurance": "workspace:*",
     "@solana/kit": "^6.8.0",
     "@solana/spl-token": "^0.4.14",
     "@solana/web3.js": "^1.98.4",
