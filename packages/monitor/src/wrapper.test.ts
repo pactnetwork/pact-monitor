@@ -268,6 +268,62 @@ describe("PactSync auth error surfacing (PR 5)", () => {
     assert.equal(count, 1, "auth_error must fire only on the first 401/403");
   });
 
+  it("post-authFailed flushes do NOT POST to the backend (codex review on PR #54)", async () => {
+    // Codex finding: the latch suppressed the EVENT but doFlush still ran
+    // its full POST path on subsequent explicit flush() calls (including
+    // the one in PactMonitor.shutdown()). The fix is an early return at
+    // the top of doFlush when authFailed is true.
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls += 1;
+      return new Response('{"error":"Invalid API key"}', { status: 401 });
+    };
+
+    const events = (await import("events")).EventEmitter;
+    const emitter = new events();
+    let authEvents = 0;
+    emitter.on("auth_error", () => {
+      authEvents += 1;
+    });
+
+    const storage = {
+      getUnsynced: () => [
+        {
+          hostname: "x.com",
+          endpoint: "/v1",
+          timestamp: new Date().toISOString(),
+          statusCode: 200,
+          latencyMs: 10,
+          classification: "success" as const,
+          payment: null,
+          synced: false,
+        },
+      ],
+      markSynced: () => {},
+    };
+    const sync = new PactSync(
+      storage as never,
+      "http://x",
+      "bad",
+      1,
+      10,
+      null,
+      emitter,
+    );
+    await sync.flush();
+    assert.equal(calls, 1, "first flush hits the backend (sees the 401)");
+    assert.equal(authEvents, 1);
+    assert.equal(sync.isAuthFailed(), true);
+
+    // Subsequent explicit flushes — including the one fired by
+    // PactMonitor.shutdown() — must NOT issue more POSTs. The contract on
+    // the latch promises "no further records will be flushed."
+    await sync.flush();
+    await sync.flush();
+    assert.equal(calls, 1, "no additional POSTs after the auth latch fires");
+    assert.equal(authEvents, 1, "no additional auth_error spam");
+  });
+
   it("emits sync_error (not auth_error) on a transient 500", async () => {
     globalThis.fetch = async () => new Response("oops", { status: 500 });
 

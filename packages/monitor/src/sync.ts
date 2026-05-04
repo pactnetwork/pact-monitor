@@ -83,6 +83,16 @@ export class PactSync {
   }
 
   private async doFlush(): Promise<void> {
+    // Once the API key has been rejected once, every subsequent flush will
+    // also be rejected — the key is not going to become valid mid-process.
+    // Codex review on PR #54: the auth_error event already fires once and
+    // the timer is stopped, but explicit `flush()` calls (including the
+    // one in PactMonitor.shutdown()) bypass the timer and still POST to
+    // the backend. That defeats the "no further records will be flushed"
+    // contract documented on the latch. Early-return here so `flush()`
+    // and `shutdown()` are also no-ops post-auth-failure.
+    if (this.authFailed) return;
+
     const unsynced = this.storage.getUnsynced();
     if (unsynced.length === 0) return;
 
