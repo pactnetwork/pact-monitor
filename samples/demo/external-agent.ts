@@ -23,8 +23,12 @@
 //   SOLANA_PROGRAM_ID           default: pinocchio program ID baked in SDK
 //   PACT_BACKEND_URL            default: https://api.pactnetwork.io
 //   PACT_AGENT_KEYPAIR_PATH     default: ~/.config/solana/pact-demo-agent.json
-//   ADMIN_TOKEN                 optional; if set, demo provisions its own key
-//   PACT_API_KEY                optional; required if ADMIN_TOKEN is unset
+//   PACT_API_KEY                optional; reuses a previously-issued key.
+//                               If unset, the demo calls
+//                               POST /api/v1/keys/self-serve to obtain one
+//                               (devnet-only, rate-limited 1/pubkey/hour).
+//   ADMIN_TOKEN                 optional fallback for self-hosters running
+//                               their own backend (POST /api/v1/admin/keys).
 
 import "dotenv/config";
 import * as fs from "fs";
@@ -153,19 +157,102 @@ async function dripUsdc(recipient: string, amount: number): Promise<{ ata: strin
   return { ata: body.ata, solTransferred };
 }
 
-async function ensureApiKey(agentPubkey: string): Promise<string> {
+async function ensureApiKey(agent: Keypair): Promise<string> {
+  // Order of preference:
+  //   1. PACT_API_KEY env var — for users who already have a key from a prior
+  //      run (avoids exhausting the per-pubkey rate limit on every demo run).
+  //   2. Public self-serve route — devnet-only, anonymous, rate-limited.
+  //      Two-step protocol (PR #50 codex fix):
+  //        a. POST /self-serve/challenge → server returns a nonce + canonical message
+  //        b. agent signs the message with its keypair
+  //        c. POST /self-serve with {agent_pubkey, nonce, signature}
+  //      The signature proves the requester owns the keypair backing the
+  //      pubkey — without this proof, anyone could mint keys for any wallet.
+  //   3. ADMIN_TOKEN admin route — for self-hosters who run their own backend.
+  const agentPubkey = agent.publicKey.toBase58();
   const existing = process.env.PACT_API_KEY;
   if (existing && existing !== "pact_your_key_here") {
     log("auth", `using pre-provisioned PACT_API_KEY ${existing.slice(0, 16)}...`);
     return existing;
   }
-  if (!ADMIN_TOKEN) {
+
+  // Step 2a: ask the backend for a fresh challenge nonce.
+  const challRes = await globalThis.fetch(`${BACKEND_URL}/api/v1/keys/self-serve/challenge`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "User-Agent": "pact-monitor-sdk/0.1.0",
+    },
+    body: JSON.stringify({ agent_pubkey: agentPubkey }),
+  });
+  if (challRes.ok) {
+    const ch = (await challRes.json()) as { nonce: string; message: string; expiresAt: string };
+
+    // Step 2b: sign the canonical message with the agent's keypair.
+    // tweetnacl is used directly to avoid pulling another sig library; the
+    // backend verifies via the same nacl.sign.detached.verify.
+    const { default: nacl } = await import("tweetnacl");
+    const sigBytes = nacl.sign.detached(
+      new TextEncoder().encode(ch.message),
+      agent.secretKey,
+    );
+    const signature = Buffer.from(sigBytes).toString("base64");
+
+    // Step 2c: redeem the signed challenge for an API key.
+    const issueRes = await globalThis.fetch(`${BACKEND_URL}/api/v1/keys/self-serve`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "User-Agent": "pact-monitor-sdk/0.1.0",
+      },
+      body: JSON.stringify({ agent_pubkey: agentPubkey, nonce: ch.nonce, signature }),
+    });
+    if (issueRes.ok) {
+      const body = (await issueRes.json()) as { apiKey: string };
+      log("auth", `self-serve api key ${body.apiKey.slice(0, 16)}... bound to ${agentPubkey.slice(0, 8)}...`);
+      log("auth", `set PACT_API_KEY=${body.apiKey} to reuse this key on the next run (avoids per-pubkey rate limit)`);
+      return body.apiKey;
+    }
+    const status = issueRes.status;
+    const body = await issueRes.text();
+    if (status === 429) {
+      throw new Error(
+        `self-serve api key rate-limited: ${body}\n` +
+          `Set PACT_API_KEY to a previously-issued key, or wait the indicated period.`,
+      );
+    }
+    // Fall through to ADMIN_TOKEN below if signature/nonce dance failed
+    // unexpectedly; report the issuance error for diagnostics.
+    log("auth", `self-serve issuance failed (${status}): ${body}; falling back to ADMIN_TOKEN if set`);
+  }
+  const selfServeStatus = challRes.status;
+  const selfServeBody = await challRes.text().catch(() => "");
+
+  // 410 = self-serve disabled (mainnet); 404 = backend doesn't have the route
+  // (running an older deploy). Fall through to admin path. 429 = rate-limited
+  // for this pubkey — the user must wait or pass PACT_API_KEY.
+  if (selfServeStatus === 429) {
     throw new Error(
-      "No PACT_API_KEY and no ADMIN_TOKEN set. Set PACT_API_KEY to an admin-issued " +
-        "key, or set ADMIN_TOKEN to the same value the backend sees so the demo can " +
-        "self-provision via POST /api/v1/admin/keys.",
+      `self-serve api key rate-limited: ${selfServeBody}\n` +
+        `Set PACT_API_KEY to a previously-issued key, or wait the indicated period.`,
     );
   }
+
+  if (!ADMIN_TOKEN) {
+    if (selfServeStatus === 410) {
+      throw new Error(
+        `Self-serve API keys are disabled on ${BACKEND_URL} (likely mainnet). ` +
+          `Set PACT_API_KEY to an admin-issued key, or point PACT_BACKEND_URL at a devnet deployment.`,
+      );
+    }
+    throw new Error(
+      `Could not obtain an API key.\n` +
+        `  Self-serve: ${selfServeStatus} ${selfServeBody}\n` +
+        `Set PACT_API_KEY directly or set ADMIN_TOKEN to fall back to /api/v1/admin/keys.`,
+    );
+  }
+
+  // ADMIN_TOKEN fallback for self-hosters.
   const label = `external-agent-demo-${Date.now()}`;
   const res = await globalThis.fetch(`${BACKEND_URL}/api/v1/admin/keys`, {
     method: "POST",
@@ -180,7 +267,7 @@ async function ensureApiKey(agentPubkey: string): Promise<string> {
     throw new Error(`admin /keys ${res.status}: ${await res.text()}`);
   }
   const body = (await res.json()) as { apiKey: string };
-  log("auth", `provisioned api key ${body.apiKey.slice(0, 16)}... bound to ${agentPubkey.slice(0, 8)}...`);
+  log("auth", `admin-provisioned api key ${body.apiKey.slice(0, 16)}... bound to ${agentPubkey.slice(0, 8)}...`);
   return body.apiKey;
 }
 
@@ -367,7 +454,7 @@ async function main() {
   console.log("");
 
   // -------- API key for SDK --------
-  const apiKey = await ensureApiKey(agent.publicKey.toBase58());
+  const apiKey = await ensureApiKey(agent);
 
   // -------- run calls through monitor --------
   const monitor = pactMonitor({

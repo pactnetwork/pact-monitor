@@ -67,8 +67,8 @@ Watch for the "submit_claim" step after the timeout call — that's the backend 
 import { pactMonitor } from "@pact-network/monitor";
 
 const pact = pactMonitor({
-  apiKey: process.env.PACT_API_KEY!,       // issued via the admin CLI
-  backendUrl: "https://pactnetwork.io",    // Cloud Run URL in staging
+  apiKey: process.env.PACT_API_KEY!,
+  backendUrl: "https://api.pactnetwork.io",
   agentPubkey: myAgentKeypair.publicKey.toBase58(),
 });
 
@@ -78,15 +78,24 @@ const res = await pact.fetch("https://api.coingecko.com/api/v3/ping", {
 });
 ```
 
-Every `pact.fetch` call is classified into one of `success | timeout | error | schema_mismatch` and flushed to the backend. Failures trigger on-chain claims against your active policy — the refund lands in your wallet's USDC ATA once the oracle confirms.
+Every `pact.fetch` call is classified into one of `success | timeout | client_error | server_error | schema_mismatch` and flushed to the backend. **Server-side failures** (`server_error`, `timeout`, `schema_mismatch`) trigger on-chain claims against your active policy — the refund lands in your wallet's USDC ATA once the oracle confirms. **`client_error` (4xx)** is agent-side and never refunded.
 
-**How to get a `PACT_API_KEY`:** ask your admin (or yourself, if you're self-hosting) to run:
+**How to get a `PACT_API_KEY`:**
+
+```bash
+curl -s -X POST https://api.pactnetwork.io/api/v1/keys/self-serve \
+  -H "Content-Type: application/json" \
+  -H "User-Agent: pact-monitor-sdk/0.1.0" \
+  -d '{"agent_pubkey":"<your-pubkey>"}'
+```
+
+Returns `{ "apiKey": "pact_...", "label": "self-serve-...", "agentPubkey": "...", "network": "devnet" }`. Devnet-only, rate-limited to 1 key per pubkey per hour. Save the returned key — it's hashed server-side and cannot be retrieved later.
+
+`samples/demo/external-agent.ts` calls this endpoint automatically when `PACT_API_KEY` is unset, so you can usually skip this step entirely. If you're self-hosting, you can also run:
 
 ```bash
 pnpm --filter @pact-network/backend run generate-key my-agent --agent-pubkey <your-pubkey>
 ```
-
-Keys are hashed in the `api_keys` table — they're printed once at creation and never stored in plaintext.
 
 ---
 
