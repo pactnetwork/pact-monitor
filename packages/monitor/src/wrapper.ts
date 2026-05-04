@@ -47,9 +47,17 @@ export class PactMonitor {
         this.config.syncIntervalMs,
         this.config.syncBatchSize,
         this.config.keypair ?? null,
+        this.events,
       );
       this.sync.start();
     }
+  }
+
+  // Exposed so consumers can check after shutdown whether the run was
+  // silently broken by a bad API key. The auth_error event already fires
+  // on first 401/403, but tests and demos want a polled view too.
+  isAuthFailed(): boolean {
+    return this.sync?.isAuthFailed() ?? false;
   }
 
   async fetch(
@@ -152,6 +160,14 @@ export class PactMonitor {
 
   on(event: "failure", listener: (record: CallRecord) => void): this;
   on(event: "billed", listener: (payload: { callCost: number }) => void): this;
+  on(
+    event: "auth_error",
+    listener: (payload: { status: number; body: string }) => void,
+  ): this;
+  on(
+    event: "sync_error",
+    listener: (payload: { status: number; body: string }) => void,
+  ): this;
   on(event: string, listener: (...args: any[]) => void): this {
     this.events.on(event, listener);
     return this;
