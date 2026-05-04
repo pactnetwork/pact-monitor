@@ -9,7 +9,7 @@
 //
 // Regeneration command (documented now so the pipeline is reproducible as
 // soon as the IDL grows complete):
-//   pnpm --filter @pact-network/insurance codama:generate
+//   pnpm --filter @q3labs/pact-insurance codama:generate
 
 import { address, type Address } from '@solana/kit';
 

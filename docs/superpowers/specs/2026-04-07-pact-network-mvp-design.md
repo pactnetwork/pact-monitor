@@ -37,7 +37,7 @@ Pact Network is parametric insurance for AI agent API payments on Solana. Agents
 ```
 pact-network/
   packages/
-    sdk/                    — @pact-network/monitor
+    sdk/                    — @q3labs/pact-monitor
       src/
         index.ts            — barrel export: pactMonitor(), types
         types.ts            — CallRecord, PactConfig, Classification, PaymentData
@@ -278,7 +278,7 @@ Computed server-side in `backend/src/utils/insurance.ts`. Returned in API respon
 ### Developer Experience
 
 ```typescript
-import { pactMonitor } from '@pact-network/monitor'
+import { pactMonitor } from '@q3labs/pact-monitor'
 
 const monitor = pactMonitor({
   apiKey: 'pact_abc123...',

@@ -275,7 +275,7 @@ Existing simulated claims flow is untouched. On-chain settlement is purely addit
 
 ### Minimal Impact
 
-The SDK (`@pact-network/monitor`) hot path is unchanged. The golden rule holds: if anything fails internally, the API call still succeeds.
+The SDK (`@q3labs/pact-monitor`) hot path is unchanged. The golden rule holds: if anything fails internally, the API call still succeeds.
 
 The agent does NOT submit claims. The backend oracle does. So:
 

@@ -14,8 +14,8 @@ Pact Network is a parametric micro-insurance system for AI agent API payments on
 
 ```
 packages/
-  monitor/    — @pact-network/monitor: TypeScript SDK wrapping fetch() to monitor API reliability
-  insurance/  — @pact-network/insurance: TypeScript SDK for the on-chain insurance program (Codama + @solana/kit transport as of WP-17)
+  monitor/    — @q3labs/pact-monitor: TypeScript SDK wrapping fetch() to monitor API reliability
+  insurance/  — @q3labs/pact-insurance: TypeScript SDK for the on-chain insurance program (Codama + @solana/kit transport as of WP-17)
   backend/    — @pact-network/backend: Fastify API server aggregating monitoring data
   scorecard/  — @pact-network/scorecard: Vite+React dashboard showing provider reliability rankings
   program/    — On-chain programs (two crates, see below)

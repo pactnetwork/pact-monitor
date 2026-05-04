@@ -12,7 +12,7 @@
 ### 1.1 SDK Core — Transparent API Call Wrapping
 **Priority:** HIGH | **Complexity:** Medium | **Due:** Apr 8
 **Depends on:** nothing
-**Description:** Create a TypeScript SDK (`@pact-network/monitor`) that wraps `fetch()` transparently. For every call, record: timestamp, provider/endpoint, HTTP status, latency (ms), schema match result, USDC amount (from x402 headers or manual override).
+**Description:** Create a TypeScript SDK (`@q3labs/pact-monitor`) that wraps `fetch()` transparently. For every call, record: timestamp, provider/endpoint, HTTP status, latency (ms), schema match result, USDC amount (from x402 headers or manual override).
 **Key constraint:** Wrapping must NOT break the original API call. If monitoring fails internally, the API call still succeeds.
 **Files:** `sdk/src/wrapper.ts`, `sdk/src/types.ts`
 **Test:** Wrap a real HTTP call, verify original response is unchanged, verify call record is created.

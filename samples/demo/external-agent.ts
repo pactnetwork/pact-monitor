@@ -38,8 +38,8 @@ import {
 } from "@solana/web3.js";
 import { getAccount } from "@solana/spl-token";
 import { address, createSolanaRpc, getProgramDerivedAddress } from "@solana/kit";
-import { pactMonitor } from "@pact-network/monitor";
-import { PactInsurance, generated } from "@pact-network/insurance";
+import { pactMonitor } from "@q3labs/pact-monitor";
+import { PactInsurance, generated } from "@q3labs/pact-insurance";
 
 const {
   PACT_INSURANCE_PROGRAM_ADDRESS,

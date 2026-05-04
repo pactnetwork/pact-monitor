@@ -39,7 +39,7 @@ The script:
 2. Tops up SOL via `solana airdrop` (or skips if balance is OK).
 3. Drips TEST-USDC from the public faucet at `POST /api/v1/faucet/drip` — no Phantom required.
 4. Calls `enable_insurance` to create a policy on the target pool (or `top_up_delegation` if a policy already exists for this agent + hostname).
-5. Runs 3 successful calls through `@pact-network/monitor`.
+5. Runs 3 successful calls through `@q3labs/pact-monitor`.
 6. Runs 1 forced timeout (latency budget = 1ms) — classified as `timeout`, **claimable**.
 7. Runs 1 forced 404 — classified as `client_error`, **NOT claimable**.
 8. Prints pool deltas and Solana Explorer links.
@@ -64,7 +64,7 @@ Watch for the "submit_claim" step after the timeout call — that's the backend 
 ## 3. Use the SDK in your own code
 
 ```ts
-import { pactMonitor } from "@pact-network/monitor";
+import { pactMonitor } from "@q3labs/pact-monitor";
 
 const pact = pactMonitor({
   apiKey: process.env.PACT_API_KEY!,       // issued via the admin CLI
