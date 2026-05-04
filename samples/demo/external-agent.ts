@@ -37,14 +37,14 @@ import {
   PublicKey,
 } from "@solana/web3.js";
 import { getAccount } from "@solana/spl-token";
-import { createSolanaRpc } from "@solana/kit";
+import { address, createSolanaRpc, getProgramDerivedAddress } from "@solana/kit";
 import { pactMonitor } from "@pact-network/monitor";
 import { PactInsurance, generated } from "@pact-network/insurance";
 
 const {
   PACT_INSURANCE_PROGRAM_ADDRESS,
-  findProtocolConfigPda,
-  findCoveragePoolPda,
+  PROTOCOL_CONFIG_SEED,
+  COVERAGE_POOL_SEED,
   decodeProtocolConfig,
   decodeCoveragePool,
 } = generated;
@@ -209,8 +209,20 @@ async function main() {
   await ensureSol(connection, agent, 0.05 * LAMPORTS_PER_SOL);
 
   // -------- on-chain pool sanity --------
-  const [protocolPda] = await findProtocolConfigPda();
-  const [poolPda] = await findCoveragePoolPda(HOSTNAME);
+  // Derive PDAs against the configured PROGRAM_ID so SOLANA_PROGRAM_ID overrides
+  // (e.g. the Pinocchio devnet deploy) resolve to the same accounts the SDK
+  // below will touch. The Codama-generated find*Pda helpers hardcode the
+  // baked-in default and would silently report "no pool exists" against any
+  // non-default program.
+  const programAddress = address(PROGRAM_ID.toBase58());
+  const [protocolPda] = await getProgramDerivedAddress({
+    programAddress,
+    seeds: [PROTOCOL_CONFIG_SEED],
+  });
+  const [poolPda] = await getProgramDerivedAddress({
+    programAddress,
+    seeds: [COVERAGE_POOL_SEED, new TextEncoder().encode(HOSTNAME)],
+  });
 
   const configBytes = await fetchAccountBytes(rpc, protocolPda as string);
   if (!configBytes) {
