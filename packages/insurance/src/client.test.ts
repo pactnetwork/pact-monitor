@@ -22,6 +22,7 @@ import {
   fixEncoderSize,
   getAddressEncoder,
   getProgramDerivedAddress,
+  type ReadonlyUint8Array,
 } from "@solana/kit";
 
 // Regression test for the kit/web3 instruction-shape bug. Prior version of
@@ -113,7 +114,10 @@ describe("kit instruction shape — regression for the 'length 9' bug", () => {
 describe("programId override — PDA derivation must use configured programId", () => {
   const customProgramId = address("4Z1Y3W49U2Cn6bz9UpkahVP7LaeobQ4cAaEt3uNaqSob");
 
-  async function deriveLocal(programId: typeof customProgramId, seeds: Uint8Array[]) {
+  async function deriveLocal(
+    programId: typeof customProgramId,
+    seeds: ReadonlyUint8Array[],
+  ) {
     return getProgramDerivedAddress({ programAddress: programId, seeds });
   }
 
