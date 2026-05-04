@@ -8,12 +8,25 @@ export function classify(
   expectedSchema?: ExpectedSchema,
   networkError?: boolean,
 ): Classification {
+  // Network unreachable / DNS failure / connection reset — provider's fault.
   if (networkError || statusCode === 0) {
-    return "error";
+    return "server_error";
   }
 
+  // 4xx — agent's fault (bad URL, missing auth, rate-limited). Not claimable.
+  if (statusCode >= 400 && statusCode < 500) {
+    return "client_error";
+  }
+
+  // 5xx — provider's fault. Claimable.
+  if (statusCode >= 500) {
+    return "server_error";
+  }
+
+  // Anything outside 2xx that isn't 4xx/5xx (e.g. unhandled 3xx after redirects)
+  // — treat as a server-side anomaly. Conservative.
   if (statusCode < 200 || statusCode >= 300) {
-    return "error";
+    return "server_error";
   }
 
   if (latencyMs > latencyThresholdMs) {

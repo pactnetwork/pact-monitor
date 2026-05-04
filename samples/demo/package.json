@@ -6,7 +6,8 @@
   "description": "Live runnable demos for Pact Network — scorecard monitor loop and insured-agent Phase 3 flow.",
   "scripts": {
     "monitor": "tsx monitor.ts",
-    "insured-agent": "tsx insured-agent.ts"
+    "insured-agent": "tsx insured-agent.ts",
+    "external-agent": "tsx external-agent.ts"
   },
   "dependencies": {
     "@pact-network/monitor": "workspace:*",

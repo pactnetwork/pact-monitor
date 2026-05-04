@@ -7,15 +7,17 @@ describe("claims refund logic", () => {
   it("returns correct refund percentages per trigger type", () => {
     const REFUND_PCT: Record<string, number> = {
       timeout: 100,
-      error: 100,
+      server_error: 100,
       schema_mismatch: 75,
       latency_sla: 50,
     };
 
     assert.equal(REFUND_PCT["timeout"], 100);
-    assert.equal(REFUND_PCT["error"], 100);
+    assert.equal(REFUND_PCT["server_error"], 100);
     assert.equal(REFUND_PCT["schema_mismatch"], 75);
     assert.equal(REFUND_PCT["latency_sla"], 50);
+    // client_error must NOT be present — 4xx is agent-side and never claimable.
+    assert.equal(REFUND_PCT["client_error"], undefined);
   });
 
   it("computes refund amount correctly", () => {

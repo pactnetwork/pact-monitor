@@ -22,9 +22,13 @@ const ENDPOINTS: Record<string, string[]> = {
 const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 const SOLANA_NETWORK = "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp";
 
+// Mirrors REFUND_PCT in src/utils/claims.ts. client_error (4xx) is
+// intentionally absent — the seed generates a small fraction of client_error
+// rows for realism, but they must NOT generate matching claim rows
+// (4xx is agent-side, never claimable).
 const REFUND_PCT: Record<string, number> = {
   timeout: 100,
-  error: 100,
+  server_error: 100,
   schema_mismatch: 75,
 };
 
@@ -37,7 +41,14 @@ function randomGaussian(mean: number, stddev: number): number {
 
 function randomClassification(failureRate: number, latency: number): string {
   const roll = Math.random();
-  if (roll < failureRate * 0.5) return "error";
+  // 0.0 .. 0.4*fr      -> server_error  (5xx, claimable, 100% refund)
+  // 0.4 .. 0.6*fr      -> client_error  (4xx, NOT claimable — agent-side)
+  // 0.6 .. 0.8*fr      -> timeout       (claimable, 100% refund)
+  // 0.8 .. 1.0*fr      -> schema_mismatch (claimable, 75% refund)
+  // The 0.4-0.6 client_error band gives the scorecard realistic 4xx traffic
+  // without generating phantom refund rows.
+  if (roll < failureRate * 0.4) return "server_error";
+  if (roll < failureRate * 0.6) return "client_error";
   if (roll < failureRate * 0.8) return "timeout";
   if (roll < failureRate) return "schema_mismatch";
   if (latency > 5000) return "timeout";
@@ -95,8 +106,16 @@ async function seed() {
 
       const latency = randomGaussian(provider.avgLatency, provider.latencyStddev);
       const classification = randomClassification(effectiveFailureRate, latency);
-      const statusCode = classification === "error" ? (Math.random() > 0.5 ? 500 : 503) :
-                         classification === "success" || classification === "schema_mismatch" || classification === "timeout" ? 200 : 0;
+      // Status code follows the classification:
+      //   server_error -> 500/503 (provider failed)
+      //   client_error -> 404/401/429 (agent-side issue)
+      //   timeout      -> 200 (response arrived, just over the budget)
+      //   success / schema_mismatch -> 200
+      const statusCode =
+        classification === "server_error" ? (Math.random() > 0.5 ? 500 : 503) :
+        classification === "client_error" ? [400, 401, 403, 404, 429][Math.floor(Math.random() * 5)] :
+        classification === "success" || classification === "schema_mismatch" || classification === "timeout" ? 200 :
+        0;
       const endpoint = endpoints[Math.floor(Math.random() * endpoints.length)];
       const protocol = randomProtocol();
       const paymentAmount = protocol ? Math.round((0.001 + Math.random() * 0.01) * 1_000_000) : null;

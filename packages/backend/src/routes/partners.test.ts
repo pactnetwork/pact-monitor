@@ -307,14 +307,14 @@ describe("F1 referrer registration + partners read endpoint", () => {
       const crRow = await getOne<{ id: string }>(
         `INSERT INTO call_records
            (provider_id, endpoint, timestamp, status_code, latency_ms, classification, agent_id)
-           VALUES ($1, '/x', NOW(), 500, 100, 'error', 'partners-test-agent')
+           VALUES ($1, '/x', NOW(), 500, 100, 'server_error', 'partners-test-agent')
            RETURNING id`,
         [provRow!.id],
       );
       await query(
         `INSERT INTO claims
            (call_record_id, provider_id, agent_id, trigger_type, refund_pct, refund_amount, referrer_pubkey)
-           VALUES ($1, $2, 'partners-test-agent', 'error', 100, 500000, $3)`,
+           VALUES ($1, $2, 'partners-test-agent', 'server_error', 100, 500000, $3)`,
         [crRow!.id, provRow!.id, REFERRER_PUBKEY],
       );
 
@@ -391,14 +391,14 @@ describe("F1 referrer registration + partners read endpoint", () => {
         const cr = await getOne<{ id: string }>(
           `INSERT INTO call_records
              (provider_id, endpoint, timestamp, status_code, latency_ms, classification, agent_id)
-             VALUES ($1, '/x', NOW() - ($2 || ' minutes')::interval, 500, 100, 'error', 'partners-window-test-agent')
+             VALUES ($1, '/x', NOW() - ($2 || ' minutes')::interval, 500, 100, 'server_error', 'partners-window-test-agent')
              RETURNING id`,
           [provRow!.id, String(i)],
         );
         const c = await getOne<{ id: string }>(
           `INSERT INTO claims
              (call_record_id, provider_id, agent_id, trigger_type, refund_pct, refund_amount, referrer_pubkey)
-             VALUES ($1, $2, 'partners-window-test-agent', 'error', 100, 1000000, $3)
+             VALUES ($1, $2, 'partners-window-test-agent', 'server_error', 100, 1000000, $3)
              RETURNING id`,
           [cr!.id, provRow!.id, REFERRER_PUBKEY],
         );
@@ -464,7 +464,7 @@ describe("F1 referrer registration + partners read endpoint", () => {
                 timestamp: new Date().toISOString(),
                 status_code: 500,
                 latency_ms: 100,
-                classification: "error",
+                classification: "server_error",
                 payment_amount: 1_000_000,
               },
             ],

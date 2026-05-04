@@ -78,7 +78,7 @@ describe("PactStorage", () => {
     const storage = new PactStorage(storagePath);
     storage.append(makeRecord({ latencyMs: 100, classification: "success" }));
     storage.append(makeRecord({ latencyMs: 200, classification: "success" }));
-    storage.append(makeRecord({ latencyMs: 300, classification: "error" }));
+    storage.append(makeRecord({ latencyMs: 300, classification: "server_error" }));
 
     const stats = storage.getStats();
     assert.equal(stats.totalCalls, 3);
@@ -89,7 +89,7 @@ describe("PactStorage", () => {
   it("getStats byProvider groups correctly", () => {
     const storage = new PactStorage(storagePath);
     storage.append(makeRecord({ hostname: "api.a.com", classification: "success" }));
-    storage.append(makeRecord({ hostname: "api.a.com", classification: "error" }));
+    storage.append(makeRecord({ hostname: "api.a.com", classification: "server_error" }));
     storage.append(makeRecord({ hostname: "api.b.com", classification: "success" }));
 
     const stats = storage.getStats();
