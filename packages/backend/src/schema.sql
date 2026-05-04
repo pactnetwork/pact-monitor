@@ -1,5 +1,21 @@
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
+-- Self-serve API key issuance challenges. Single-use nonces issued by
+-- POST /api/v1/keys/self-serve/challenge and consumed by the matching
+-- /self-serve issuance call after the caller signs the challenge with the
+-- ed25519 keypair backing the agent_pubkey. Without this proof-of-ownership
+-- step, anyone could mint a key bound to any wallet (codex review on PR
+-- #50). Rows expire after a short TTL and the consumption is idempotent
+-- via DELETE … RETURNING.
+CREATE TABLE IF NOT EXISTS api_key_challenges (
+  nonce        TEXT PRIMARY KEY,
+  agent_pubkey TEXT NOT NULL,
+  expires_at   TIMESTAMPTZ NOT NULL,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_api_key_challenges_pubkey ON api_key_challenges(agent_pubkey);
+CREATE INDEX IF NOT EXISTS idx_api_key_challenges_expires_at ON api_key_challenges(expires_at);
+
 CREATE TABLE IF NOT EXISTS providers (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name TEXT NOT NULL,

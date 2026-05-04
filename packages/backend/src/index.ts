@@ -17,6 +17,7 @@ import { partnersRoutes } from "./routes/partners.js";
 import { startCrank } from "./crank/index.js";
 import { adminRoutes } from "./routes/admin.js";
 import { faucetRoutes } from "./routes/faucet.js";
+import { keysRoutes } from "./routes/keys.js";
 import { metricsHook } from "./middleware/metrics.js";
 import { detectAndCacheNetwork } from "./utils/network.js";
 import { getSolanaConfig } from "./utils/solana.js";
@@ -53,6 +54,7 @@ await app.register(sandboxRoutes);
 await app.register(partnersRoutes);
 await app.register(adminRoutes);
 await app.register(faucetRoutes);
+await app.register(keysRoutes);
 
 const port = parseInt(process.env.PORT || "3001", 10);
 

@@ -63,6 +63,11 @@ Open http://localhost:5173 to see the scorecard.
 ```bash
 pnpm install
 
+# Build all workspace packages in dependency order (monitor → insurance →
+# backend → scorecard). Required before `pnpm dev:backend` because the
+# backend's tsc resolves @pact-network/insurance from its dist/.
+pnpm build
+
 # Start PostgreSQL (port 5433)
 pnpm run db:up
 

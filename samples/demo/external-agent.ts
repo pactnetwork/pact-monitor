@@ -23,8 +23,12 @@
 //   SOLANA_PROGRAM_ID           default: pinocchio program ID baked in SDK
 //   PACT_BACKEND_URL            default: https://api.pactnetwork.io
 //   PACT_AGENT_KEYPAIR_PATH     default: ~/.config/solana/pact-demo-agent.json
-//   ADMIN_TOKEN                 optional; if set, demo provisions its own key
-//   PACT_API_KEY                optional; required if ADMIN_TOKEN is unset
+//   PACT_API_KEY                optional; reuses a previously-issued key.
+//                               If unset, the demo calls
+//                               POST /api/v1/keys/self-serve to obtain one
+//                               (devnet-only, rate-limited 1/pubkey/hour).
+//   ADMIN_TOKEN                 optional fallback for self-hosters running
+//                               their own backend (POST /api/v1/admin/keys).
 
 import "dotenv/config";
 import * as fs from "fs";
@@ -115,21 +119,18 @@ async function ensureSol(connection: Connection, agent: Keypair, minLamports: nu
     log("sol", `balance OK: ${(bal / LAMPORTS_PER_SOL).toFixed(4)} SOL`);
     return;
   }
-  log("sol", `requesting devnet airdrop (${minLamports / LAMPORTS_PER_SOL} SOL)`);
-  try {
-    const sig = await connection.requestAirdrop(agent.publicKey, minLamports);
-    await connection.confirmTransaction(sig, "confirmed");
-    log("sol", `airdrop OK: ${sig.slice(0, 16)}...`);
-  } catch (err) {
-    log(
-      "sol",
-      `airdrop failed (rate-limited?): ${(err as Error).message}. ` +
-        `Fund the wallet manually with: solana airdrop 1 ${agent.publicKey.toBase58()} --url devnet`,
-    );
-  }
+  // The Pact faucet now sends SOL alongside USDC when the recipient is
+  // low — see PR 2. We don't try `solana airdrop` first because devnet's
+  // public airdrop is heavily rate-limited and 429s on every fresh keypair.
+  // The drip-USDC step below will top up SOL too; if SOL is STILL below
+  // threshold after that, log a clear instruction for the user.
+  log(
+    "sol",
+    `balance low (${(bal / LAMPORTS_PER_SOL).toFixed(4)} SOL); the faucet will top up SOL alongside USDC`,
+  );
 }
 
-async function dripUsdc(recipient: string, amount: number): Promise<{ ata: string }> {
+async function dripUsdc(recipient: string, amount: number): Promise<{ ata: string; solTransferred: number }> {
   const res = await globalThis.fetch(`${BACKEND_URL}/api/v1/faucet/drip`, {
     method: "POST",
     headers: {
@@ -142,24 +143,116 @@ async function dripUsdc(recipient: string, amount: number): Promise<{ ata: strin
     const txt = await res.text();
     throw new Error(`faucet drip ${res.status}: ${txt}`);
   }
-  const body = (await res.json()) as { signature: string; ata: string };
-  log("faucet", `drip OK: ${body.signature.slice(0, 16)}... -> ATA ${body.ata.slice(0, 8)}...`);
-  return { ata: body.ata };
+  const body = (await res.json()) as {
+    signature: string;
+    ata: string;
+    solTransferred?: number;
+  };
+  const solTransferred = body.solTransferred ?? 0;
+  log(
+    "faucet",
+    `drip OK: ${body.signature.slice(0, 16)}... -> ATA ${body.ata.slice(0, 8)}...` +
+      (solTransferred > 0 ? ` + ${(solTransferred / LAMPORTS_PER_SOL).toFixed(4)} SOL top-up` : ""),
+  );
+  return { ata: body.ata, solTransferred };
 }
 
-async function ensureApiKey(agentPubkey: string): Promise<string> {
+async function ensureApiKey(agent: Keypair): Promise<string> {
+  // Order of preference:
+  //   1. PACT_API_KEY env var — for users who already have a key from a prior
+  //      run (avoids exhausting the per-pubkey rate limit on every demo run).
+  //   2. Public self-serve route — devnet-only, anonymous, rate-limited.
+  //      Two-step protocol (PR #50 codex fix):
+  //        a. POST /self-serve/challenge → server returns a nonce + canonical message
+  //        b. agent signs the message with its keypair
+  //        c. POST /self-serve with {agent_pubkey, nonce, signature}
+  //      The signature proves the requester owns the keypair backing the
+  //      pubkey — without this proof, anyone could mint keys for any wallet.
+  //   3. ADMIN_TOKEN admin route — for self-hosters who run their own backend.
+  const agentPubkey = agent.publicKey.toBase58();
   const existing = process.env.PACT_API_KEY;
   if (existing && existing !== "pact_your_key_here") {
     log("auth", `using pre-provisioned PACT_API_KEY ${existing.slice(0, 16)}...`);
     return existing;
   }
-  if (!ADMIN_TOKEN) {
+
+  // Step 2a: ask the backend for a fresh challenge nonce.
+  const challRes = await globalThis.fetch(`${BACKEND_URL}/api/v1/keys/self-serve/challenge`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "User-Agent": "pact-monitor-sdk/0.1.0",
+    },
+    body: JSON.stringify({ agent_pubkey: agentPubkey }),
+  });
+  if (challRes.ok) {
+    const ch = (await challRes.json()) as { nonce: string; message: string; expiresAt: string };
+
+    // Step 2b: sign the canonical message with the agent's keypair.
+    // tweetnacl is used directly to avoid pulling another sig library; the
+    // backend verifies via the same nacl.sign.detached.verify.
+    const { default: nacl } = await import("tweetnacl");
+    const sigBytes = nacl.sign.detached(
+      new TextEncoder().encode(ch.message),
+      agent.secretKey,
+    );
+    const signature = Buffer.from(sigBytes).toString("base64");
+
+    // Step 2c: redeem the signed challenge for an API key.
+    const issueRes = await globalThis.fetch(`${BACKEND_URL}/api/v1/keys/self-serve`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "User-Agent": "pact-monitor-sdk/0.1.0",
+      },
+      body: JSON.stringify({ agent_pubkey: agentPubkey, nonce: ch.nonce, signature }),
+    });
+    if (issueRes.ok) {
+      const body = (await issueRes.json()) as { apiKey: string };
+      log("auth", `self-serve api key ${body.apiKey.slice(0, 16)}... bound to ${agentPubkey.slice(0, 8)}...`);
+      log("auth", `set PACT_API_KEY=${body.apiKey} to reuse this key on the next run (avoids per-pubkey rate limit)`);
+      return body.apiKey;
+    }
+    const status = issueRes.status;
+    const body = await issueRes.text();
+    if (status === 429) {
+      throw new Error(
+        `self-serve api key rate-limited: ${body}\n` +
+          `Set PACT_API_KEY to a previously-issued key, or wait the indicated period.`,
+      );
+    }
+    // Fall through to ADMIN_TOKEN below if signature/nonce dance failed
+    // unexpectedly; report the issuance error for diagnostics.
+    log("auth", `self-serve issuance failed (${status}): ${body}; falling back to ADMIN_TOKEN if set`);
+  }
+  const selfServeStatus = challRes.status;
+  const selfServeBody = await challRes.text().catch(() => "");
+
+  // 410 = self-serve disabled (mainnet); 404 = backend doesn't have the route
+  // (running an older deploy). Fall through to admin path. 429 = rate-limited
+  // for this pubkey — the user must wait or pass PACT_API_KEY.
+  if (selfServeStatus === 429) {
     throw new Error(
-      "No PACT_API_KEY and no ADMIN_TOKEN set. Set PACT_API_KEY to an admin-issued " +
-        "key, or set ADMIN_TOKEN to the same value the backend sees so the demo can " +
-        "self-provision via POST /api/v1/admin/keys.",
+      `self-serve api key rate-limited: ${selfServeBody}\n` +
+        `Set PACT_API_KEY to a previously-issued key, or wait the indicated period.`,
     );
   }
+
+  if (!ADMIN_TOKEN) {
+    if (selfServeStatus === 410) {
+      throw new Error(
+        `Self-serve API keys are disabled on ${BACKEND_URL} (likely mainnet). ` +
+          `Set PACT_API_KEY to an admin-issued key, or point PACT_BACKEND_URL at a devnet deployment.`,
+      );
+    }
+    throw new Error(
+      `Could not obtain an API key.\n` +
+        `  Self-serve: ${selfServeStatus} ${selfServeBody}\n` +
+        `Set PACT_API_KEY directly or set ADMIN_TOKEN to fall back to /api/v1/admin/keys.`,
+    );
+  }
+
+  // ADMIN_TOKEN fallback for self-hosters.
   const label = `external-agent-demo-${Date.now()}`;
   const res = await globalThis.fetch(`${BACKEND_URL}/api/v1/admin/keys`, {
     method: "POST",
@@ -174,7 +267,7 @@ async function ensureApiKey(agentPubkey: string): Promise<string> {
     throw new Error(`admin /keys ${res.status}: ${await res.text()}`);
   }
   const body = (await res.json()) as { apiKey: string };
-  log("auth", `provisioned api key ${body.apiKey.slice(0, 16)}... bound to ${agentPubkey.slice(0, 8)}...`);
+  log("auth", `admin-provisioned api key ${body.apiKey.slice(0, 16)}... bound to ${agentPubkey.slice(0, 8)}...`);
   return body.apiKey;
 }
 
@@ -250,10 +343,20 @@ async function main() {
       `active=${poolBefore.activePolicies}`,
   );
 
-  // -------- USDC: check balance first, drip only if low --------
+  // -------- USDC + SOL: drip if EITHER is low --------
+  // Codex review on PR #51: prior version only called the faucet when USDC
+  // was low. An agent with enough USDC but < 0.01 SOL (e.g. a wallet that
+  // ran a previous demo and burned SOL on tx fees) would skip the faucet
+  // entirely and then fail at enable_insurance/topUp signing time with
+  // "no record of a prior credit". The faucet now tops up SOL too (PR 51
+  // backend change), so the right gate is "drip if EITHER currency is
+  // below threshold" — the faucet handles each leg independently.
   const { getAssociatedTokenAddressSync: ataSync } = await import("@solana/spl-token");
   const agentAta = ataSync(usdcMint, agent.publicKey);
   const minRequiredUsdcLamports = ALLOWANCE_USDC + BigInt((SUCCESS_CALLS + 2) * CALL_COST_USDC * 1_000_000);
+  // 0.01 SOL — same threshold the faucet's shouldTopUpSol policy uses.
+  // Below this, even a couple of rent-paying instructions will fail.
+  const MIN_SOL_LAMPORTS = 0.01 * LAMPORTS_PER_SOL;
   let agentUsdcBalance = 0n;
   try {
     const ta = await getAccount(connection, agentAta);
@@ -261,25 +364,48 @@ async function main() {
   } catch {
     // ATA doesn't exist yet — drip will create it
   }
-  if (agentUsdcBalance >= minRequiredUsdcLamports) {
-    log("usdc", `balance OK: ${formatUsdc(agentUsdcBalance)} (skipping faucet)`);
+  const agentSolBalance = await connection.getBalance(agent.publicKey);
+
+  const usdcLow = agentUsdcBalance < minRequiredUsdcLamports;
+  const solLow = agentSolBalance < MIN_SOL_LAMPORTS;
+
+  if (!usdcLow && !solLow) {
+    log(
+      "balances",
+      `OK: ${formatUsdc(agentUsdcBalance)} USDC, ${(agentSolBalance / LAMPORTS_PER_SOL).toFixed(4)} SOL (skipping faucet)`,
+    );
   } else {
     log(
-      "usdc",
-      `balance=${formatUsdc(agentUsdcBalance)} < required ${formatUsdc(minRequiredUsdcLamports)}; requesting drip`,
+      "balances",
+      `low (usdc=${formatUsdc(agentUsdcBalance)} sol=${(agentSolBalance / LAMPORTS_PER_SOL).toFixed(4)}); requesting drip`,
     );
     try {
-      await dripUsdc(agent.publicKey.toBase58(), FAUCET_AMOUNT_USDC);
+      const drip = await dripUsdc(agent.publicKey.toBase58(), FAUCET_AMOUNT_USDC);
+      // After the drip, re-check SOL. If the faucet skipped the SOL leg
+      // (faucet keypair below its reserve, or our recipient was at
+      // threshold and not below it) AND we still need SOL, fail loudly
+      // BEFORE enable_insurance attempts to sign with zero SOL.
+      if (solLow && drip.solTransferred === 0) {
+        const after = await connection.getBalance(agent.publicKey);
+        if (after < MIN_SOL_LAMPORTS) {
+          throw new Error(
+            `faucet did not top up SOL (current balance ${(after / LAMPORTS_PER_SOL).toFixed(4)} SOL, ` +
+              `need >= ${(MIN_SOL_LAMPORTS / LAMPORTS_PER_SOL).toFixed(4)} SOL). ` +
+              `The backend faucet keypair may be below its reserve. Page ops or fund the wallet manually:\n` +
+              `  solana transfer <amount> ${agent.publicKey.toBase58()} --url devnet`,
+          );
+        }
+      }
     } catch (err) {
       const msg = (err as Error).message;
       if (msg.includes("429")) {
         log(
-          "usdc",
-          `faucet rate-limited and current balance ${formatUsdc(agentUsdcBalance)} is below ${formatUsdc(minRequiredUsdcLamports)}.`,
+          "balances",
+          `faucet rate-limited and current balances are below threshold (usdc=${formatUsdc(agentUsdcBalance)}, sol=${(agentSolBalance / LAMPORTS_PER_SOL).toFixed(4)}).`,
         );
         log(
-          "usdc",
-          `Wait the indicated minutes and re-run, or set ALLOWANCE_USDC lower in the script.`,
+          "balances",
+          `Wait the indicated minutes and re-run, or fund the wallet manually with solana transfer / spl-token transfer.`,
         );
         throw err;
       }
@@ -328,7 +454,7 @@ async function main() {
   console.log("");
 
   // -------- API key for SDK --------
-  const apiKey = await ensureApiKey(agent.publicKey.toBase58());
+  const apiKey = await ensureApiKey(agent);
 
   // -------- run calls through monitor --------
   const monitor = pactMonitor({
@@ -338,6 +464,19 @@ async function main() {
     syncIntervalMs: 3_000,
     latencyThresholdMs: 5_000,
     agentPubkey: agent.publicKey.toBase58(),
+  });
+
+  // Surface backend auth failures the moment the SDK sees them. Without
+  // this, an invalid PACT_API_KEY makes the demo print "billed 1.0000 USDC"
+  // for every call while ZERO records reach the backend — a debugging
+  // trap the external-agent UX test caught on develop. Now the demo logs
+  // the error and lets the post-run verdict show the empty pool delta.
+  monitor.on("auth_error", (e) => {
+    log(
+      "auth",
+      `SYNC AUTH FAILED (${e.status}): ${e.body}. Records will NOT reach the backend ` +
+        "for the rest of this run. Fix PACT_API_KEY and re-run.",
+    );
   });
 
   const realUrl = REAL_ENDPOINTS[HOSTNAME];
@@ -369,6 +508,9 @@ async function main() {
     syncIntervalMs: 3_000,
     latencyThresholdMs: 1, // forces `timeout` classification on any real call
     agentPubkey: agent.publicKey.toBase58(),
+  });
+  tightMonitor.on("auth_error", (e) => {
+    log("auth", `(timeout-monitor) SYNC AUTH FAILED (${e.status}): ${e.body}`);
   });
   const tStart = Date.now();
   try {
