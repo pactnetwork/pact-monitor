@@ -23,8 +23,12 @@
 //   SOLANA_PROGRAM_ID           default: pinocchio program ID baked in SDK
 //   PACT_BACKEND_URL            default: https://api.pactnetwork.io
 //   PACT_AGENT_KEYPAIR_PATH     default: ~/.config/solana/pact-demo-agent.json
-//   ADMIN_TOKEN                 optional; if set, demo provisions its own key
-//   PACT_API_KEY                optional; required if ADMIN_TOKEN is unset
+//   PACT_API_KEY                optional; reuses a previously-issued key.
+//                               If unset, the demo calls
+//                               POST /api/v1/keys/self-serve to obtain one
+//                               (devnet-only, rate-limited 1/pubkey/hour).
+//   ADMIN_TOKEN                 optional fallback for self-hosters running
+//                               their own backend (POST /api/v1/admin/keys).
 
 import "dotenv/config";
 import * as fs from "fs";
@@ -148,18 +152,61 @@ async function dripUsdc(recipient: string, amount: number): Promise<{ ata: strin
 }
 
 async function ensureApiKey(agentPubkey: string): Promise<string> {
+  // Order of preference:
+  //   1. PACT_API_KEY env var — for users who already have a key from a prior
+  //      run (avoids exhausting the per-pubkey rate limit on every demo run).
+  //   2. Public self-serve route — devnet-only, anonymous, rate-limited.
+  //      This is the default path for an external developer.
+  //   3. ADMIN_TOKEN admin route — for self-hosters who run their own backend.
   const existing = process.env.PACT_API_KEY;
   if (existing && existing !== "pact_your_key_here") {
     log("auth", `using pre-provisioned PACT_API_KEY ${existing.slice(0, 16)}...`);
     return existing;
   }
-  if (!ADMIN_TOKEN) {
+
+  // Public self-serve path — works against api.pactnetwork.io devnet.
+  const selfServeRes = await globalThis.fetch(`${BACKEND_URL}/api/v1/keys/self-serve`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "User-Agent": "pact-monitor-sdk/0.1.0",
+    },
+    body: JSON.stringify({ agent_pubkey: agentPubkey }),
+  });
+  if (selfServeRes.ok) {
+    const body = (await selfServeRes.json()) as { apiKey: string };
+    log("auth", `self-serve api key ${body.apiKey.slice(0, 16)}... bound to ${agentPubkey.slice(0, 8)}...`);
+    log("auth", `set PACT_API_KEY=${body.apiKey} to reuse this key on the next run (avoids per-pubkey rate limit)`);
+    return body.apiKey;
+  }
+  const selfServeStatus = selfServeRes.status;
+  const selfServeBody = await selfServeRes.text();
+
+  // 410 = self-serve disabled (mainnet); 404 = backend doesn't have the route
+  // (running an older deploy). Fall through to admin path. 429 = rate-limited
+  // for this pubkey — the user must wait or pass PACT_API_KEY.
+  if (selfServeStatus === 429) {
     throw new Error(
-      "No PACT_API_KEY and no ADMIN_TOKEN set. Set PACT_API_KEY to an admin-issued " +
-        "key, or set ADMIN_TOKEN to the same value the backend sees so the demo can " +
-        "self-provision via POST /api/v1/admin/keys.",
+      `self-serve api key rate-limited: ${selfServeBody}\n` +
+        `Set PACT_API_KEY to a previously-issued key, or wait the indicated period.`,
     );
   }
+
+  if (!ADMIN_TOKEN) {
+    if (selfServeStatus === 410) {
+      throw new Error(
+        `Self-serve API keys are disabled on ${BACKEND_URL} (likely mainnet). ` +
+          `Set PACT_API_KEY to an admin-issued key, or point PACT_BACKEND_URL at a devnet deployment.`,
+      );
+    }
+    throw new Error(
+      `Could not obtain an API key.\n` +
+        `  Self-serve: ${selfServeStatus} ${selfServeBody}\n` +
+        `Set PACT_API_KEY directly or set ADMIN_TOKEN to fall back to /api/v1/admin/keys.`,
+    );
+  }
+
+  // ADMIN_TOKEN fallback for self-hosters.
   const label = `external-agent-demo-${Date.now()}`;
   const res = await globalThis.fetch(`${BACKEND_URL}/api/v1/admin/keys`, {
     method: "POST",
@@ -174,7 +221,7 @@ async function ensureApiKey(agentPubkey: string): Promise<string> {
     throw new Error(`admin /keys ${res.status}: ${await res.text()}`);
   }
   const body = (await res.json()) as { apiKey: string };
-  log("auth", `provisioned api key ${body.apiKey.slice(0, 16)}... bound to ${agentPubkey.slice(0, 8)}...`);
+  log("auth", `admin-provisioned api key ${body.apiKey.slice(0, 16)}... bound to ${agentPubkey.slice(0, 8)}...`);
   return body.apiKey;
 }
 
