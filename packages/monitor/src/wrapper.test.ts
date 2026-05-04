@@ -155,6 +155,161 @@ test("sync payload no longer includes agent_pubkey field", async () => {
   assert.equal("agent_pubkey" in record, false, "agent_pubkey should be excluded from wire payload");
 });
 
+describe("PactSync auth error surfacing (PR 5)", () => {
+  // Regression: prior versions caught and silently swallowed every non-2xx
+  // sync response. A 401 (invalid API key) made the demo print
+  // "billed 1.0000 USDC" while ZERO records reached the backend, with no
+  // signal to the consumer. The external-agent UX test on develop caught
+  // this. The fix surfaces 401/403 via:
+  //   - one stderr log line on first auth failure
+  //   - an "auth_error" event on the EventEmitter
+  //   - a latched isAuthFailed() getter for polled checks
+  // and stops the sync loop so it doesn't keep retrying with the bad key.
+  let originalFetch: typeof globalThis.fetch;
+  let originalErr: typeof console.error;
+  let stderrCaptured: string[];
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+    originalErr = console.error;
+    stderrCaptured = [];
+    console.error = (msg: unknown) => {
+      stderrCaptured.push(String(msg));
+    };
+  });
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    console.error = originalErr;
+  });
+
+  it("emits auth_error on 401 and stops the sync loop", async () => {
+    globalThis.fetch = async () =>
+      new Response('{"error":"Invalid API key"}', { status: 401 });
+
+    const events = (await import("events")).EventEmitter;
+    const emitter = new events();
+    const captured: { status: number; body: string }[] = [];
+    emitter.on("auth_error", (e) => captured.push(e as never));
+
+    const storage = {
+      getUnsynced: () => [
+        {
+          hostname: "x.com",
+          endpoint: "/v1",
+          timestamp: new Date().toISOString(),
+          statusCode: 200,
+          latencyMs: 10,
+          classification: "success" as const,
+          payment: null,
+          synced: false,
+        },
+      ],
+      markSynced: () => {},
+    };
+    const sync = new PactSync(
+      storage as never,
+      "http://x",
+      "bad-key",
+      1,
+      10,
+      null,
+      emitter,
+    );
+    await sync.flush();
+
+    assert.equal(captured.length, 1, "auth_error event should fire once");
+    assert.equal(captured[0]!.status, 401);
+    assert.match(captured[0]!.body, /Invalid API key/);
+    assert.equal(sync.isAuthFailed(), true, "auth-failed latch should be set");
+    assert.ok(
+      stderrCaptured.some((m) => m.includes("sync rejected: 401")),
+      `expected stderr to include 'sync rejected: 401', got: ${JSON.stringify(stderrCaptured)}`,
+    );
+  });
+
+  it("emits auth_error exactly once across multiple flushes (no log spam)", async () => {
+    globalThis.fetch = async () =>
+      new Response("forbidden", { status: 403 });
+
+    const events = (await import("events")).EventEmitter;
+    const emitter = new events();
+    let count = 0;
+    emitter.on("auth_error", () => {
+      count += 1;
+    });
+
+    const storage = {
+      getUnsynced: () => [
+        {
+          hostname: "x.com",
+          endpoint: "/v1",
+          timestamp: new Date().toISOString(),
+          statusCode: 200,
+          latencyMs: 10,
+          classification: "success" as const,
+          payment: null,
+          synced: false,
+        },
+      ],
+      markSynced: () => {},
+    };
+    const sync = new PactSync(
+      storage as never,
+      "http://x",
+      "bad",
+      1,
+      10,
+      null,
+      emitter,
+    );
+    await sync.flush();
+    await sync.flush(); // would fire again under the old behavior
+    await sync.flush();
+
+    assert.equal(count, 1, "auth_error must fire only on the first 401/403");
+  });
+
+  it("emits sync_error (not auth_error) on a transient 500", async () => {
+    globalThis.fetch = async () => new Response("oops", { status: 500 });
+
+    const events = (await import("events")).EventEmitter;
+    const emitter = new events();
+    const auth: unknown[] = [];
+    const transient: unknown[] = [];
+    emitter.on("auth_error", (e) => auth.push(e));
+    emitter.on("sync_error", (e) => transient.push(e));
+
+    const storage = {
+      getUnsynced: () => [
+        {
+          hostname: "x.com",
+          endpoint: "/v1",
+          timestamp: new Date().toISOString(),
+          statusCode: 200,
+          latencyMs: 10,
+          classification: "success" as const,
+          payment: null,
+          synced: false,
+        },
+      ],
+      markSynced: () => {},
+    };
+    const sync = new PactSync(
+      storage as never,
+      "http://x",
+      "k",
+      1,
+      10,
+      null,
+      emitter,
+    );
+    await sync.flush();
+
+    assert.equal(auth.length, 0, "500 must not be an auth_error");
+    assert.equal(transient.length, 1, "500 should surface as sync_error");
+    assert.equal(sync.isAuthFailed(), false, "sync should still be retriable");
+  });
+});
+
 test("PactMonitor warns when syncEnabled+apiKey but agentPubkey is empty", () => {
   const warnings: string[] = [];
   const originalWarn = console.warn;

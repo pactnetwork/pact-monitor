@@ -340,6 +340,19 @@ async function main() {
     agentPubkey: agent.publicKey.toBase58(),
   });
 
+  // Surface backend auth failures the moment the SDK sees them. Without
+  // this, an invalid PACT_API_KEY makes the demo print "billed 1.0000 USDC"
+  // for every call while ZERO records reach the backend — a debugging
+  // trap the external-agent UX test caught on develop. Now the demo logs
+  // the error and lets the post-run verdict show the empty pool delta.
+  monitor.on("auth_error", (e) => {
+    log(
+      "auth",
+      `SYNC AUTH FAILED (${e.status}): ${e.body}. Records will NOT reach the backend ` +
+        "for the rest of this run. Fix PACT_API_KEY and re-run.",
+    );
+  });
+
   const realUrl = REAL_ENDPOINTS[HOSTNAME];
   const notFoundUrl = NOT_FOUND_ENDPOINT[HOSTNAME];
 
@@ -369,6 +382,9 @@ async function main() {
     syncIntervalMs: 3_000,
     latencyThresholdMs: 1, // forces `timeout` classification on any real call
     agentPubkey: agent.publicKey.toBase58(),
+  });
+  tightMonitor.on("auth_error", (e) => {
+    log("auth", `(timeout-monitor) SYNC AUTH FAILED (${e.status}): ${e.body}`);
   });
   const tStart = Date.now();
   try {
