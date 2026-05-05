@@ -7,8 +7,83 @@ datasource db {
   url      = env("PG_URL")
 }
 
-// Placeholder model — real models land in PM-4 (indexer schema).
-// Required so `prisma generate` produces a usable PrismaClient export.
-model Placeholder {
-  id Int @id @default(autoincrement())
+model Endpoint {
+  slug                       String   @id @db.VarChar(16)
+  flatPremiumLamports        BigInt
+  percentBps                 Int
+  slaLatencyMs               Int
+  imputedCostLamports        BigInt
+  exposureCapPerHourLamports BigInt
+  paused                     Boolean  @default(false)
+  upstreamBase               String
+  displayName                String
+  logoUrl                    String?
+  registeredAt               DateTime
+  lastUpdated                DateTime
+  calls                      Call[]
+}
+
+model Agent {
+  pubkey                String    @id @db.VarChar(44)
+  walletPda             String    @db.VarChar(44)
+  displayName           String?
+  totalDepositsLamports BigInt    @default(0)
+  totalPremiumsLamports BigInt    @default(0)
+  totalRefundsLamports  BigInt    @default(0)
+  callCount             BigInt    @default(0)
+  lastCallAt            DateTime?
+  createdAt             DateTime
+  calls                 Call[]
+}
+
+model Call {
+  callId          String   @id @db.VarChar(36)
+  agentPubkey     String   @db.VarChar(44)
+  endpointSlug    String   @db.VarChar(16)
+  premiumLamports BigInt
+  refundLamports  BigInt
+  latencyMs       Int
+  breach          Boolean
+  breachReason    String?  @db.VarChar(16)
+  source          String?  @db.VarChar(32)
+  ts              DateTime
+  settledAt       DateTime
+  signature       String   @db.VarChar(88)
+
+  agent    Agent    @relation(fields: [agentPubkey], references: [pubkey])
+  endpoint Endpoint @relation(fields: [endpointSlug], references: [slug])
+
+  @@index([agentPubkey, ts(sort: Desc)])
+  @@index([endpointSlug, ts(sort: Desc)])
+  @@index([ts(sort: Desc)])
+  @@index([breach, ts(sort: Desc)])
+}
+
+model Settlement {
+  signature             String   @id @db.VarChar(88)
+  batchSize             Int
+  totalPremiumsLamports BigInt
+  totalRefundsLamports  BigInt
+  ts                    DateTime
+}
+
+model PoolState {
+  id                     Int      @id @default(1)
+  currentBalanceLamports BigInt
+  totalDepositsLamports  BigInt
+  totalPremiumsLamports  BigInt
+  totalRefundsLamports   BigInt
+  lastUpdated            DateTime
+}
+
+model DemoAllowlist {
+  walletPubkey String   @id @db.VarChar(44)
+  addedAt      DateTime @default(now())
+  note         String?
+}
+
+model OperatorAllowlist {
+  walletPubkey String   @id @db.VarChar(44)
+  addedAt      DateTime @default(now())
+  note         String?
 }
