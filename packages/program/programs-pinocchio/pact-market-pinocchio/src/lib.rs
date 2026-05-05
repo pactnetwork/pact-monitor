@@ -17,7 +17,7 @@ use discriminator::Discriminator;
 #[cfg(feature = "bpf-entrypoint")]
 pinocchio::entrypoint!(process_instruction);
 
-solana_address::declare_id!("11111111111111111111111111111111");
+solana_address::declare_id!("DhWibM2z3Vwp5VmJyashoeZCAZHLFKeHab8o12qYsiQc");
 
 pub fn process_instruction(
     _program_id: &Address,
