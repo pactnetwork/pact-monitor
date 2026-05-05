@@ -1,7 +1,24 @@
+// Integration test for the proxy route after the wrap-library refactor.
+//
+// We mock:
+//   - the AppContext (registry, demo allowlist, balanceCheck, sink)
+//   - global fetch (upstream provider)
+//
+// We assert:
+//   - happy path returns the upstream response with X-Pact-* headers
+//     applied by wrap's attachPactHeaders
+//   - the wrap library is called and emits a SettlementEvent into the sink
+//   - the per-provider classifier (Helius) is composed correctly with the
+//     default classifier
+//   - 402 returned when balance/allowance insufficient
+//   - 503 when endpoint paused, 404 when slug unknown
+//   - passthrough (no pact_wallet) bypasses wrap entirely
+//   - force-breach mode causes wrap to classify as latency_breach
+
 import { describe, test, expect, vi, beforeEach } from "vitest";
 import { Hono } from "hono";
+import { MemoryEventSink, type BalanceCheck } from "@pact-network/wrap";
 
-// Stable shared mock objects — rebuilt before each test so mutations in one test don't leak
 const defaultEndpoint = {
   slug: "helius",
   flatPremiumLamports: 500n,
@@ -16,25 +33,29 @@ const defaultEndpoint = {
 
 const mockRegistry = { get: vi.fn(), size: 1 };
 const mockDemoAllowlist = { has: vi.fn() };
-const mockBalanceCache = { get: vi.fn(), size: 0 };
-const mockPublisher = { publish: vi.fn() };
+const mockBalanceCheck: BalanceCheck = {
+  check: vi.fn(),
+};
+const memorySink = new MemoryEventSink();
 
 vi.mock("../src/lib/context.js", () => ({
   getContext: vi.fn(() => ({
     registry: mockRegistry,
     demoAllowlist: mockDemoAllowlist,
     operatorAllowlist: { has: vi.fn().mockResolvedValue(false) },
-    balanceCache: mockBalanceCache,
-    publisher: mockPublisher,
+    balanceCheck: mockBalanceCheck,
+    sink: memorySink,
   })),
   initContext: vi.fn(),
+  setContext: vi.fn(),
 }));
 
 vi.mock("../src/env.js", () => ({
   env: {
     PG_URL: "postgresql://localhost/test",
     RPC_URL: "http://localhost:8899",
-    PROGRAM_ID: "11111111111111111111111111111111",
+    PROGRAM_ID: "5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5",
+    USDC_MINT: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
     PUBSUB_PROJECT: "test-project",
     PUBSUB_TOPIC: "pact-settle-events",
     ENDPOINTS_RELOAD_TOKEN: "test-token-1234567890",
@@ -42,7 +63,6 @@ vi.mock("../src/env.js", () => ({
   },
 }));
 
-// Mock global fetch for upstream calls
 const mockUpstreamFetch = vi.fn();
 vi.stubGlobal("fetch", mockUpstreamFetch);
 
@@ -55,24 +75,31 @@ function makeApp() {
   return app;
 }
 
-describe("proxy route", () => {
+describe("proxy route (wrap-based)", () => {
   beforeEach(() => {
-    // Reset to defaults before each test
     mockRegistry.get.mockResolvedValue({ ...defaultEndpoint });
     mockDemoAllowlist.has.mockResolvedValue(false);
-    mockBalanceCache.get.mockResolvedValue(100_000_000n);
-    mockPublisher.publish.mockResolvedValue(undefined);
+    (mockBalanceCheck.check as any) = vi.fn().mockResolvedValue({
+      eligible: true,
+      ataBalance: 100_000_000n,
+      allowance: 100_000_000n,
+    });
+    memorySink.reset();
     mockUpstreamFetch.mockResolvedValue(
       new Response(JSON.stringify({ result: { value: 100 } }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
-      })
+      }),
     );
   });
 
   test("happy path — returns upstream response with X-Pact headers", async () => {
     const app = makeApp();
-    const body = JSON.stringify({ jsonrpc: "2.0", method: "getAccountInfo", params: [] });
+    const body = JSON.stringify({
+      jsonrpc: "2.0",
+      method: "getAccountInfo",
+      params: [],
+    });
     const resp = await app.request("/v1/helius/?pact_wallet=wallet123", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -80,8 +107,53 @@ describe("proxy route", () => {
     });
     expect(resp.status).toBe(200);
     expect(resp.headers.get("X-Pact-Outcome")).toBe("ok");
-    expect(resp.headers.get("X-Pact-Breach")).toBe("0");
+    expect(resp.headers.get("X-Pact-Premium")).toBe("500");
+    expect(resp.headers.get("X-Pact-Refund")).toBe("0");
     expect(resp.headers.get("X-Pact-Call-Id")).toBeTruthy();
+  });
+
+  test("wrap is called with correct opts and a settlement event is emitted", async () => {
+    const app = makeApp();
+    const body = JSON.stringify({
+      jsonrpc: "2.0",
+      method: "getAccountInfo",
+      params: [],
+    });
+    await app.request("/v1/helius/?pact_wallet=wallet-A", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    });
+    // Allow microtasks to flush — wrap publishes fire-and-forget.
+    await new Promise((r) => setImmediate(r));
+    expect(memorySink.events.length).toBe(1);
+    const ev = memorySink.events[0];
+    expect(ev.endpointSlug).toBe("helius");
+    expect(ev.agentPubkey).toBe("wallet-A");
+    expect(ev.outcome).toBe("ok");
+    expect(ev.premiumLamports).toBe("500");
+  });
+
+  test("Helius JSON-RPC error -32603 → server_error settlement", async () => {
+    mockUpstreamFetch.mockResolvedValue(
+      new Response(
+        JSON.stringify({ jsonrpc: "2.0", error: { code: -32603, message: "internal" } }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    const app = makeApp();
+    const body = JSON.stringify({
+      jsonrpc: "2.0",
+      method: "getAccountInfo",
+      params: [],
+    });
+    const resp = await app.request("/v1/helius/?pact_wallet=walletJrpc", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    });
+    expect(resp.headers.get("X-Pact-Outcome")).toBe("server_error");
+    expect(resp.headers.get("X-Pact-Refund")).toBe("50000");
   });
 
   test("404 when endpoint slug not found", async () => {
@@ -95,9 +167,13 @@ describe("proxy route", () => {
     expect(resp.status).toBe(404);
   });
 
-  test("402 when balance insufficient", async () => {
-    const ctx = getContext() as any;
-    ctx.balanceCache.get.mockResolvedValue(100n); // less than 500 lamports premium
+  test("402 when balance insufficient (ATA balance < required)", async () => {
+    (mockBalanceCheck.check as any) = vi.fn().mockResolvedValue({
+      eligible: false,
+      reason: "insufficient_balance",
+      ataBalance: 100n,
+      allowance: 100n,
+    });
     const app = makeApp();
     const resp = await app.request("/v1/helius/?pact_wallet=poorwallet", {
       method: "POST",
@@ -105,6 +181,24 @@ describe("proxy route", () => {
       body: JSON.stringify({ jsonrpc: "2.0", method: "getAccountInfo", params: [] }),
     });
     expect(resp.status).toBe(402);
+  });
+
+  test("402 when allowance insufficient (delegated_amount < required)", async () => {
+    (mockBalanceCheck.check as any) = vi.fn().mockResolvedValue({
+      eligible: false,
+      reason: "insufficient_allowance",
+      ataBalance: 1_000_000n,
+      allowance: 100n,
+    });
+    const app = makeApp();
+    const resp = await app.request("/v1/helius/?pact_wallet=noallowance", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", method: "getAccountInfo", params: [] }),
+    });
+    expect(resp.status).toBe(402);
+    const json = (await resp.json()) as { reason: string };
+    expect(json.reason).toBe("insufficient_allowance");
   });
 
   test("503 when endpoint paused", async () => {
@@ -117,7 +211,7 @@ describe("proxy route", () => {
     expect(resp.status).toBe(503);
   });
 
-  test("passthrough (no pact_wallet) — no X-Pact headers", async () => {
+  test("passthrough (no pact_wallet) — no X-Pact headers, no settlement event", async () => {
     const app = makeApp();
     const resp = await app.request("/v1/helius/", {
       method: "POST",
@@ -125,24 +219,33 @@ describe("proxy route", () => {
     });
     expect(resp.status).toBe(200);
     expect(resp.headers.get("X-Pact-Outcome")).toBeNull();
+    expect(memorySink.events.length).toBe(0);
   });
 
-  test("force-breach path marks outcome as server_error when wallet allowlisted", async () => {
+  test("force-breach mode forces a latency_breach classification", async () => {
     const ctx = getContext() as any;
     ctx.demoAllowlist.has.mockResolvedValue(true);
     vi.useFakeTimers();
 
     const app = makeApp();
-    const body = JSON.stringify({ jsonrpc: "2.0", method: "getAccountInfo", params: [] });
-    const promise = app.request("/v1/helius/?pact_wallet=allowed&demo_breach=1", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body,
+    const body = JSON.stringify({
+      jsonrpc: "2.0",
+      method: "getAccountInfo",
+      params: [],
     });
-    await vi.runAllTimersAsync();
+    const promise = app.request(
+      "/v1/helius/?pact_wallet=allowed&demo_breach=1",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+      },
+    );
+    // Advance past sla (1200) + 300 = 1500ms slept by force-breach.
+    await vi.advanceTimersByTimeAsync(1700);
     const resp = await promise;
-    expect(resp.headers.get("X-Pact-Breach")).toBe("1");
-    expect(resp.headers.get("X-Pact-Outcome")).toBe("server_error");
+    expect(resp.headers.get("X-Pact-Outcome")).toBe("latency_breach");
+    expect(resp.headers.get("X-Pact-Refund")).toBe("50000");
     vi.useRealTimers();
   });
 });

@@ -16,11 +16,11 @@ app.post("/admin/reload-endpoints", adminRoute);
 
 async function main(): Promise<void> {
   const ctx = await initContext();
-  setHealthDeps({ registry: ctx.registry, balanceCache: ctx.balanceCache });
+  setHealthDeps({ registry: ctx.registry });
 
   const port = parseInt(env.PORT, 10);
   serve({ fetch: app.fetch, port });
-  console.log(`pact-proxy listening on :${port}`);
+  console.log(`pact-market-proxy listening on :${port}`);
 }
 
 main().catch((err) => {

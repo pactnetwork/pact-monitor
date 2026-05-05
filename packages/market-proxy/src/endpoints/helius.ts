@@ -1,5 +1,4 @@
-import type { EndpointRow } from "../lib/endpoints.js";
-import type { ClassifyResult, EndpointHandler } from "./types.js";
+import type { EndpointHandler } from "./types.js";
 
 const INSURABLE_METHODS = new Set([
   "getAccountInfo",
@@ -30,54 +29,10 @@ export const heliusHandler: EndpointHandler = {
   async isInsurableMethod(req: Request): Promise<boolean> {
     try {
       const clone = req.clone();
-      const body = await clone.json() as { method?: string };
+      const body = (await clone.json()) as { method?: string };
       return typeof body.method === "string" && INSURABLE_METHODS.has(body.method);
     } catch {
       return false;
     }
-  },
-
-  async classify(resp: Response, latencyMs: number, endpoint: EndpointRow): Promise<ClassifyResult> {
-    const { flatPremiumLamports, imputedCostLamports, slaLatencyMs } = endpoint;
-
-    if (resp.status === 429) {
-      // rate limited — no premium, no refund
-      return { outcome: "client_error", premium: 0n, refund: 0n, breach: false };
-    }
-
-    if (resp.status >= 500) {
-      return { outcome: "server_error", premium: flatPremiumLamports, refund: imputedCostLamports, breach: true, reason: "5xx" };
-    }
-
-    if (resp.status >= 400) {
-      return { outcome: "client_error", premium: 0n, refund: 0n, breach: false };
-    }
-
-    // 2xx — check JSON-RPC error and latency
-    if (resp.status === 200) {
-      try {
-        const clone = resp.clone();
-        const body = await clone.json() as { error?: { code?: number } };
-        if (body.error) {
-          const code = body.error.code;
-          if (code === -32603 || code === -32000) {
-            // internal / server error — refund eligible
-            return { outcome: "server_error", premium: flatPremiumLamports, refund: imputedCostLamports, breach: true, reason: "5xx" };
-          }
-          // user/client errors (invalid params, etc.) — no premium
-          return { outcome: "client_error", premium: 0n, refund: 0n, breach: false };
-        }
-      } catch {
-        // non-JSON body, treat as ok
-      }
-
-      if (latencyMs > slaLatencyMs) {
-        return { outcome: "server_error", premium: flatPremiumLamports, refund: imputedCostLamports, breach: true, reason: "latency" };
-      }
-
-      return { outcome: "ok", premium: flatPremiumLamports, refund: 0n, breach: false };
-    }
-
-    return { outcome: "ok", premium: flatPremiumLamports, refund: 0n, breach: false };
   },
 };

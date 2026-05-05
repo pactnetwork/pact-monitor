@@ -1,29 +1,41 @@
-import { describe, test, expect, vi } from "vitest";
-import { PubSubEventPublisher, type SettleEvent } from "../src/lib/events.js";
+// Events integration test — verifies wrap's PubSubEventSink wires up to a
+// stub topic publisher. The proxy uses createPubSubSink in production; in
+// tests we exercise the underlying PubSubEventSink directly (the
+// createPubSubSink factory does a require("@google-cloud/pubsub") which
+// pulls in grpc — out of scope for unit tests).
 
-const sampleEvent: SettleEvent = {
-  call_id: "test-id",
-  agent_wallet: "wallet123",
-  slug: "helius",
+import { describe, test, expect, vi } from "vitest";
+import {
+  PubSubEventSink,
+  type SettlementEvent,
+} from "@pact-network/wrap";
+
+const sampleEvent: SettlementEvent = {
+  callId: "test-id",
+  agentPubkey: "wallet123",
+  endpointSlug: "helius",
   outcome: "ok",
-  breach: false,
-  premium_lamports: "500",
-  refund_lamports: "0",
-  latency_ms: 120,
-  timestamp: new Date().toISOString(),
+  premiumLamports: "500",
+  refundLamports: "0",
+  latencyMs: 120,
+  ts: new Date().toISOString(),
 };
 
-describe("PubSubEventPublisher", () => {
+describe("PubSubEventSink (from @pact-network/wrap)", () => {
   test("calls topic.publishMessage with event JSON", async () => {
     const mockTopic = { publishMessage: vi.fn().mockResolvedValue("msg-id") };
-    const pub = new PubSubEventPublisher(mockTopic);
-    await pub.publish(sampleEvent);
+    const sink = new PubSubEventSink({ topic: mockTopic });
+    await sink.publish(sampleEvent);
     expect(mockTopic.publishMessage).toHaveBeenCalledWith({ json: sampleEvent });
   });
 
-  test("does not throw on publish error", async () => {
-    const mockTopic = { publishMessage: vi.fn().mockRejectedValue(new Error("pubsub down")) };
-    const pub = new PubSubEventPublisher(mockTopic);
-    await expect(pub.publish(sampleEvent)).resolves.toBeUndefined();
+  test("does not throw on publish error (errors swallowed via onError)", async () => {
+    const mockTopic = {
+      publishMessage: vi.fn().mockRejectedValue(new Error("pubsub down")),
+    };
+    const onError = vi.fn();
+    const sink = new PubSubEventSink({ topic: mockTopic, onError });
+    await expect(sink.publish(sampleEvent)).resolves.toBeUndefined();
+    expect(onError).toHaveBeenCalledOnce();
   });
 });
