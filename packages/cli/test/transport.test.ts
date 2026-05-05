@@ -16,12 +16,10 @@ describe("transport", () => {
     app.all("/v1/helius/*", async (c) => {
       lastHeaders = Object.fromEntries(c.req.raw.headers);
       const path = c.req.path;
-      if (path.includes("/fail-once")) {
-        const calls = (lastHeaders["x-test-call"] ?? "0");
-        if (calls === "0") return c.text("server error", 500);
-        return c.json({ ok: true, retried: true });
-      }
       if (path.includes("/4xx")) return c.text("bad request", 400);
+      if (path.includes("/with-call-id")) {
+        return c.json({ ok: true }, 200, { "x-pact-call-id": "server-call-1234" });
+      }
       return c.json({ ok: true });
     });
     server = Bun.serve({ port: 0, fetch: app.fetch });
@@ -117,5 +115,75 @@ describe("transport", () => {
     });
     expect(lastHeaders["x-api-key"]).toBeUndefined();
     expect(lastHeaders["authorization"]).toBeUndefined();
+  });
+
+  // Fix 3: callId from proxy response header
+  test("signedRequest extracts x-pact-call-id from response header", async () => {
+    const kp = Keypair.generate();
+    const res = await signedRequest({
+      gatewayUrl: `http://localhost:${port}`,
+      slug: "helius",
+      upstreamPath: "/with-call-id",
+      method: "GET",
+      headers: {},
+      keypair: kp,
+      project: "x",
+    });
+    expect(res.callId).toBe("server-call-1234");
+  });
+
+  test("signedRequest sets callId to null when header absent", async () => {
+    const kp = Keypair.generate();
+    const res = await signedRequest({
+      gatewayUrl: `http://localhost:${port}`,
+      slug: "helius",
+      upstreamPath: "/v0/balances",
+      method: "GET",
+      headers: {},
+      keypair: kp,
+      project: "x",
+    });
+    expect(res.callId).toBeNull();
+  });
+});
+
+// Fix 5: 5xx retry test (uses its own server with a per-test counter)
+describe("transport: 5xx retry", () => {
+  let server: ReturnType<typeof Bun.serve>;
+  let port: number;
+
+  beforeEach(() => {
+    let callCount = 0;
+    const app = new Hono();
+    app.all("/v1/helius/fail-once", () => {
+      callCount++;
+      if (callCount === 1) {
+        return new Response("server error", { status: 500 });
+      }
+      return new Response(JSON.stringify({ ok: true, retried: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    server = Bun.serve({ port: 0, fetch: app.fetch });
+    port = server.port;
+  });
+
+  afterEach(() => server.stop());
+
+  test("retries on 500 and returns 200 on second attempt", async () => {
+    const kp = Keypair.generate();
+    const res = await signedRequest({
+      gatewayUrl: `http://localhost:${port}`,
+      slug: "helius",
+      upstreamPath: "/fail-once",
+      method: "GET",
+      headers: {},
+      keypair: kp,
+      project: "x",
+      maxRetries: 2,
+    });
+    expect(res.status).toBe(200);
+    expect(res.attempts).toBe(2);
   });
 });

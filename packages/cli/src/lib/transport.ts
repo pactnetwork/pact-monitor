@@ -28,6 +28,7 @@ export interface SignedRequestResult {
   status: number;
   body: string;
   headers: Record<string, string>;
+  callId: string | null;
   attempts: number;
   latencyMs: number;
 }
@@ -104,6 +105,7 @@ export async function signedRequest(opts: {
           status: resp.status,
           body: responseBody,
           headers: respHeaders,
+          callId: respHeaders["x-pact-call-id"] ?? null,
           attempts: attempt,
           latencyMs: Date.now() - startedAt,
         };
@@ -117,6 +119,7 @@ export async function signedRequest(opts: {
         status: resp.status,
         body: responseBody,
         headers: respHeaders,
+        callId: respHeaders["x-pact-call-id"] ?? null,
         attempts: attempt,
         latencyMs: Date.now() - startedAt,
       };
