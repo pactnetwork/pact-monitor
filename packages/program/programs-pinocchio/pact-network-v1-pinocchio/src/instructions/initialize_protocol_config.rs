@@ -129,6 +129,33 @@ pub fn process(accounts: &[AccountView], data: &[u8]) -> ProgramResult {
         return Err(PactError::FeeBpsExceedsCap.into());
     }
 
+    // codex 2026-05-05 review fix: tighten Treasury invariants for the default
+    // template. We can't run validate_post_substitution here because Treasury
+    // PDA doesn't exist yet (init_treasury runs after init_protocol_config).
+    // The rule is therefore: if count > 0, exactly one Treasury entry must be
+    // present and its bps must be non-zero. count == 0 is allowed — operators
+    // who want every endpoint to declare its own recipients can deploy with
+    // empty defaults.
+    if count > 0 {
+        let mut treasury_count = 0usize;
+        let mut treasury_bps: u16 = 0;
+        for i in 0..count {
+            if entries[i].kind == FeeRecipientKind::Treasury as u8 {
+                treasury_count += 1;
+                treasury_bps = entries[i].bps;
+            }
+        }
+        if treasury_count == 0 {
+            return Err(PactError::MissingTreasuryEntry.into());
+        }
+        if treasury_count > 1 {
+            return Err(PactError::MultipleTreasuryRecipients.into());
+        }
+        if treasury_bps == 0 {
+            return Err(PactError::TreasuryBpsZero.into());
+        }
+    }
+
     // Allocate PDA
     let rent = Rent::get()?;
     let lamports = rent.try_minimum_balance(ProtocolConfig::LEN)?;

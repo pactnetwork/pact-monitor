@@ -364,6 +364,15 @@ export function buildRegisterEndpoint(args: {
   imputedCost: bigint;
   exposureCap: bigint;
   recipientsOverride?: FeeRecipientEntry[]; // when set, sent inline; otherwise defaults from PC
+  /**
+   * AffiliateAta accounts in the same order they appear in
+   * `recipientsOverride` (or `recipientsOverride === undefined` falls back
+   * to ProtocolConfig defaults — caller should pass the same ATA list as
+   * was used to seed PC). Required by the codex 2026-05-05 review fix:
+   * the program now validates each AffiliateAta is a real, initialised
+   * SPL Token account on the protocol USDC mint.
+   */
+  affiliateAtas?: PublicKey[];
 }): TransactionInstruction {
   preallocateTokenAccount(args.svm, args.poolVault);
 
@@ -383,19 +392,24 @@ export function buildRegisterEndpoint(args: {
   data[48] = count;
   Buffer.from(body).copy(data, 49);
 
+  const keys = [
+    { pubkey: args.authority, isSigner: true, isWritable: true },
+    { pubkey: args.pcPda, isSigner: false, isWritable: false },
+    { pubkey: args.treasuryPda, isSigner: false, isWritable: false },
+    { pubkey: args.endpointPda, isSigner: false, isWritable: true },
+    { pubkey: args.poolPda, isSigner: false, isWritable: true },
+    { pubkey: args.poolVault, isSigner: false, isWritable: true },
+    { pubkey: args.mint, isSigner: false, isWritable: false },
+    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+  ];
+  for (const ata of args.affiliateAtas ?? []) {
+    keys.push({ pubkey: ata, isSigner: false, isWritable: false });
+  }
+
   return new TransactionInstruction({
     programId: PROGRAM_ID,
-    keys: [
-      { pubkey: args.authority, isSigner: true, isWritable: true },
-      { pubkey: args.pcPda, isSigner: false, isWritable: false },
-      { pubkey: args.treasuryPda, isSigner: false, isWritable: false },
-      { pubkey: args.endpointPda, isSigner: false, isWritable: true },
-      { pubkey: args.poolPda, isSigner: false, isWritable: true },
-      { pubkey: args.poolVault, isSigner: false, isWritable: true },
-      { pubkey: args.mint, isSigner: false, isWritable: false },
-      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-      { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
-    ],
+    keys,
     data,
   });
 }
@@ -407,6 +421,11 @@ export function buildUpdateFeeRecipients(args: {
   endpointPda: PublicKey;
   slug: Uint8Array;
   recipients: FeeRecipientEntry[];
+  /**
+   * AffiliateAta accounts in the same order they appear in `recipients`,
+   * for the codex 2026-05-05 review fix.
+   */
+  affiliateAtas?: PublicKey[];
 }): TransactionInstruction {
   const body = encodeFeeRecipients(args.recipients);
   const data = Buffer.alloc(1 + 16 + 1 + body.length);
@@ -414,14 +433,18 @@ export function buildUpdateFeeRecipients(args: {
   data.set(args.slug, 1);
   data[17] = args.recipients.length;
   Buffer.from(body).copy(data, 18);
+  const keys = [
+    { pubkey: args.authority, isSigner: true, isWritable: false },
+    { pubkey: args.pcPda, isSigner: false, isWritable: false },
+    { pubkey: args.treasuryPda, isSigner: false, isWritable: false },
+    { pubkey: args.endpointPda, isSigner: false, isWritable: true },
+  ];
+  for (const ata of args.affiliateAtas ?? []) {
+    keys.push({ pubkey: ata, isSigner: false, isWritable: false });
+  }
   return new TransactionInstruction({
     programId: PROGRAM_ID,
-    keys: [
-      { pubkey: args.authority, isSigner: true, isWritable: false },
-      { pubkey: args.pcPda, isSigner: false, isWritable: false },
-      { pubkey: args.treasuryPda, isSigner: false, isWritable: false },
-      { pubkey: args.endpointPda, isSigner: false, isWritable: true },
-    ],
+    keys,
     data,
   });
 }
@@ -663,6 +686,7 @@ export function registerSimpleEndpoint(
     imputedCost?: bigint;
     exposureCap?: bigint;
     recipientsOverride?: FeeRecipientEntry[];
+    affiliateAtas?: PublicKey[];
   } = {},
 ): EndpointSetup {
   const slug = slugBytes(slugStr);
@@ -686,6 +710,7 @@ export function registerSimpleEndpoint(
     imputedCost: args.imputedCost ?? 1000n,
     exposureCap: args.exposureCap ?? 5_000_000n,
     recipientsOverride: args.recipientsOverride,
+    affiliateAtas: args.affiliateAtas,
   });
   const tx = new Transaction();
   tx.add(ix);
