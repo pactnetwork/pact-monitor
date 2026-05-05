@@ -1,81 +1,146 @@
 # Pact Network
 
-Pact Network is a parametric micro-insurance system for AI agent API payments on Solana. It monitors API provider reliability in real-time, computes actuarially-derived insurance rates from observed failure data, and publishes those rates on a public scorecard. The insurance rate is the product — everything else exists to make that number real, accurate, and public.
+Pact Network is the on-chain risk layer for AI agent API payments on Solana. The protocol holds a coverage pool per insured endpoint, debits a small premium from the agent's USDC ATA on each call, and refunds the agent automatically when the call fails an SLA (latency, 5xx, network error). Every settlement happens on-chain with explicit per-recipient fee splits — most of the premium stays in the pool, a configurable cut goes to the network treasury, and another cut goes to the integrator who registered the endpoint.
+
+**Pact Network = the rails.** On-chain program, fetch-call wrap library, settler, indexer, classifier protocol, Postgres schema, shared types. Generic. Anyone can build a curated marketplace, an SDK, or an x402-style facilitator on top of it.
+
+**Pact Market = one interface on top of Pact Network.** The hosted Hono proxy at `market.pactnetwork.io` that wraps curated providers (Helius, Birdeye, Jupiter, Elfa, fal.ai), the Next.js dashboard at `dashboard.pactnetwork.io`, the demo allowlist, the brand surface. One opinionated product on top of the rails.
+
+For the canonical architecture and build plan, see:
+- `docs/superpowers/specs/2026-05-05-pact-market-execution-design.md` — execution-design spec
+- `docs/superpowers/plans/2026-05-05-pact-market-v1.md` — Wave 0-5 implementation plan
+- `docs/superpowers/plans/2026-05-05-network-market-layering-and-v1-v2-rename.md` — Network/Market layering + v1/v2 program rename refactor (the active plan)
 
 ## Tech Stack
 
-- **Language:** TypeScript (all packages)
-- **Backend:** Fastify (API server), PostgreSQL (database)
-- **Scorecard:** Vite + React + Tailwind CSS + Recharts (SPA dashboard)
-- **SDK:** Wraps fetch(), JSON file local storage, x402/MPP header extraction
-- **Deployment:** Docker Compose + Caddy (same-origin on pactnetwork.io)
+- **Language:** TypeScript everywhere off-chain; Rust (Pinocchio 0.10) on-chain
+- **On-chain:** Pinocchio program at `5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5` on devnet (v1)
+- **Proxy:** Hono on Cloud Run (Node 22), `@hono/node-server`
+- **Settler / Indexer:** NestJS on Cloud Run, Pub/Sub queue, Cloud SQL Postgres
+- **Dashboard:** Next.js 15 (App Router), Tailwind 4, shadcn/ui, `@solana/wallet-adapter-react`
+- **Solana client:** `@solana/web3.js` 1.x as workspace peerDep, `@solana/kit` 2.x where needed, hand-written Codama-style decoders in `@pact-network/protocol-v1-client`
+- **Tooling:** pnpm workspaces, Turborepo, Vitest, LiteSVM (Bun), surfpool
 
 ## Monorepo Structure
 
 ```
 packages/
-  monitor/    — @pact-network/monitor: TypeScript SDK wrapping fetch() to monitor API reliability
-  insurance/  — @pact-network/insurance: TypeScript SDK for the on-chain insurance program (Codama + @solana/kit transport as of WP-17)
-  backend/    — @pact-network/backend: Fastify API server aggregating monitoring data
-  scorecard/  — @pact-network/scorecard: Vite+React dashboard showing provider reliability rankings
-  program/    — On-chain programs (two crates, see below)
-    programs-pinocchio/pact-insurance-pinocchio/  — PRIMARY: Pinocchio 0.10 crate (default build + deploy target as of WP-17)
-    programs/pact-insurance/                      — LEGACY: Anchor 1.0 crate (rollback fallback only; do not modify)
-deploy/       — Docker Compose + Caddyfile
-docs/         — PRD, design spec, implementation plan
-samples/      — Sample agent integrations and demos
+  # Network rails — generic, can be consumed by any interface
+  protocol-v1-client/  — @pact-network/protocol-v1-client: TS client for the v1 program (PDA helpers, instruction builders, account decoders, error map)
+  wrap/                — @pact-network/wrap: generic fetch-call wrap library (wrapFetch, BalanceCheck, Classifier, EventSink, X-Pact-* headers)
+  settler/             — @pact-network/settler: Pub/Sub → settle_batch submitter (NestJS)
+  indexer/             — @pact-network/indexer: per-call indexer + read API + ops controller (NestJS)
+  db/                  — @pact-network/db: Prisma schema for indexer (per-endpoint PoolState, Settlement, SettlementRecipientShare, RecipientEarnings)
+  shared/              — @pact-network/shared: shared types, PDA seed constants, version
+
+  # Pact Market — one curated interface on top of the rails
+  market-proxy/        — @pact-network/market-proxy: Hono proxy wrapping Helius/Birdeye/Jupiter/Elfa/fal.ai (consumes @pact-network/wrap)
+  market-dashboard/    — @pact-network/market-dashboard: Next.js dashboard for Pact Market
+
+  # On-chain programs
+  program/programs-pinocchio/pact-network-v1-pinocchio/  — V1: agent prepaid wallet via SPL Token approval, per-endpoint pools, interchangeable fee recipients (Treasury + Affiliates), pool-as-residual settlement
+  program/programs-pinocchio/pact-network-v2-pinocchio/  — V2 (future): multi-underwriter parametric insurance with oracle-derived rates and claim filings (currently unchanged from pre-Step-A; not on the May 11 ship)
+  program/programs/pact-insurance/                       — LEGACY Anchor V2 crate; rollback fallback only; do not modify
+
+  # Pre-Step-A packages (still active for the public scorecard / SDK demo)
+  monitor/      — @q3labs/pact-monitor: TS SDK wrapping fetch() for reliability monitoring
+  insurance/    — @q3labs/pact-insurance: TS SDK for the v2 (legacy) on-chain insurance program; will be aliased to @pact-network/protocol-v2-client in a follow-up
+  backend/      — @pact-network/backend: Fastify API server for the public scorecard
+  scorecard/    — @pact-network/scorecard: Vite+React dashboard for provider reliability rankings
+  sdk/          — older agent-side SDK (separate from monitor/insurance)
+deploy/         — Docker Compose + Caddyfile + Cloud Run YAML
+docs/           — PRD, specs, implementation plans (see top of this file)
+samples/        — Sample agent integrations and demos
 ```
 
 ## Design System
 
 - **Background:** #151311 (dark)
-- **Copper:** #B87333 (financial values, insurance rates)
-- **Burnt Sienna:** #C9553D (failures, violations, HIGH RISK)
-- **Slate:** #5A6B7A (healthy, RELIABLE states)
+- **Copper:** #B87333 (financial values, insurance rates, network treasury)
+- **Burnt Sienna:** #C9553D (failures, violations, HIGH RISK, pool depleted)
+- **Slate:** #5A6B7A (healthy, RELIABLE states, settled)
 - **Fonts:** Inria Serif (headlines), Inria Sans (body), JetBrains Mono (data)
 - **Aesthetic:** Brutalist — zero/minimal border radius, no gradients, no emojis in code or UI
 
 ## Build & Run
 
+This is a `pnpm` + `turbo` workspace. Use `pnpm`, not `npm`.
+
 ```bash
 # Install all workspace dependencies
-npm install
+pnpm install
 
-# Monitor SDK
-cd packages/monitor && npm run build
+# Build everything
+pnpm -r build
 
-# Insurance SDK
-cd packages/insurance && npm run build
+# Build a specific package
+pnpm --filter @pact-network/protocol-v1-client build
+pnpm --filter @pact-network/wrap build
+pnpm --filter @pact-network/market-proxy build
+pnpm --filter @pact-network/market-dashboard build
 
-# Backend (needs PostgreSQL running)
-cd packages/backend && npm run dev
+# Test
+pnpm -r test
 
-# Scorecard
-cd packages/scorecard && npm run dev
+# On-chain program build (Pinocchio)
+cd packages/program/programs-pinocchio/pact-network-v1-pinocchio
+cargo build-sbf --features bpf-entrypoint
+# → target/deploy/pact_network_v1.so (~73 KB)
 
-# Seed data
-cd packages/backend && npm run seed
+# On-chain LiteSVM tests
+cd packages/program/programs-pinocchio/pact-network-v1-pinocchio
+bun install && bun test tests/*.test.ts
 
-# Generate API key
-cd packages/backend && npm run generate-key <label>
+# Dashboard dev server
+pnpm --filter @pact-network/market-dashboard dev   # Next.js on :3000
+
+# Settler / indexer dev (need Postgres running for indexer)
+pnpm --filter @pact-network/settler dev
+pnpm --filter @pact-network/indexer dev
 ```
 
-## API Endpoints
+## Devnet program
 
+- **Program ID:** `5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5` (deployed 2026-05-05)
+- **ProgramData:** `2YETBtKq1DnxCVEHwKRmTjmesq6pA84Q8TBquqeHEapy`
+- **Upgrade authority (devnet):** `47Fg5JqMsCeuRyDsFtD7Ra7YTdzVmTr2mZ1R2dUkZyfS` — devnet hot key; rotate to multisig before mainnet flip
+- **Program-ID keypair:** `~/.config/solana/pact-network-v1-program-keypair.json` (back up off-box before mainnet)
+- **IDL:** published on-chain via `anchor idl init` — see PR #67
+- **Orphan (do not target):** `DhWibM2z3Vwp5VmJyashoeZCAZHLFKeHab8o12qYsiQc` — pre-Step-C binary; original upgrade authority lost
+
+## API endpoints
+
+### Pact Market proxy (`market.pactnetwork.io`)
+- `ALL /v1/:slug/*` — insured proxy to upstream API (per-call premium debit + on-breach refund)
+- `GET /v1/agents/:pubkey` — read-only agent insurable-state snapshot
+- `GET /health` — liveness
+- `POST /admin/reload-endpoints` — bearer-token gated; clears in-memory caches
+
+### Pact Network indexer (`indexer.pactnetwork.io`)
+- `POST /events` — bearer-gated, idempotent settlement event ingest from settler
+- `GET /api/stats` — aggregate-across-pools (pool totals, treasury earned, top integrators) — 5s cache
+- `GET /api/endpoints`, `/api/endpoints/:slug`
+- `GET /api/agents/:pubkey`, `/api/agents/:pubkey/calls?limit=N`
+- `GET /api/calls/:id`
+- `POST /api/ops/{pause,update-config,topup,update-fee-recipients}` — operator-allowlist gated; nacl signed-message verify; returns unsigned-tx for wallet signing
+
+### Public scorecard (legacy, `pactnetwork.io`)
 - `POST /api/v1/records` — batch ingest call records (authenticated)
-- `GET /api/v1/providers` — list all providers ranked by insurance rate (public)
-- `GET /api/v1/providers/:id` — provider detail with percentiles and breakdown (public)
-- `GET /api/v1/providers/:id/timeseries` — failure rate over time (public)
-- `GET /health` — server health check
-- `GET /api/v1/analytics/summary` — network-wide aggregate stats (public)
-- `GET /api/v1/analytics/timeseries` — requests and claims over time (public)
-- `GET /api/v1/claims` — list individual claim records with filters (public)
+- `GET /api/v1/providers` — list providers ranked by reliability
+- `GET /api/v1/providers/:id` — provider detail
+- `GET /api/v1/providers/:id/timeseries`
+- `GET /api/v1/analytics/summary`, `/api/v1/analytics/timeseries`
+- `GET /api/v1/claims` — claim records (legacy V2 product)
+- `GET /health`
 
 ## Conventions
 
-- No emojis in code or UI
-- All technical decisions are Alan's (the developer)
-- Deadline: April 12, 2026 (Colosseum hackathon)
+- **No emojis in code or UI.**
+- **Conventional commits** for all messages (`feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `test:`, `ci:`).
+- **`pnpm`, not `npm`.**
+- **Time estimates** in plans/tasks: omit human-paced estimates; AI execution is much faster. List steps and dependencies, not clock time.
+- **Mainnet flip:** May 11, 2026 (Colosseum submission). Wed May 6 = public devnet end-to-end demo gate. **NB:** the mainnet readiness audit at `docs/audits/2026-05-05-mainnet-readiness.md` is currently BLOCKED FOR MAINNET pending multisig rotation, third-party audit, and protocol-wide pause — see audit for full punch list.
+- **Authority rotation before mainnet:** the devnet upgrade authority is a hot key on the deployer's box. Run `solana program set-upgrade-authority` against a Squads multisig before any mainnet deploy.
 
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
