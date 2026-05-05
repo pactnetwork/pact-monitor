@@ -1,22 +1,29 @@
+import { serve } from "@hono/node-server";
 import { Hono } from "hono";
-import { healthRoute } from "./routes/health";
-import { agentsRoute } from "./routes/agents";
-import { proxyRoute } from "./routes/proxy";
+import { initContext } from "./lib/context.js";
+import { healthRoute, setHealthDeps } from "./routes/health.js";
+import { proxyRoute } from "./routes/proxy.js";
+import { agentsRoute } from "./routes/agents.js";
+import { adminRoute } from "./routes/admin.js";
+import { env } from "./env.js";
 
-type Env = {
-  Bindings: {
-    PACT_KV: KVNamespace;
-    UPSTASH_REDIS_URL: string;
-    UPSTASH_REDIS_TOKEN: string;
-    RPC_URL: string;
-    ENDPOINTS_RELOAD_TOKEN: string;
-  };
-};
-
-const app = new Hono<Env>();
+const app = new Hono();
 
 app.get("/health", healthRoute);
-app.route("/v1/agents", agentsRoute);
+app.get("/v1/agents/:pubkey", agentsRoute);
 app.all("/v1/:slug/*", proxyRoute);
+app.post("/admin/reload-endpoints", adminRoute);
 
-export default app;
+async function main(): Promise<void> {
+  const ctx = await initContext();
+  setHealthDeps({ registry: ctx.registry, balanceCache: ctx.balanceCache });
+
+  const port = parseInt(env.PORT, 10);
+  serve({ fetch: app.fetch, port });
+  console.log(`pact-proxy listening on :${port}`);
+}
+
+main().catch((err) => {
+  console.error("startup error", err);
+  process.exit(1);
+});
