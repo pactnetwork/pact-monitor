@@ -425,7 +425,7 @@ All structs: `#[repr(C)]`, `bytemuck::Pod`, first domain field at byte offset 8,
 
 ### Option A — Side-by-side modules in same crate
 
-Add a `pact_market` module inside `pact-insurance-pinocchio`. New Pact Market state accounts use PDA seed prefixes `b"pm_pool"`, `b"pm_endpoint"`, `b"pm_wallet"`, `b"pm_call"`, `b"pm_settler"`. Extend the `Discriminator` enum beyond variant 10.
+Add a `pact_market` module inside `pact-insurance-pinocchio`. Use the PRD-spec'd seed prefixes verbatim (`b"coverage_pool"`, `b"endpoint"`, `b"agent_wallet"`, `b"call"`, `b"settlement_authority"`). The existing pact-insurance crate uses `b"protocol"`, `b"pool"`, `b"vault"`, `b"position"`, `b"policy"`, `b"claim"` — there is no seed collision risk between the two products. Extend the `Discriminator` enum beyond variant 10.
 
 **Analysis:**
 
