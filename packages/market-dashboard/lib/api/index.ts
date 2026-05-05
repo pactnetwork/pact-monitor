@@ -1,5 +1,17 @@
-// Re-exports mock implementations until Wave 1D indexer ships.
-// TODO(wave2-integration): swap these imports to real HTTP fetchers pointed at
-// NEXT_PUBLIC_INDEXER_URL once the indexer package is deployed.
-export { fetchStats, fetchCalls, fetchEndpoints, fetchAgent } from "./mock";
-export type { Stats, CallEvent, Endpoint, AgentHistory, AgentWalletState } from "./types";
+/**
+ * Public data-access surface for the dashboard.
+ *
+ * Currently re-exports the in-memory mock until the indexer's Step D #59 work
+ * lands real HTTP endpoints. Swap targets are documented in MOCK_API.md.
+ */
+export { fetchStats, fetchCalls, fetchCall, fetchEndpoints, fetchAgent } from "./mock";
+export type {
+  Stats,
+  CallEvent,
+  Endpoint,
+  AgentHistory,
+  AgentInsurableSnapshot,
+  FeeRecipientSummary,
+  RecipientEarnings,
+  SettlementRecipientShare,
+} from "./types";
