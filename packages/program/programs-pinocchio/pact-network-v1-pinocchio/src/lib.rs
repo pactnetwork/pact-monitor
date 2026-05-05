@@ -18,7 +18,7 @@ use discriminator::Discriminator;
 #[cfg(feature = "bpf-entrypoint")]
 pinocchio::entrypoint!(process_instruction);
 
-solana_address::declare_id!("DhWibM2z3Vwp5VmJyashoeZCAZHLFKeHab8o12qYsiQc");
+solana_address::declare_id!("5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5");
 
 /// Discriminator allocation policy: see `discriminator.rs`. Slots 0, 5, 6, 7,
 /// 8, 11 are intentionally left as gaps (deleted instructions reserve their

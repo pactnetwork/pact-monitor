@@ -11,7 +11,7 @@ import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import * as path from "path";
 import { fileURLToPath } from "url";
 
-export const PROGRAM_ID = new PublicKey("DhWibM2z3Vwp5VmJyashoeZCAZHLFKeHab8o12qYsiQc");
+export const PROGRAM_ID = new PublicKey("5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5");
 
 // Devnet USDC mint — must equal USDC_DEVNET in src/constants.rs
 export const USDC_MINT_PUBKEY = new PublicKey("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU");
