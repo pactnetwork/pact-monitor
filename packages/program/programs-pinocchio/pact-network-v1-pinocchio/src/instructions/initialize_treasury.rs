@@ -23,7 +23,7 @@ use pinocchio::{
 
 use crate::{
     error::PactError,
-    pda::{derive_treasury, SEED_TREASURY},
+    pda::{derive_treasury, verify_protocol_config, SEED_TREASURY},
     state::{ProtocolConfig, Treasury},
     system::{create_account, SYSTEM_PROGRAM_ID},
     token::{initialize_account3, SPL_TOKEN_PROGRAM_ID},
@@ -56,6 +56,12 @@ pub fn process(accounts: &[AccountView], _data: &[u8]) -> ProgramResult {
     if !authority.is_writable() || !treasury.is_writable() || !vault.is_writable() {
         return Err(ProgramError::InvalidAccountData);
     }
+
+    // SECURITY: verify ProtocolConfig is the canonical PDA + program-owned
+    // BEFORE reading any field off it. (codex 2026-05-05: privilege-escalation
+    // class — without these checks an attacker could pass a fake config with
+    // their own authority slot.)
+    verify_protocol_config(protocol_config)?;
 
     // ProtocolConfig must exist and authority must match.
     {

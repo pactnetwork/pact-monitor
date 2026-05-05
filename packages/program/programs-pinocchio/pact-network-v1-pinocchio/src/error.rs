@@ -45,6 +45,25 @@ pub enum PactError {
     TreasuryNotInitialized = 6024,
     EndpointAlreadyRegistered = 6025,
     InvalidFeeRecipientKind = 6026,
+    // Codex 2026-05-05 review fixes (mainnet blocker class):
+    /// 6027 — supplied ProtocolConfig is not the canonical [b"protocol_config"]
+    /// PDA, or is not owned by this program.
+    InvalidProtocolConfig = 6027,
+    /// 6028 — supplied Treasury is not the canonical [b"treasury"] PDA, or is
+    /// not owned by this program.
+    InvalidTreasury = 6028,
+    /// 6029 — fee_recipients does not contain exactly one Treasury entry.
+    /// Treasury must always be present so the protocol fee path is funded.
+    MissingTreasuryEntry = 6029,
+    /// 6030 — Treasury entry's bps is zero. Treasury must take a non-zero cut
+    /// when present in the array; if you really want zero treasury take, omit
+    /// the Treasury entry entirely (which is itself rejected by 6029).
+    TreasuryBpsZero = 6030,
+    /// 6031 — an AffiliateAta destination is not a valid initialized SPL
+    /// Token account, mint != ProtocolConfig.usdc_mint, or otherwise fails
+    /// the strict ATA invariants. Returned by register_endpoint and
+    /// update_fee_recipients.
+    InvalidAffiliateAta = 6031,
 }
 
 impl From<PactError> for ProgramError {
