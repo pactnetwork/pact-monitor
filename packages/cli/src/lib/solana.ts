@@ -3,7 +3,9 @@ import {
   Keypair,
   PublicKey,
 } from "@solana/web3.js";
-import { PactInsurance } from "@q3labs/pact-insurance";
+// Import directly from client sub-path to avoid pulling in legacy-anchor-client
+// which has an ESM/CJS compatibility issue with @anchor-lang/core in bun --compile.
+import { PactInsurance } from "@q3labs/pact-insurance/dist/client.js";
 
 export const USDC_DEVNET_MINT = new PublicKey("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU");
 export const USDC_MAINNET_MINT = new PublicKey("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
