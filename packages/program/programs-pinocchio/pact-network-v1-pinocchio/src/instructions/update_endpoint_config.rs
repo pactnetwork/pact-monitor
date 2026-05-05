@@ -1,7 +1,10 @@
+/// update_endpoint_config — pool-authority-only updates to mutable
+/// EndpointConfig fields.
+///
 /// Accounts:
-/// 0. authority        — signer (must match coverage_pool.authority)
-/// 1. coverage_pool    — readonly
-/// 2. endpoint_config  — writable
+///   0. authority         — signer (must equal ProtocolConfig.authority)
+///   1. protocol_config   — readonly
+///   2. endpoint_config   — writable
 ///
 /// Data layout — 5 optional fields, each prefixed with 1-byte presence flag:
 ///   [present:u8][flat_premium_lamports:u64]  — 9 bytes
@@ -19,7 +22,7 @@ use pinocchio::{
 
 use crate::{
     error::PactError,
-    state::{CoveragePool, EndpointConfig},
+    state::{EndpointConfig, ProtocolConfig},
 };
 
 const ACCOUNT_COUNT: usize = 3;
@@ -34,7 +37,7 @@ pub fn process(accounts: &[AccountView], data: &[u8]) -> ProgramResult {
     }
 
     let authority = &accounts[0];
-    let pool = &accounts[1];
+    let protocol_config = &accounts[1];
     let endpoint = &accounts[2];
 
     if !authority.is_signer() {
@@ -45,12 +48,12 @@ pub fn process(accounts: &[AccountView], data: &[u8]) -> ProgramResult {
     }
 
     {
-        let pool_data = pool.try_borrow()?;
-        if pool_data.len() < CoveragePool::LEN {
-            return Err(ProgramError::InvalidAccountData);
+        let pc_data = protocol_config.try_borrow()?;
+        if pc_data.len() < ProtocolConfig::LEN {
+            return Err(PactError::ProtocolConfigNotInitialized.into());
         }
-        let pool_state: &CoveragePool = bytemuck::from_bytes(&pool_data[..CoveragePool::LEN]);
-        if &pool_state.authority != authority.address() {
+        let pc: &ProtocolConfig = bytemuck::from_bytes(&pc_data[..ProtocolConfig::LEN]);
+        if &pc.authority != authority.address() {
             return Err(PactError::UnauthorizedAuthority.into());
         }
     }

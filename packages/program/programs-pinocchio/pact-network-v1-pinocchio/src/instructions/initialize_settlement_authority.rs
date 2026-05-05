@@ -1,10 +1,10 @@
 /// Accounts:
-/// 0. authority              — signer, writable (must match coverage_pool.authority)
-/// 1. coverage_pool PDA      — readonly
-/// 2. settlement_authority   — writable, PDA [b"settlement_authority"], created here
-/// 3. system_program
+///   0. authority              — signer, writable (must equal ProtocolConfig.authority)
+///   1. protocol_config        — readonly, must already be initialized
+///   2. settlement_authority   — writable, PDA [b"settlement_authority"], created here
+///   3. system_program
 ///
-/// Data: 32 bytes — signer pubkey
+/// Data: 32 bytes — settler signer pubkey.
 use pinocchio::{
     account::AccountView,
     cpi::Seed,
@@ -15,8 +15,9 @@ use pinocchio::{
 use solana_address::Address;
 
 use crate::{
+    error::PactError,
     pda::{derive_settlement_authority, SEED_SETTLEMENT_AUTHORITY},
-    state::{CoveragePool, SettlementAuthority},
+    state::{ProtocolConfig, SettlementAuthority},
     system::{create_account, SYSTEM_PROGRAM_ID},
 };
 
@@ -32,7 +33,7 @@ pub fn process(accounts: &[AccountView], data: &[u8]) -> ProgramResult {
     }
 
     let authority = &accounts[0];
-    let pool = &accounts[1];
+    let protocol_config = &accounts[1];
     let settlement_auth = &accounts[2];
     let system_program = &accounts[3];
 
@@ -46,15 +47,14 @@ pub fn process(accounts: &[AccountView], data: &[u8]) -> ProgramResult {
         return Err(ProgramError::InvalidAccountData);
     }
 
-    // Verify caller is pool authority
     {
-        let pool_data = pool.try_borrow()?;
-        if pool_data.len() < CoveragePool::LEN {
-            return Err(ProgramError::InvalidAccountData);
+        let pc_data = protocol_config.try_borrow()?;
+        if pc_data.len() < ProtocolConfig::LEN {
+            return Err(PactError::ProtocolConfigNotInitialized.into());
         }
-        let pool_state: &CoveragePool = bytemuck::from_bytes(&pool_data[..CoveragePool::LEN]);
-        if &pool_state.authority != authority.address() {
-            return Err(crate::error::PactError::UnauthorizedAuthority.into());
+        let pc: &ProtocolConfig = bytemuck::from_bytes(&pc_data[..ProtocolConfig::LEN]);
+        if &pc.authority != authority.address() {
+            return Err(PactError::UnauthorizedAuthority.into());
         }
     }
 
@@ -88,6 +88,7 @@ pub fn process(accounts: &[AccountView], data: &[u8]) -> ProgramResult {
     let state: &mut SettlementAuthority =
         bytemuck::from_bytes_mut(&mut sa_data[..SettlementAuthority::LEN]);
     state.bump = bump;
+    state._padding0 = [0; 7];
     state.signer = signer_pubkey;
     state.set_at = Clock::get()?.unix_timestamp;
 

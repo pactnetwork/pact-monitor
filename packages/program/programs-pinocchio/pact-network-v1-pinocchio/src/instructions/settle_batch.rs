@@ -1,29 +1,47 @@
-/// settle_batch — processes up to MAX_BATCH_SIZE settlement events.
+/// settle_batch — process up to MAX_BATCH_SIZE settlement events with the
+/// new per-endpoint pool + SPL-Token-delegate-based agent custody +
+/// fee fan-out flow (Step C/A + B + C).
 ///
-/// Account list:
-///   0:  settlement_authority signer (writable for rent if needed)
-///   1:  settlement_authority PDA (readonly)
-///   2:  coverage_pool PDA (writable)
-///   3:  coverage_pool USDC vault (writable)
-///   4:  token_program
-///   5:  system_program
-///   6:  clock sysvar (unused directly — Clock::get() syscall used instead)
-///   Then per event (4 accounts each):
-///     [call_record PDA (writable, init), agent_wallet PDA (writable),
-///      agent_wallet vault (writable), endpoint_config PDA (writable)]
+/// Per-event flow:
+///   1. Validate EndpointConfig for slug + paused + exposure cap.
+///   2. Init CallRecord PDA (rejects duplicate call_id).
+///   3. Premium-in: SPL Token Transfer agent_ata → pool_vault for full
+///      premium, authority = SettlementAuthority PDA (program-signed via
+///      invoke_signed). The delegate must be pre-approved off-chain.
+///   4. Fee fan-out: for each i in 0..ep.fee_recipient_count, transfer
+///      pool_vault → fee_recipient_ata for `premium * bps / 10_000`.
+///      Authority = CoveragePool PDA.
+///   5. Refund (on breach): pool_vault → agent_ata for refund amount,
+///      authority = CoveragePool PDA.
 ///
-/// Data layout:
+/// Account layout — fixed prefix (4):
+///   0. settler_signer
+///   1. settlement_authority PDA (readonly; also acts as token delegate)
+///   2. token_program
+///   3. system_program
+///
+/// Per-event accounts (5 + N where N = endpoint.fee_recipient_count):
+///   0. call_record PDA (writable, init)
+///   1. coverage_pool PDA (writable, slug-derived)
+///   2. coverage_pool USDC vault (writable)
+///   3. endpoint_config PDA (writable)
+///   4. agent USDC ATA (writable)
+///   5..5+N. fee recipient ATAs (writable), in EndpointConfig order
+///
+/// Wire data:
 ///   0-1:  event_count u16 LE
-///   per event (100 bytes):
+///   per event (104 bytes):
 ///     0-15:   call_id [u8; 16]
-///     16-47:  agent_wallet pubkey [u8; 32]
+///     16-47:  agent owner pubkey [u8; 32]
 ///     48-63:  endpoint_slug [u8; 16]
 ///     64-71:  premium_lamports u64
 ///     72-79:  refund_lamports u64
 ///     80-83:  latency_ms u32
 ///     84:     breach u8
-///     85-91:  _pad [u8; 7]
+///     85:     fee_recipient_count_hint u8 (must match endpoint state)
+///     86-91:  _pad [u8; 6]
 ///     92-99:  timestamp i64
+///     100-103: _pad2 [u8; 4]
 use pinocchio::{
     account::AccountView,
     cpi::Seed,
@@ -33,20 +51,20 @@ use pinocchio::{
 };
 
 use crate::{
-    constants::{MAX_BATCH_SIZE, MIN_PREMIUM_LAMPORTS},
+    constants::{MAX_BATCH_SIZE, MAX_FEE_RECIPIENTS, MIN_PREMIUM_LAMPORTS},
     error::PactError,
     pda::{
-        derive_agent_wallet, derive_call_record, derive_endpoint_config,
-        SEED_AGENT_WALLET, SEED_CALL, SEED_COVERAGE_POOL,
+        derive_call_record, derive_coverage_pool, derive_endpoint_config,
+        SEED_COVERAGE_POOL, SEED_CALL, SEED_SETTLEMENT_AUTHORITY,
     },
-    state::{AgentWallet, CallRecord, CoveragePool, EndpointConfig, SettlementAuthority},
+    state::{CallRecord, CoveragePool, EndpointConfig, FeeRecipient, SettlementAuthority},
     system::{create_account, SYSTEM_PROGRAM_ID},
     token::{transfer_pda_signed, SPL_TOKEN_PROGRAM_ID},
 };
 
-const FIXED_ACCOUNTS: usize = 7;
-const ACCOUNTS_PER_EVENT: usize = 4;
-const BYTES_PER_EVENT: usize = 100;
+const FIXED_ACCOUNTS: usize = 4;
+const FIXED_PER_EVENT: usize = 5; // call_record, pool, pool_vault, endpoint, agent_ata
+const BYTES_PER_EVENT: usize = 104;
 
 pub fn process(accounts: &[AccountView], data: &[u8]) -> ProgramResult {
     if accounts.len() < FIXED_ACCOUNTS {
@@ -58,10 +76,8 @@ pub fn process(accounts: &[AccountView], data: &[u8]) -> ProgramResult {
 
     let settler_signer = &accounts[0];
     let settlement_auth = &accounts[1];
-    let pool = &accounts[2];
-    let pool_vault = &accounts[3];
-    let token_program = &accounts[4];
-    let system_program = &accounts[5];
+    let token_program = &accounts[2];
+    let system_program = &accounts[3];
 
     if token_program.address() != &SPL_TOKEN_PROGRAM_ID {
         return Err(ProgramError::IncorrectProgramId);
@@ -73,7 +89,8 @@ pub fn process(accounts: &[AccountView], data: &[u8]) -> ProgramResult {
         return Err(ProgramError::MissingRequiredSignature);
     }
 
-    // Verify settler signer matches settlement_authority.signer
+    // Verify settler_signer matches SettlementAuthority.signer and read bump.
+    let sa_bump;
     {
         let sa_data = settlement_auth.try_borrow()?;
         if sa_data.len() < SettlementAuthority::LEN {
@@ -84,6 +101,7 @@ pub fn process(accounts: &[AccountView], data: &[u8]) -> ProgramResult {
         if &sa.signer != settler_signer.address() {
             return Err(PactError::UnauthorizedSettler.into());
         }
+        sa_bump = sa.bump;
     }
 
     let event_count = u16::from_le_bytes(data[0..2].try_into().unwrap()) as usize;
@@ -93,64 +111,70 @@ pub fn process(accounts: &[AccountView], data: &[u8]) -> ProgramResult {
     if data.len() < 2 + event_count * BYTES_PER_EVENT {
         return Err(ProgramError::InvalidInstructionData);
     }
-    if accounts.len() < FIXED_ACCOUNTS + event_count * ACCOUNTS_PER_EVENT {
-        return Err(ProgramError::NotEnoughAccountKeys);
-    }
 
     let now = Clock::get()?.unix_timestamp;
     let rent = Rent::get()?;
 
+    let mut acct_cursor = FIXED_ACCOUNTS;
     for i in 0..event_count {
         let ev_start = 2 + i * BYTES_PER_EVENT;
         let ev = &data[ev_start..ev_start + BYTES_PER_EVENT];
 
         let call_id: [u8; 16] = ev[0..16].try_into().unwrap();
-        let agent_wallet_key: [u8; 32] = ev[16..48].try_into().unwrap();
+        let agent_owner: [u8; 32] = ev[16..48].try_into().unwrap();
         let endpoint_slug: [u8; 16] = ev[48..64].try_into().unwrap();
         let premium_lamports = u64::from_le_bytes(ev[64..72].try_into().unwrap());
         let mut refund_lamports = u64::from_le_bytes(ev[72..80].try_into().unwrap());
         let latency_ms = u32::from_le_bytes(ev[80..84].try_into().unwrap());
         let breach = ev[84];
+        let fee_count_hint = ev[85] as usize;
         let timestamp = i64::from_le_bytes(ev[92..100].try_into().unwrap());
 
-        // Validate
         if timestamp > now {
             return Err(PactError::InvalidTimestamp.into());
         }
         if premium_lamports < MIN_PREMIUM_LAMPORTS {
             return Err(PactError::PremiumTooSmall.into());
         }
+        if fee_count_hint > MAX_FEE_RECIPIENTS {
+            return Err(PactError::FeeRecipientArrayTooLong.into());
+        }
 
-        let base = FIXED_ACCOUNTS + i * ACCOUNTS_PER_EVENT;
-        let call_record_acct = &accounts[base];
-        let agent_wallet_acct = &accounts[base + 1];
-        let agent_vault_acct = &accounts[base + 2];
-        let endpoint_acct = &accounts[base + 3];
+        let needed_for_event = FIXED_PER_EVENT + fee_count_hint;
+        if accounts.len() < acct_cursor + needed_for_event {
+            return Err(ProgramError::NotEnoughAccountKeys);
+        }
 
-        // Verify PDAs
+        let call_record_acct = &accounts[acct_cursor];
+        let pool_acct = &accounts[acct_cursor + 1];
+        let pool_vault_acct = &accounts[acct_cursor + 2];
+        let endpoint_acct = &accounts[acct_cursor + 3];
+        let agent_ata_acct = &accounts[acct_cursor + 4];
+        let fee_atas_base = acct_cursor + FIXED_PER_EVENT;
+
+        // Verify PDAs.
         let (expected_call_record, cr_bump) = derive_call_record(&call_id);
         if call_record_acct.address() != &expected_call_record {
             return Err(ProgramError::InvalidSeeds);
         }
-
-        use solana_address::Address;
-        let aw_addr = Address::new_from_array(agent_wallet_key);
-        let (expected_aw, _) = derive_agent_wallet(&aw_addr);
-        if agent_wallet_acct.address() != &expected_aw {
+        let (expected_pool, pool_bump) = derive_coverage_pool(&endpoint_slug);
+        if pool_acct.address() != &expected_pool {
             return Err(ProgramError::InvalidSeeds);
         }
-
         let (expected_ep, _) = derive_endpoint_config(&endpoint_slug);
         if endpoint_acct.address() != &expected_ep {
             return Err(ProgramError::InvalidSeeds);
         }
 
-        // Check for duplicate: call_record must be uninitialized
         if !call_record_acct.is_data_empty() {
             return Err(PactError::DuplicateCallId.into());
         }
 
-        // Check endpoint not paused
+        // Read endpoint snapshot — fee_recipient_count must match hint, and
+        // we capture the [u8; 32] destination + bps array for fan-out.
+        let fee_recipients_snapshot: [FeeRecipient; MAX_FEE_RECIPIENTS];
+        let ep_count;
+        let cached_pool_pubkey;
         {
             let ep_data = endpoint_acct.try_borrow()?;
             if ep_data.len() < EndpointConfig::LEN {
@@ -160,26 +184,52 @@ pub fn process(accounts: &[AccountView], data: &[u8]) -> ProgramResult {
             if ep.paused != 0 {
                 return Err(PactError::EndpointPaused.into());
             }
+            ep_count = ep.fee_recipient_count as usize;
+            if ep_count != fee_count_hint {
+                return Err(PactError::RecipientCoverageMismatch.into());
+            }
+            fee_recipients_snapshot = ep.fee_recipients;
+            cached_pool_pubkey = ep.coverage_pool;
+        }
+        if &cached_pool_pubkey != pool_acct.address() {
+            return Err(PactError::RecipientCoverageMismatch.into());
         }
 
-        // Hourly exposure cap — read then update
+        // Read pool snapshot — verify vault binding.
+        {
+            let pool_data = pool_acct.try_borrow()?;
+            if pool_data.len() < CoveragePool::LEN {
+                return Err(ProgramError::InvalidAccountData);
+            }
+            let cp: &CoveragePool = bytemuck::from_bytes(&pool_data[..CoveragePool::LEN]);
+            if &cp.usdc_vault != pool_vault_acct.address() {
+                return Err(ProgramError::InvalidAccountData);
+            }
+        }
+
+        // Verify each fee_recipient ATA matches the endpoint config order.
+        for j in 0..ep_count {
+            let acct = &accounts[fee_atas_base + j];
+            if acct.address() != &fee_recipients_snapshot[j].destination {
+                return Err(PactError::RecipientCoverageMismatch.into());
+            }
+        }
+
+        // Hourly exposure cap.
         {
             let mut ep_data = endpoint_acct.try_borrow_mut()?;
             let ep: &mut EndpointConfig =
                 bytemuck::from_bytes_mut(&mut ep_data[..EndpointConfig::LEN]);
-
-            // Reset period if more than 1 hour has elapsed
             if now > ep.current_period_start + 3600 {
                 ep.current_period_start = now;
                 ep.current_period_refunds = 0;
             }
-
             if refund_lamports > 0 {
                 let cap_remaining = ep
                     .exposure_cap_per_hour_lamports
                     .saturating_sub(ep.current_period_refunds);
                 if refund_lamports > cap_remaining {
-                    refund_lamports = 0; // cap exceeded — skip refund
+                    refund_lamports = 0;
                 } else {
                     ep.current_period_refunds = ep
                         .current_period_refunds
@@ -189,7 +239,7 @@ pub fn process(accounts: &[AccountView], data: &[u8]) -> ProgramResult {
             }
         }
 
-        // Allocate CallRecord PDA
+        // Allocate CallRecord PDA.
         let cr_lamports = rent.try_minimum_balance(CallRecord::LEN)?;
         let cr_bump_seed = [cr_bump];
         let cr_signer_seeds: [Seed; 3] = [
@@ -205,91 +255,60 @@ pub fn process(accounts: &[AccountView], data: &[u8]) -> ProgramResult {
             &crate::ID,
             &cr_signer_seeds,
         )?;
-
-        // Write CallRecord
         {
             let mut cr_data = call_record_acct.try_borrow_mut()?;
             let record: &mut CallRecord =
                 bytemuck::from_bytes_mut(&mut cr_data[..CallRecord::LEN]);
             record.bump = cr_bump;
             record.breach = breach;
+            record._padding0 = [0; 6];
             record.call_id = call_id;
-            record.agent_wallet = *agent_wallet_acct.address();
+            record.agent = solana_address::Address::new_from_array(agent_owner);
             record.endpoint_slug = endpoint_slug;
             record.premium_lamports = premium_lamports;
             record.refund_lamports = refund_lamports;
             record.latency_ms = latency_ms;
+            record._padding1 = [0; 4];
             record.timestamp = timestamp;
         }
 
-        // Read agent wallet bump for PDA signing
-        let aw_bump;
-        {
-            let aw_data = agent_wallet_acct.try_borrow()?;
-            let aw: &AgentWallet = bytemuck::from_bytes(&aw_data[..AgentWallet::LEN]);
-            aw_bump = aw.bump;
-            if aw.balance < premium_lamports {
-                return Err(PactError::InsufficientBalance.into());
-            }
-        }
-
-        // CPI: Transfer premium — agent vault → pool vault (signed by agent_wallet PDA)
-        let aw_bump_seed = [aw_bump];
-        let aw_signer_seeds: [Seed; 3] = [
-            Seed::from(SEED_AGENT_WALLET),
-            Seed::from(&agent_wallet_key[..]),
-            Seed::from(&aw_bump_seed[..]),
+        // ----- Step 3: premium-in via SettlementAuthority delegate -----
+        // SPL Token Transfer with authority = SettlementAuthority PDA, signed
+        // via invoke_signed. Token program checks that the source account's
+        // delegate field equals authority.address() and delegated_amount >=
+        // amount; both are set off-chain by the agent via SPL `Approve`.
+        let sa_bump_seed = [sa_bump];
+        let sa_signer_seeds: [Seed; 2] = [
+            Seed::from(SEED_SETTLEMENT_AUTHORITY),
+            Seed::from(&sa_bump_seed[..]),
         ];
         transfer_pda_signed(
-            agent_vault_acct,
-            pool_vault,
-            agent_wallet_acct,
+            agent_ata_acct,
+            pool_vault_acct,
+            settlement_auth,
             premium_lamports,
-            &aw_signer_seeds,
+            &sa_signer_seeds,
         )?;
 
-        // Update agent wallet
+        // Pool credit (gross).
         {
-            let mut aw_data = agent_wallet_acct.try_borrow_mut()?;
-            let aw: &mut AgentWallet = bytemuck::from_bytes_mut(&mut aw_data[..AgentWallet::LEN]);
-            aw.balance = aw
-                .balance
-                .checked_sub(premium_lamports)
-                .ok_or(PactError::ArithmeticOverflow)?;
-            aw.total_premiums_paid = aw
-                .total_premiums_paid
-                .checked_add(premium_lamports)
-                .ok_or(PactError::ArithmeticOverflow)?;
-            aw.call_count = aw
-                .call_count
-                .checked_add(1)
-                .ok_or(PactError::ArithmeticOverflow)?;
-        }
-
-        // Update pool
-        {
-            let mut pool_data = pool.try_borrow_mut()?;
-            let pool_state: &mut CoveragePool =
-                bytemuck::from_bytes_mut(&mut pool_data[..CoveragePool::LEN]);
-            pool_state.current_balance = pool_state
+            let mut pool_data = pool_acct.try_borrow_mut()?;
+            let cp: &mut CoveragePool = bytemuck::from_bytes_mut(&mut pool_data[..CoveragePool::LEN]);
+            cp.current_balance = cp
                 .current_balance
                 .checked_add(premium_lamports)
                 .ok_or(PactError::ArithmeticOverflow)?;
-            pool_state.total_premiums = pool_state
+            cp.total_premiums = cp
                 .total_premiums
                 .checked_add(premium_lamports)
                 .ok_or(PactError::ArithmeticOverflow)?;
         }
-
-        // Update endpoint stats
+        // Endpoint stats.
         {
             let mut ep_data = endpoint_acct.try_borrow_mut()?;
             let ep: &mut EndpointConfig =
                 bytemuck::from_bytes_mut(&mut ep_data[..EndpointConfig::LEN]);
-            ep.total_calls = ep
-                .total_calls
-                .checked_add(1)
-                .ok_or(PactError::ArithmeticOverflow)?;
+            ep.total_calls = ep.total_calls.checked_add(1).ok_or(PactError::ArithmeticOverflow)?;
             ep.total_premiums = ep
                 .total_premiums
                 .checked_add(premium_lamports)
@@ -302,66 +321,72 @@ pub fn process(accounts: &[AccountView], data: &[u8]) -> ProgramResult {
             }
         }
 
-        // Handle refund if applicable
-        if refund_lamports > 0 {
-            // Check pool has enough
-            let pool_balance = {
-                let pool_data = pool.try_borrow()?;
-                let pool_state: &CoveragePool =
-                    bytemuck::from_bytes(&pool_data[..CoveragePool::LEN]);
-                pool_state.current_balance
-            };
+        // ----- Step 4: fee fan-out from pool -----
+        let pool_bump_seed = [pool_bump];
+        let pool_signer_seeds: [Seed; 3] = [
+            Seed::from(SEED_COVERAGE_POOL),
+            Seed::from(&endpoint_slug[..]),
+            Seed::from(&pool_bump_seed[..]),
+        ];
 
-            if pool_balance < refund_lamports {
-                // Pool depleted — skip refund silently, premium already settled
+        let mut total_fee_paid: u64 = 0;
+        for j in 0..ep_count {
+            let bps = fee_recipients_snapshot[j].bps as u128;
+            let fee_amount = (premium_lamports as u128 * bps / 10_000u128) as u64;
+            if fee_amount == 0 {
                 continue;
             }
-
-            // Read pool bump for PDA signing
-            let pool_bump = {
-                let pool_data = pool.try_borrow()?;
-                let ps: &CoveragePool = bytemuck::from_bytes(&pool_data[..CoveragePool::LEN]);
-                ps.bump
-            };
-
-            // CPI: Transfer refund — pool vault → agent vault (signed by pool PDA)
-            let pool_bump_seed = [pool_bump];
-            let pool_signer_seeds: [Seed; 2] = [
-                Seed::from(SEED_COVERAGE_POOL),
-                Seed::from(&pool_bump_seed[..]),
-            ];
+            let dest = &accounts[fee_atas_base + j];
             transfer_pda_signed(
-                pool_vault,
-                agent_vault_acct,
-                pool,
+                pool_vault_acct,
+                dest,
+                pool_acct,
+                fee_amount,
+                &pool_signer_seeds,
+            )?;
+            total_fee_paid = total_fee_paid
+                .checked_add(fee_amount)
+                .ok_or(PactError::ArithmeticOverflow)?;
+        }
+        // Debit pool current_balance by fees paid (residual stays in pool).
+        if total_fee_paid > 0 {
+            let mut pool_data = pool_acct.try_borrow_mut()?;
+            let cp: &mut CoveragePool = bytemuck::from_bytes_mut(&mut pool_data[..CoveragePool::LEN]);
+            cp.current_balance = cp
+                .current_balance
+                .checked_sub(total_fee_paid)
+                .ok_or(PactError::ArithmeticOverflow)?;
+        }
+
+        // ----- Step 5: refund (on breach) — pool → agent_ata -----
+        if refund_lamports > 0 {
+            let pool_balance = {
+                let pool_data = pool_acct.try_borrow()?;
+                let cp: &CoveragePool = bytemuck::from_bytes(&pool_data[..CoveragePool::LEN]);
+                cp.current_balance
+            };
+            if pool_balance < refund_lamports {
+                // Pool depleted. Premium already settled — silently skip refund.
+                acct_cursor += needed_for_event;
+                continue;
+            }
+            transfer_pda_signed(
+                pool_vault_acct,
+                agent_ata_acct,
+                pool_acct,
                 refund_lamports,
                 &pool_signer_seeds,
             )?;
-
-            // Update pool and agent for refund
             {
-                let mut pool_data = pool.try_borrow_mut()?;
-                let pool_state: &mut CoveragePool =
+                let mut pool_data = pool_acct.try_borrow_mut()?;
+                let cp: &mut CoveragePool =
                     bytemuck::from_bytes_mut(&mut pool_data[..CoveragePool::LEN]);
-                pool_state.current_balance = pool_state
+                cp.current_balance = cp
                     .current_balance
                     .checked_sub(refund_lamports)
                     .ok_or(PactError::ArithmeticOverflow)?;
-                pool_state.total_refunds = pool_state
+                cp.total_refunds = cp
                     .total_refunds
-                    .checked_add(refund_lamports)
-                    .ok_or(PactError::ArithmeticOverflow)?;
-            }
-            {
-                let mut aw_data = agent_wallet_acct.try_borrow_mut()?;
-                let aw: &mut AgentWallet =
-                    bytemuck::from_bytes_mut(&mut aw_data[..AgentWallet::LEN]);
-                aw.balance = aw
-                    .balance
-                    .checked_add(refund_lamports)
-                    .ok_or(PactError::ArithmeticOverflow)?;
-                aw.total_refunds_received = aw
-                    .total_refunds_received
                     .checked_add(refund_lamports)
                     .ok_or(PactError::ArithmeticOverflow)?;
             }
@@ -375,6 +400,8 @@ pub fn process(accounts: &[AccountView], data: &[u8]) -> ProgramResult {
                     .ok_or(PactError::ArithmeticOverflow)?;
             }
         }
+
+        acct_cursor += needed_for_event;
     }
 
     Ok(())

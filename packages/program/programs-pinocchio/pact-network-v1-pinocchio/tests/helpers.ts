@@ -19,7 +19,7 @@ export const USDC_MINT_PUBKEY = new PublicKey("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEER
 
 const SO_PATH = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
-  "../../../target/deploy/pact_market.so"
+  "../../../target/deploy/pact_network_v1.so"
 );
 
 export function loadProgram(svm: LiteSVM, programId: PublicKey = PROGRAM_ID): void {

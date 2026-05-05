@@ -1,11 +1,16 @@
-/// Accounts:
-/// 0. authority       — signer (must match coverage_pool.authority)
-/// 1. coverage_pool   — writable PDA
-/// 2. authority_ata   — writable (source)
-/// 3. pool_vault      — writable (destination)
-/// 4. token_program
+/// top_up_coverage_pool — top up a per-endpoint pool from the pool authority's
+/// USDC ATA.
 ///
-/// Data: 8 bytes — amount u64 LE
+/// Accounts:
+///   0. authority       — signer (must equal coverage_pool.authority)
+///   1. coverage_pool   — writable PDA [b"coverage_pool", slug]
+///   2. authority_ata   — writable (source)
+///   3. pool_vault      — writable (destination)
+///   4. token_program
+///
+/// Data layout (24 bytes):
+///   0-15:  endpoint_slug [u8; 16]
+///   16-23: amount u64 LE
 use pinocchio::{
     account::AccountView,
     error::ProgramError,
@@ -14,12 +19,13 @@ use pinocchio::{
 
 use crate::{
     error::PactError,
+    pda::derive_coverage_pool,
     state::CoveragePool,
     token::{transfer_user_signed, SPL_TOKEN_PROGRAM_ID},
 };
 
 const ACCOUNT_COUNT: usize = 5;
-const ARGS_LEN: usize = 8;
+const ARGS_LEN: usize = 16 + 8;
 
 pub fn process(accounts: &[AccountView], data: &[u8]) -> ProgramResult {
     if accounts.len() < ACCOUNT_COUNT {
@@ -45,7 +51,13 @@ pub fn process(accounts: &[AccountView], data: &[u8]) -> ProgramResult {
         return Err(ProgramError::InvalidAccountData);
     }
 
-    let amount = u64::from_le_bytes(data[0..8].try_into().unwrap());
+    let slug: [u8; 16] = data[0..16].try_into().unwrap();
+    let amount = u64::from_le_bytes(data[16..24].try_into().unwrap());
+
+    let (expected_pool, _) = derive_coverage_pool(&slug);
+    if pool.address() != &expected_pool {
+        return Err(ProgramError::InvalidSeeds);
+    }
 
     {
         let pool_data = pool.try_borrow()?;
@@ -55,6 +67,9 @@ pub fn process(accounts: &[AccountView], data: &[u8]) -> ProgramResult {
         let state: &CoveragePool = bytemuck::from_bytes(&pool_data[..CoveragePool::LEN]);
         if &state.authority != authority.address() {
             return Err(PactError::UnauthorizedAuthority.into());
+        }
+        if &state.usdc_vault != pool_vault.address() {
+            return Err(ProgramError::InvalidAccountData);
         }
     }
 

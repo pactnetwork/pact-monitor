@@ -1,5 +1,5 @@
 {
-  "name": "pact-market-pinocchio-tests",
+  "name": "pact-network-v1-pinocchio-tests",
   "private": true,
   "scripts": {
     "test": "bun test tests/*.test.ts",

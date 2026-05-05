@@ -1,12 +1,12 @@
 [package]
-name = "pact-market-pinocchio"
+name = "pact-network-v1-pinocchio"
 version = "0.1.0"
-description = "Pact Market V1 on-chain parametric insurance for AI agent API payments (Pinocchio)"
+description = "Pact Network V1 on-chain parametric insurance for AI agent API payments (Pinocchio)"
 edition = "2021"
 
 [lib]
 crate-type = ["cdylib", "lib"]
-name = "pact_market"
+name = "pact_network_v1"
 
 [features]
 default = []

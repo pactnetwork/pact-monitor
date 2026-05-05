@@ -10,6 +10,18 @@ pub const USDC_DEVNET: Address = Address::new_from_array([
 ]);
 
 pub const MAX_BATCH_SIZE: usize = 50;
-pub const WITHDRAWAL_COOLDOWN_SECS: i64 = 86_400;
-pub const MAX_DEPOSIT_LAMPORTS: u64 = 25_000_000;
 pub const MIN_PREMIUM_LAMPORTS: u64 = 100;
+
+/// Hard ceiling on the total fee_recipients[*].bps sum. ProtocolConfig sets
+/// the operator-tunable cap (`max_total_fee_bps`); this constant is the
+/// absolute cap used when ProtocolConfig is missing — and is also the
+/// percentage-points-of-100% sentinel used when validating individual
+/// recipient bps values.
+pub const ABSOLUTE_FEE_BPS_CAP: u16 = 10_000;
+
+/// Default cap used when ProtocolConfig is freshly initialized — 30%.
+pub const DEFAULT_MAX_TOTAL_FEE_BPS: u16 = 3_000;
+
+/// Maximum number of recipients in a fee_recipients array. Mirrors the
+/// fixed-size array length in EndpointConfig / ProtocolConfig.
+pub const MAX_FEE_RECIPIENTS: usize = 8;
