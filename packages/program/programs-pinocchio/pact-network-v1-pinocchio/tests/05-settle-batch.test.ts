@@ -1,274 +1,406 @@
 import { test, expect } from "bun:test";
 import { LiteSVM, FailedTransactionMetadata } from "litesvm";
-import { Keypair, PublicKey, SystemProgram, Transaction, TransactionInstruction } from "@solana/web3.js";
-import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
+import { Keypair, PublicKey, Transaction } from "@solana/web3.js";
 import {
-  PROGRAM_ID,
-  loadProgram, generateKeypair, setupUsdcMint,
-  deriveCoveragePool, deriveSettlementAuthority, deriveEndpointConfig,
-  deriveAgentWallet, deriveCallRecord, slugBytes,
-  buildInitializeCoveragePool, buildInitializeSettlementAuthority,
-  buildRegisterEndpoint, buildInitializeAgentWallet, buildDepositUsdc,
-  createTokenAccount, mintTokensToAccount, getTokenBalance,
-  getAccountData, readU64, readI64,
+  setupProtocolAndTreasury,
+  registerSimpleEndpoint,
+  setupSettlementAuthority,
+  buildSettleBatch,
+  fundPoolDirect,
+  generateKeypair,
+  createTokenAccount,
+  mintTokensToAccount,
+  setTokenDelegate,
+  clearTokenDelegate,
+  getTokenBalance,
+  deriveSettlementAuthority,
+  deriveCallRecord,
+  deriveCoveragePool,
+  slugBytes,
+  FEE_KIND_TREASURY,
+  FEE_KIND_AFFILIATE_ATA,
+  getAccountData,
+  readU64,
+  SettleEvent,
 } from "./helpers";
 
-function buildSettleBatchIx(
-  settler: PublicKey,
-  settlementAuthPda: PublicKey,
-  poolPda: PublicKey,
-  poolVault: PublicKey,
-  events: Array<{
-    callId: Uint8Array;
-    agentOwner: PublicKey;
-    agentVault: PublicKey;
-    endpointPda: PublicKey;
-    slug: Uint8Array;
-    premium: bigint;
-    refund: bigint;
-    latencyMs: number;
-    breach: boolean;
-    timestamp: number;
-  }>,
-  callRecordPdas: PublicKey[],
-  agentWalletPdas: PublicKey[]
-): TransactionInstruction {
-  const BYTES_PER_EVENT = 100;
-  const data = Buffer.alloc(2 + events.length * BYTES_PER_EVENT);
-  new DataView(data.buffer).setUint16(0, events.length, true);
-
-  for (let i = 0; i < events.length; i++) {
-    const e = events[i];
-    const off = 2 + i * BYTES_PER_EVENT;
-    data.set(e.callId, off);
-    data.set(e.agentOwner.toBuffer(), off + 16);
-    data.set(e.slug, off + 48);
-    new DataView(data.buffer).setBigUint64(off + 64, e.premium, true);
-    new DataView(data.buffer).setBigUint64(off + 72, e.refund, true);
-    new DataView(data.buffer).setUint32(off + 80, e.latencyMs, true);
-    data[off + 84] = e.breach ? 1 : 0;
-    new DataView(data.buffer).setBigInt64(off + 92, BigInt(e.timestamp), true);
-  }
-
-  const fullData = Buffer.alloc(1 + data.length);
-  fullData[0] = 10; // discriminator settle_batch
-  data.copy(fullData, 1);
-
-  const keys = [
-    { pubkey: settler, isSigner: true, isWritable: true },
-    { pubkey: settlementAuthPda, isSigner: false, isWritable: false },
-    { pubkey: poolPda, isSigner: false, isWritable: true },
-    { pubkey: poolVault, isSigner: false, isWritable: true },
-    { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
-    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-    { pubkey: PublicKey.default, isSigner: false, isWritable: false }, // clock sysvar placeholder
-  ];
-
-  for (let i = 0; i < events.length; i++) {
-    keys.push({ pubkey: callRecordPdas[i], isSigner: false, isWritable: true });
-    keys.push({ pubkey: agentWalletPdas[i], isSigner: false, isWritable: true });
-    keys.push({ pubkey: events[i].agentVault, isSigner: false, isWritable: true });
-    keys.push({ pubkey: events[i].endpointPda, isSigner: false, isWritable: true });
-  }
-
-  return new TransactionInstruction({ programId: PROGRAM_ID, keys, data: fullData });
-}
-
-function fullSetup() {
-  const svm = new LiteSVM();
-  loadProgram(svm);
-  const authority = generateKeypair(svm);
-  const mintAuth = generateKeypair(svm);
-  const mint = setupUsdcMint(svm, mintAuth);
-  const [poolPda] = deriveCoveragePool();
-  const poolVaultKp = Keypair.generate();
-
-  const initTx = buildInitializeCoveragePool(authority.publicKey, poolPda, poolVaultKp.publicKey, mint, svm);
-  initTx.recentBlockhash = svm.latestBlockhash();
-  initTx.feePayer = authority.publicKey;
-  initTx.sign(authority);
-  svm.sendTransaction(initTx);
-
-  const settler = generateKeypair(svm);
-  const [saPda] = deriveSettlementAuthority();
-  const saIx = buildInitializeSettlementAuthority(authority.publicKey, poolPda, saPda, settler.publicKey);
-  const saTx = new Transaction();
-  saTx.add(saIx);
-  saTx.recentBlockhash = svm.latestBlockhash();
-  saTx.feePayer = authority.publicKey;
-  saTx.sign(authority);
-  svm.sendTransaction(saTx);
-
-  const slug = slugBytes("helius");
-  const [epPda] = deriveEndpointConfig(slug);
-  const regIx = buildRegisterEndpoint(authority.publicKey, poolPda, epPda, slug, 500n, 0, 5000, 1000n, 5_000_000n);
-  const regTx = new Transaction();
-  regTx.add(regIx);
-  regTx.recentBlockhash = svm.latestBlockhash();
-  regTx.feePayer = authority.publicKey;
-  regTx.sign(authority);
-  svm.sendTransaction(regTx);
-
+/**
+ * Provision an agent: fund their USDC ATA and bake a delegate of the
+ * SettlementAuthority PDA so the program can pull premiums on their behalf.
+ *
+ * SPL Token's `Approve` instruction is the production path; in LiteSVM we
+ * write the delegate fields directly into the token-account buffer to avoid
+ * standing up a full SPL Token CPI. This is faithful to what `Approve`
+ * produces and to what the program reads at settle time.
+ */
+function provisionAgent(svm: LiteSVM, mint: PublicKey, saPda: PublicKey, balance: bigint, delegated: bigint): { agent: Keypair; agentAta: PublicKey } {
   const agent = generateKeypair(svm);
-  const [walletPda] = deriveAgentWallet(agent.publicKey);
-  const walletVaultKp = Keypair.generate();
-  const walletIx = buildInitializeAgentWallet(agent.publicKey, walletPda, walletVaultKp.publicKey, mint, svm);
-  const walletTx = new Transaction();
-  walletTx.add(walletIx);
-  walletTx.recentBlockhash = svm.latestBlockhash();
-  walletTx.feePayer = agent.publicKey;
-  walletTx.sign(agent);
-  svm.sendTransaction(walletTx);
-
-  // Fund agent wallet
   const agentAta = createTokenAccount(svm, mint, agent.publicKey);
-  mintTokensToAccount(svm, agentAta, 10_000_000n);
-  const depIx = buildDepositUsdc(agent.publicKey, walletPda, agentAta, walletVaultKp.publicKey, 10_000_000n);
-  const depTx = new Transaction();
-  depTx.add(depIx);
-  depTx.recentBlockhash = svm.latestBlockhash();
-  depTx.feePayer = agent.publicKey;
-  depTx.sign(agent);
-  svm.sendTransaction(depTx);
-
-  // Fund pool vault (for refunds)
-  mintTokensToAccount(svm, poolVaultKp.publicKey, 5_000_000n);
-  // Update pool state current_balance
-  const poolData = svm.getAccount(poolPda)!;
-  const pd = new Uint8Array(poolData.data);
-  new DataView(pd.buffer).setBigUint64(128, 5_000_000n, true);
-  svm.setAccount(poolPda, { ...poolData, data: pd });
-
-  return {
-    svm, authority, settler, mint, poolPda, poolVault: poolVaultKp.publicKey,
-    saPda, slug, epPda, agent, walletPda, walletVault: walletVaultKp.publicKey,
-  };
+  mintTokensToAccount(svm, agentAta, balance);
+  setTokenDelegate(svm, agentAta, saPda, delegated);
+  return { agent, agentAta };
 }
 
-test("settle_batch single no-breach: premium debited from agent, CallRecord created", () => {
-  const { svm, settler, poolPda, poolVault, saPda, slug, epPda, agent, walletPda, walletVault } = fullSetup();
+test("single event with default 10% Treasury fan-out: balances split correctly", () => {
+  const base = setupProtocolAndTreasury(new LiteSVM());
+  const ep = registerSimpleEndpoint(base, "helius");
+  const settler = generateKeypair(base.svm);
+  const saPda = setupSettlementAuthority(base, settler);
+
+  const { agent, agentAta } = provisionAgent(base.svm, base.mint, saPda, 10_000_000n, 10_000_000n);
+
+  // Pre-fund the pool so it can refund / pay fees out of vault liquidity.
+  fundPoolDirect(base.svm, ep.poolPda, ep.poolVault, 5_000_000n);
 
   const callId = new Uint8Array(16).fill(1);
-  const [crPda] = deriveCallRecord(callId);
   const now = Math.floor(Date.now() / 1000);
+  const premium = 10_000n; // 10% = 1000
 
-  const ix = buildSettleBatchIx(
-    settler.publicKey, saPda, poolPda, poolVault,
-    [{ callId, agentOwner: agent.publicKey, agentVault: walletVault, endpointPda: epPda, slug, premium: 500n, refund: 0n, latencyMs: 100, breach: false, timestamp: now - 1 }],
-    [crPda], [walletPda]
-  );
-
+  const ix = buildSettleBatch(settler.publicKey, saPda, [
+    {
+      callId,
+      agentOwner: agent.publicKey,
+      agentAta,
+      endpointPda: ep.endpointPda,
+      poolPda: ep.poolPda,
+      poolVault: ep.poolVault,
+      slug: ep.slug,
+      premium,
+      refund: 0n,
+      latencyMs: 100,
+      breach: false,
+      timestamp: now - 1,
+      feeRecipientAtas: [base.treasuryVault],
+    },
+  ]);
   const tx = new Transaction();
   tx.add(ix);
-  tx.recentBlockhash = svm.latestBlockhash();
+  tx.recentBlockhash = base.svm.latestBlockhash();
   tx.feePayer = settler.publicKey;
   tx.sign(settler);
-  const result = svm.sendTransaction(tx);
-
+  const result = base.svm.sendTransaction(tx);
+  if ("err" in result) console.log("SETTLE ERR:", JSON.stringify(result), "logs:", (result as any).meta?.logs);
   expect(result instanceof FailedTransactionMetadata).toBe(false);
 
-  // Agent balance decreased by premium
-  const awData = getAccountData(svm, walletPda)!;
-  expect(readU64(awData, 72)).toBe(10_000_000n - 500n); // balance
+  // Agent ATA: dropped by full premium.
+  expect(getTokenBalance(base.svm, agentAta)).toBe(10_000_000n - premium);
+  // Pool vault: gross-credited 10_000, fee-debited 1_000, net +9_000 over the 5M baseline.
+  expect(getTokenBalance(base.svm, ep.poolVault)).toBe(5_000_000n + 9_000n);
+  // Treasury vault: 10% of premium = 1000.
+  expect(getTokenBalance(base.svm, base.treasuryVault)).toBe(1_000n);
 
-  // Pool current_balance increased by premium
-  const poolData = getAccountData(svm, poolPda)!;
-  expect(readU64(poolData, 128)).toBe(5_000_000n + 500n);
-
-  // CallRecord exists
-  const crData = getAccountData(svm, crPda);
-  expect(crData).not.toBeNull();
+  // CallRecord exists.
+  const [crPda] = deriveCallRecord(callId);
+  expect(getAccountData(base.svm, crPda)).not.toBeNull();
 });
 
-test("settle_batch with breach: refund credited to agent", () => {
-  const { svm, settler, poolPda, poolVault, saPda, slug, epPda, agent, walletPda, walletVault } = fullSetup();
+test("single event with explicit Treasury 10% + Affiliate 5%: split = 85/10/5", () => {
+  const base = setupProtocolAndTreasury(new LiteSVM());
+  // Affiliate ATA needs to exist as a USDC token account.
+  const affOwner = generateKeypair(base.svm);
+  const affAta = createTokenAccount(base.svm, base.mint, affOwner.publicKey);
+  const ep = registerSimpleEndpoint(base, "jupiter", {
+    recipientsOverride: [
+      { kind: FEE_KIND_TREASURY, destination: PublicKey.default, bps: 1000 },
+      { kind: FEE_KIND_AFFILIATE_ATA, destination: affAta, bps: 500 },
+    ],
+  });
+  const settler = generateKeypair(base.svm);
+  const saPda = setupSettlementAuthority(base, settler);
+  const { agent, agentAta } = provisionAgent(base.svm, base.mint, saPda, 10_000_000n, 10_000_000n);
+  fundPoolDirect(base.svm, ep.poolPda, ep.poolVault, 5_000_000n);
 
   const callId = new Uint8Array(16).fill(2);
-  const [crPda] = deriveCallRecord(callId);
   const now = Math.floor(Date.now() / 1000);
+  const premium = 100_000n;
 
-  const ix = buildSettleBatchIx(
-    settler.publicKey, saPda, poolPda, poolVault,
-    [{ callId, agentOwner: agent.publicKey, agentVault: walletVault, endpointPda: epPda, slug, premium: 500n, refund: 1000n, latencyMs: 6000, breach: true, timestamp: now - 1 }],
-    [crPda], [walletPda]
-  );
+  const ix = buildSettleBatch(settler.publicKey, saPda, [
+    {
+      callId,
+      agentOwner: agent.publicKey,
+      agentAta,
+      endpointPda: ep.endpointPda,
+      poolPda: ep.poolPda,
+      poolVault: ep.poolVault,
+      slug: ep.slug,
+      premium,
+      refund: 0n,
+      latencyMs: 100,
+      breach: false,
+      timestamp: now - 1,
+      feeRecipientAtas: [base.treasuryVault, affAta],
+    },
+  ]);
   const tx = new Transaction();
   tx.add(ix);
-  tx.recentBlockhash = svm.latestBlockhash();
+  tx.recentBlockhash = base.svm.latestBlockhash();
   tx.feePayer = settler.publicKey;
   tx.sign(settler);
-  const result = svm.sendTransaction(tx);
-
+  const result = base.svm.sendTransaction(tx);
+  if ("err" in result) console.log("SETTLE85 ERR:", JSON.stringify(result), "logs:", (result as any).meta?.logs);
   expect(result instanceof FailedTransactionMetadata).toBe(false);
 
-  const awData = getAccountData(svm, walletPda)!;
-  // balance = 10_000_000 - 500 (premium) + 1000 (refund) = 10_000_500
-  expect(readU64(awData, 72)).toBe(10_000_000n - 500n + 1000n);
-  // total_refunds_received = 1000
-  expect(readU64(awData, 96)).toBe(1000n);
+  // Treasury credited 10%, Affiliate 5%.
+  expect(getTokenBalance(base.svm, base.treasuryVault)).toBe(10_000n);
+  expect(getTokenBalance(base.svm, affAta)).toBe(5_000n);
+  // Pool retains 85% = 85_000.
+  expect(getTokenBalance(base.svm, ep.poolVault)).toBe(5_000_000n + 85_000n);
+  // Agent ATA debited full premium.
+  expect(getTokenBalance(base.svm, agentAta)).toBe(10_000_000n - 100_000n);
 });
 
-test("settle_batch duplicate call_id rejected", () => {
-  const { svm, settler, poolPda, poolVault, saPda, slug, epPda, agent, walletPda, walletVault } = fullSetup();
+test("breach event refunds agent ATA directly from pool vault", () => {
+  const base = setupProtocolAndTreasury(new LiteSVM());
+  const ep = registerSimpleEndpoint(base, "helius");
+  const settler = generateKeypair(base.svm);
+  const saPda = setupSettlementAuthority(base, settler);
+  const { agent, agentAta } = provisionAgent(base.svm, base.mint, saPda, 10_000_000n, 10_000_000n);
+  fundPoolDirect(base.svm, ep.poolPda, ep.poolVault, 5_000_000n);
 
   const callId = new Uint8Array(16).fill(3);
-  const [crPda] = deriveCallRecord(callId);
   const now = Math.floor(Date.now() / 1000);
-  const event = { callId, agentOwner: agent.publicKey, agentVault: walletVault, endpointPda: epPda, slug, premium: 500n, refund: 0n, latencyMs: 100, breach: false, timestamp: now - 1 };
+  const premium = 1_000n;
+  const refund = 50_000n;
 
+  const ix = buildSettleBatch(settler.publicKey, saPda, [
+    {
+      callId,
+      agentOwner: agent.publicKey,
+      agentAta,
+      endpointPda: ep.endpointPda,
+      poolPda: ep.poolPda,
+      poolVault: ep.poolVault,
+      slug: ep.slug,
+      premium,
+      refund,
+      latencyMs: 6000,
+      breach: true,
+      timestamp: now - 1,
+      feeRecipientAtas: [base.treasuryVault],
+    },
+  ]);
+  const tx = new Transaction();
+  tx.add(ix);
+  tx.recentBlockhash = base.svm.latestBlockhash();
+  tx.feePayer = settler.publicKey;
+  tx.sign(settler);
+  const result = base.svm.sendTransaction(tx);
+  if ("err" in result) console.log("SETTLE BREACH ERR:", JSON.stringify(result), "logs:", (result as any).meta?.logs);
+  expect(result instanceof FailedTransactionMetadata).toBe(false);
+
+  // Agent: -premium + refund.
+  expect(getTokenBalance(base.svm, agentAta)).toBe(10_000_000n - premium + refund);
+  // Pool: +premium - 100bps treasury fee - refund.
+  // 100 bps of 1000 = 100. So pool = 5_000_000 + 1000 - 100 - 50_000 = 4_950_900
+  expect(getTokenBalance(base.svm, ep.poolVault)).toBe(5_000_000n + 1_000n - 100n - 50_000n);
+});
+
+test("mixed batch across 3 endpoints with different fee templates", () => {
+  const base = setupProtocolAndTreasury(new LiteSVM());
+  const settler = generateKeypair(base.svm);
+  const saPda = setupSettlementAuthority(base, settler);
+
+  // EP1: defaults (Treasury 10%)
+  const ep1 = registerSimpleEndpoint(base, "ep1");
+  fundPoolDirect(base.svm, ep1.poolPda, ep1.poolVault, 1_000_000n);
+
+  // EP2: Treasury 5% + Affiliate 5% (sum 10% under default 30% cap)
+  const aff2Owner = generateKeypair(base.svm);
+  const aff2Ata = createTokenAccount(base.svm, base.mint, aff2Owner.publicKey);
+  const ep2 = registerSimpleEndpoint(base, "ep2", {
+    recipientsOverride: [
+      { kind: FEE_KIND_TREASURY, destination: PublicKey.default, bps: 500 },
+      { kind: FEE_KIND_AFFILIATE_ATA, destination: aff2Ata, bps: 500 },
+    ],
+  });
+  fundPoolDirect(base.svm, ep2.poolPda, ep2.poolVault, 1_000_000n);
+
+  // EP3: empty fee_recipients -> 100% pool retention
+  const ep3 = registerSimpleEndpoint(base, "ep3", { recipientsOverride: [] });
+  fundPoolDirect(base.svm, ep3.poolPda, ep3.poolVault, 1_000_000n);
+
+  const { agent, agentAta } = provisionAgent(base.svm, base.mint, saPda, 30_000_000n, 30_000_000n);
+
+  const now = Math.floor(Date.now() / 1000);
+  const premiums = [100_000n, 200_000n, 300_000n];
+  const events: SettleEvent[] = [
+    {
+      callId: new Uint8Array(16).fill(11),
+      agentOwner: agent.publicKey, agentAta,
+      endpointPda: ep1.endpointPda, poolPda: ep1.poolPda, poolVault: ep1.poolVault, slug: ep1.slug,
+      premium: premiums[0], refund: 0n, latencyMs: 50, breach: false, timestamp: now - 3,
+      feeRecipientAtas: [base.treasuryVault],
+    },
+    {
+      callId: new Uint8Array(16).fill(12),
+      agentOwner: agent.publicKey, agentAta,
+      endpointPda: ep2.endpointPda, poolPda: ep2.poolPda, poolVault: ep2.poolVault, slug: ep2.slug,
+      premium: premiums[1], refund: 0n, latencyMs: 50, breach: false, timestamp: now - 2,
+      feeRecipientAtas: [base.treasuryVault, aff2Ata],
+    },
+    {
+      callId: new Uint8Array(16).fill(13),
+      agentOwner: agent.publicKey, agentAta,
+      endpointPda: ep3.endpointPda, poolPda: ep3.poolPda, poolVault: ep3.poolVault, slug: ep3.slug,
+      premium: premiums[2], refund: 0n, latencyMs: 50, breach: false, timestamp: now - 1,
+      feeRecipientAtas: [],
+    },
+  ];
+
+  const ix = buildSettleBatch(settler.publicKey, saPda, events);
+  const tx = new Transaction();
+  tx.add(ix);
+  tx.recentBlockhash = base.svm.latestBlockhash();
+  tx.feePayer = settler.publicKey;
+  tx.sign(settler);
+  const result = base.svm.sendTransaction(tx);
+  if ("err" in result) console.log("MIX ERR:", JSON.stringify(result), "logs:", (result as any).meta?.logs);
+  expect(result instanceof FailedTransactionMetadata).toBe(false);
+
+  // Agent debited 100k+200k+300k = 600k.
+  expect(getTokenBalance(base.svm, agentAta)).toBe(30_000_000n - 600_000n);
+  // EP1 pool: +100k - 10k (Treasury) = +90k.
+  expect(getTokenBalance(base.svm, ep1.poolVault)).toBe(1_000_000n + 90_000n);
+  // EP2 pool: +200k - 10k (Treasury 5%) - 10k (Aff 5%) = +180k.
+  expect(getTokenBalance(base.svm, ep2.poolVault)).toBe(1_000_000n + 180_000n);
+  // EP3 pool: +300k (no recipients) = +300k.
+  expect(getTokenBalance(base.svm, ep3.poolVault)).toBe(1_000_000n + 300_000n);
+  // Treasury credited (10k from ep1 + 10k from ep2) = 20k.
+  expect(getTokenBalance(base.svm, base.treasuryVault)).toBe(20_000n);
+  // Affiliate2 credited 10k.
+  expect(getTokenBalance(base.svm, aff2Ata)).toBe(10_000n);
+});
+
+test("revoke between events: subsequent settle for that agent fails", () => {
+  // LiteSVM-friendly variant of "revoke mid-batch": send two separate
+  // settle_batch txs. Between them we Revoke the agent's delegate; the
+  // second tx must fail because SPL Token's Transfer with delegate
+  // authority verifies delegate equals authority.
+  const base = setupProtocolAndTreasury(new LiteSVM());
+  const ep = registerSimpleEndpoint(base, "helius");
+  const settler = generateKeypair(base.svm);
+  const saPda = setupSettlementAuthority(base, settler);
+  const { agent, agentAta } = provisionAgent(base.svm, base.mint, saPda, 10_000_000n, 10_000_000n);
+  fundPoolDirect(base.svm, ep.poolPda, ep.poolVault, 5_000_000n);
+
+  const now = Math.floor(Date.now() / 1000);
+  // First event succeeds.
+  const ix1 = buildSettleBatch(settler.publicKey, saPda, [
+    {
+      callId: new Uint8Array(16).fill(20),
+      agentOwner: agent.publicKey, agentAta,
+      endpointPda: ep.endpointPda, poolPda: ep.poolPda, poolVault: ep.poolVault, slug: ep.slug,
+      premium: 1_000n, refund: 0n, latencyMs: 50, breach: false, timestamp: now - 2,
+      feeRecipientAtas: [base.treasuryVault],
+    },
+  ]);
+  const t1 = new Transaction();
+  t1.add(ix1);
+  t1.recentBlockhash = base.svm.latestBlockhash();
+  t1.feePayer = settler.publicKey;
+  t1.sign(settler);
+  expect(base.svm.sendTransaction(t1) instanceof FailedTransactionMetadata).toBe(false);
+
+  // Revoke between batches.
+  clearTokenDelegate(base.svm, agentAta);
+
+  // Second event must fail (delegate cleared → SPL Token Transfer w/ delegate authority rejects).
+  const ix2 = buildSettleBatch(settler.publicKey, saPda, [
+    {
+      callId: new Uint8Array(16).fill(21),
+      agentOwner: agent.publicKey, agentAta,
+      endpointPda: ep.endpointPda, poolPda: ep.poolPda, poolVault: ep.poolVault, slug: ep.slug,
+      premium: 1_000n, refund: 0n, latencyMs: 50, breach: false, timestamp: now - 1,
+      feeRecipientAtas: [base.treasuryVault],
+    },
+  ]);
+  const t2 = new Transaction();
+  t2.add(ix2);
+  t2.recentBlockhash = base.svm.latestBlockhash();
+  t2.feePayer = settler.publicKey;
+  t2.sign(settler);
+  expect(base.svm.sendTransaction(t2) instanceof FailedTransactionMetadata).toBe(true);
+});
+
+test("min-premium edge: premium < MIN_PREMIUM_LAMPORTS rejected", () => {
+  const base = setupProtocolAndTreasury(new LiteSVM());
+  const ep = registerSimpleEndpoint(base, "helius");
+  const settler = generateKeypair(base.svm);
+  const saPda = setupSettlementAuthority(base, settler);
+  const { agent, agentAta } = provisionAgent(base.svm, base.mint, saPda, 10_000_000n, 10_000_000n);
+  fundPoolDirect(base.svm, ep.poolPda, ep.poolVault, 5_000_000n);
+
+  const now = Math.floor(Date.now() / 1000);
+  const ix = buildSettleBatch(settler.publicKey, saPda, [
+    {
+      callId: new Uint8Array(16).fill(30),
+      agentOwner: agent.publicKey, agentAta,
+      endpointPda: ep.endpointPda, poolPda: ep.poolPda, poolVault: ep.poolVault, slug: ep.slug,
+      premium: 50n, // < 100 = MIN_PREMIUM_LAMPORTS
+      refund: 0n, latencyMs: 50, breach: false, timestamp: now - 1,
+      feeRecipientAtas: [base.treasuryVault],
+    },
+  ]);
+  const tx = new Transaction();
+  tx.add(ix);
+  tx.recentBlockhash = base.svm.latestBlockhash();
+  tx.feePayer = settler.publicKey;
+  tx.sign(settler);
+  expect(base.svm.sendTransaction(tx) instanceof FailedTransactionMetadata).toBe(true);
+});
+
+test("duplicate call_id rejected", () => {
+  const base = setupProtocolAndTreasury(new LiteSVM());
+  const ep = registerSimpleEndpoint(base, "helius");
+  const settler = generateKeypair(base.svm);
+  const saPda = setupSettlementAuthority(base, settler);
+  const { agent, agentAta } = provisionAgent(base.svm, base.mint, saPda, 10_000_000n, 10_000_000n);
+  fundPoolDirect(base.svm, ep.poolPda, ep.poolVault, 5_000_000n);
+
+  const now = Math.floor(Date.now() / 1000);
+  const event: SettleEvent = {
+    callId: new Uint8Array(16).fill(40),
+    agentOwner: agent.publicKey, agentAta,
+    endpointPda: ep.endpointPda, poolPda: ep.poolPda, poolVault: ep.poolVault, slug: ep.slug,
+    premium: 1_000n, refund: 0n, latencyMs: 50, breach: false, timestamp: now - 1,
+    feeRecipientAtas: [base.treasuryVault],
+  };
   for (let i = 0; i < 2; i++) {
-    const ix = buildSettleBatchIx(settler.publicKey, saPda, poolPda, poolVault, [event], [crPda], [walletPda]);
+    const ix = buildSettleBatch(settler.publicKey, saPda, [event]);
     const tx = new Transaction();
     tx.add(ix);
-    tx.recentBlockhash = svm.latestBlockhash();
+    tx.recentBlockhash = base.svm.latestBlockhash();
     tx.feePayer = settler.publicKey;
     tx.sign(settler);
-    const result = svm.sendTransaction(tx);
+    const result = base.svm.sendTransaction(tx);
     if (i === 0) expect(result instanceof FailedTransactionMetadata).toBe(false);
     else expect(result instanceof FailedTransactionMetadata).toBe(true);
   }
 });
 
-test("settle_batch unauthorized settler rejected", () => {
-  const { svm, poolPda, poolVault, saPda, slug, epPda, agent, walletPda, walletVault } = fullSetup();
-  const badSettler = generateKeypair(svm);
+test("unauthorized settler rejected", () => {
+  const base = setupProtocolAndTreasury(new LiteSVM());
+  const ep = registerSimpleEndpoint(base, "helius");
+  const settler = generateKeypair(base.svm);
+  const saPda = setupSettlementAuthority(base, settler);
+  const { agent, agentAta } = provisionAgent(base.svm, base.mint, saPda, 10_000_000n, 10_000_000n);
+  fundPoolDirect(base.svm, ep.poolPda, ep.poolVault, 5_000_000n);
 
-  const callId = new Uint8Array(16).fill(4);
-  const [crPda] = deriveCallRecord(callId);
+  const fake = generateKeypair(base.svm);
   const now = Math.floor(Date.now() / 1000);
-
-  const ix = buildSettleBatchIx(
-    badSettler.publicKey, saPda, poolPda, poolVault,
-    [{ callId, agentOwner: agent.publicKey, agentVault: walletVault, endpointPda: epPda, slug, premium: 500n, refund: 0n, latencyMs: 100, breach: false, timestamp: now - 1 }],
-    [crPda], [walletPda]
-  );
+  const ix = buildSettleBatch(fake.publicKey, saPda, [
+    {
+      callId: new Uint8Array(16).fill(50),
+      agentOwner: agent.publicKey, agentAta,
+      endpointPda: ep.endpointPda, poolPda: ep.poolPda, poolVault: ep.poolVault, slug: ep.slug,
+      premium: 1_000n, refund: 0n, latencyMs: 50, breach: false, timestamp: now - 1,
+      feeRecipientAtas: [base.treasuryVault],
+    },
+  ]);
   const tx = new Transaction();
   tx.add(ix);
-  tx.recentBlockhash = svm.latestBlockhash();
-  tx.feePayer = badSettler.publicKey;
-  tx.sign(badSettler);
-  const result = svm.sendTransaction(tx);
-
-  expect(result instanceof FailedTransactionMetadata).toBe(true);
-});
-
-test("settle_batch future timestamp rejected", () => {
-  const { svm, settler, poolPda, poolVault, saPda, slug, epPda, agent, walletPda, walletVault } = fullSetup();
-  const callId = new Uint8Array(16).fill(5);
-  const [crPda] = deriveCallRecord(callId);
-  const futureTs = Math.floor(Date.now() / 1000) + 9999;
-
-  const ix = buildSettleBatchIx(
-    settler.publicKey, saPda, poolPda, poolVault,
-    [{ callId, agentOwner: agent.publicKey, agentVault: walletVault, endpointPda: epPda, slug, premium: 500n, refund: 0n, latencyMs: 100, breach: false, timestamp: futureTs }],
-    [crPda], [walletPda]
-  );
-  const tx = new Transaction();
-  tx.add(ix);
-  tx.recentBlockhash = svm.latestBlockhash();
-  tx.feePayer = settler.publicKey;
-  tx.sign(settler);
-  const result = svm.sendTransaction(tx);
-
-  expect(result instanceof FailedTransactionMetadata).toBe(true);
+  tx.recentBlockhash = base.svm.latestBlockhash();
+  tx.feePayer = fake.publicKey;
+  tx.sign(fake);
+  expect(base.svm.sendTransaction(tx) instanceof FailedTransactionMetadata).toBe(true);
 });

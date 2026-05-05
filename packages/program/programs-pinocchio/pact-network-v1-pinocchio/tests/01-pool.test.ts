@@ -1,155 +1,115 @@
 import { test, expect } from "bun:test";
 import { LiteSVM, FailedTransactionMetadata } from "litesvm";
-import { Keypair, PublicKey, SystemProgram, Transaction, TransactionInstruction } from "@solana/web3.js";
-import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
+import { Transaction } from "@solana/web3.js";
 import {
-  PROGRAM_ID,
-  loadProgram,
-  generateKeypair,
-  airdrop,
-  setupUsdcMint,
+  setupProtocolAndTreasury,
+  registerSimpleEndpoint,
+  buildTopUpCoveragePool,
   deriveCoveragePool,
-  deriveSettlementAuthority,
-  buildInitializeCoveragePool,
-  buildInitializeSettlementAuthority,
-  buildDepositUsdc,
-  deriveAgentWallet,
   slugBytes,
+  createTokenAccount,
+  mintTokensToAccount,
+  getTokenBalance,
   getAccountData,
   readU64,
-  readI64,
-  sendTx,
 } from "./helpers";
 
-function setup() {
-  const svm = new LiteSVM();
-  loadProgram(svm);
-  const authority = generateKeypair(svm);
-  const mintAuthority = generateKeypair(svm);
-  const mint = setupUsdcMint(svm, mintAuthority);
-  const [poolPda] = deriveCoveragePool();
-  const vaultKp = Keypair.generate();
-  return { svm, authority, mint, poolPda, vaultKp, mintAuthority };
-}
+test("register_endpoint creates per-slug coverage pool with correct state", () => {
+  const base = setupProtocolAndTreasury(new LiteSVM());
+  const ep = registerSimpleEndpoint(base, "helius");
 
-test("initialize_coverage_pool creates singleton with correct state", () => {
-  const { svm, authority, mint, poolPda, vaultKp } = setup();
-
-  const tx = buildInitializeCoveragePool(authority.publicKey, poolPda, vaultKp.publicKey, mint, svm);
-  tx.recentBlockhash = svm.latestBlockhash();
-  tx.feePayer = authority.publicKey;
-  tx.sign(authority);
-  const result = svm.sendTransaction(tx);
-  if ("err" in result) console.log("INIT ERR:", JSON.stringify(result), "logs:", (result as any).meta?.logs);
-
-  expect(result instanceof FailedTransactionMetadata).toBe(false);
-
-  const data = getAccountData(svm, poolPda);
+  const data = getAccountData(base.svm, ep.poolPda);
   expect(data).not.toBeNull();
-  expect(data!.length).toBeGreaterThanOrEqual(144);
-
-  // bump at byte 0 — nonzero
-  expect(data![0]).toBeGreaterThan(0);
-  // authority at bytes 8-39
+  // bump (1) + pad (7) + authority @ 8 + mint @ 40 + vault @ 72 + slug @ 104 +
+  // total_deposits @ 120 + total_premiums @ 128 + total_refunds @ 136 +
+  // current_balance @ 144 + created_at @ 152
+  expect(data![0]).toBeGreaterThan(0); // bump nonzero
+  // authority
   expect(Buffer.from(data!.slice(8, 40)).toString("hex")).toBe(
-    authority.publicKey.toBuffer().toString("hex")
+    base.authority.publicKey.toBuffer().toString("hex"),
   );
-  // total_deposits, total_premiums, total_refunds, current_balance all zero
-  expect(readU64(data!, 104)).toBe(0n); // total_deposits
-  expect(readU64(data!, 112)).toBe(0n); // total_premiums
-  expect(readU64(data!, 120)).toBe(0n); // total_refunds
-  expect(readU64(data!, 128)).toBe(0n); // current_balance
-  // created_at nonzero
-  expect(readI64(data!, 136)).toBeGreaterThan(0n);
+  // slug
+  expect(Buffer.from(data!.slice(104, 120))).toEqual(Buffer.from(ep.slug));
+  expect(readU64(data!, 120)).toBe(0n); // total_deposits
+  expect(readU64(data!, 144)).toBe(0n); // current_balance
 });
 
-test("initialize_coverage_pool fails on duplicate", () => {
-  const { svm, authority, mint, poolPda, vaultKp } = setup();
+test("two endpoints have isolated coverage pools at distinct PDAs", () => {
+  const base = setupProtocolAndTreasury(new LiteSVM());
+  const epA = registerSimpleEndpoint(base, "helius");
+  const epB = registerSimpleEndpoint(base, "jupiter");
 
-  const tx1 = buildInitializeCoveragePool(authority.publicKey, poolPda, vaultKp.publicKey, mint, svm);
-  tx1.recentBlockhash = svm.latestBlockhash();
-  tx1.feePayer = authority.publicKey;
-  tx1.sign(authority);
-  svm.sendTransaction(tx1);
+  expect(epA.poolPda.toString()).not.toBe(epB.poolPda.toString());
+  expect(epA.poolVault.toString()).not.toBe(epB.poolVault.toString());
 
-  // Second attempt with new vault
-  const vaultKp2 = Keypair.generate();
-  svm.setAccount(vaultKp2.publicKey, {
-    lamports: 2_000_000n,
-    data: new Uint8Array(165),
-    owner: TOKEN_PROGRAM_ID,
-    executable: false,
+  // Both pool accounts exist independently.
+  expect(getAccountData(base.svm, epA.poolPda)).not.toBeNull();
+  expect(getAccountData(base.svm, epB.poolPda)).not.toBeNull();
+
+  // Both endpoints reference their own slug-derived pool.
+  const [expectedA] = deriveCoveragePool(slugBytes("helius"));
+  const [expectedB] = deriveCoveragePool(slugBytes("jupiter"));
+  expect(epA.poolPda.equals(expectedA)).toBe(true);
+  expect(epB.poolPda.equals(expectedB)).toBe(true);
+});
+
+test("top_up_coverage_pool credits only the targeted slug pool", () => {
+  const base = setupProtocolAndTreasury(new LiteSVM());
+  const epA = registerSimpleEndpoint(base, "helius");
+  const epB = registerSimpleEndpoint(base, "jupiter");
+
+  // Authority funds an ATA + tops up endpoint A.
+  const authAta = createTokenAccount(base.svm, base.mint, base.authority.publicKey);
+  mintTokensToAccount(base.svm, authAta, 1_000_000n);
+
+  const ix = buildTopUpCoveragePool({
+    authority: base.authority.publicKey,
+    poolPda: epA.poolPda,
+    authorityAta: authAta,
+    poolVault: epA.poolVault,
+    slug: epA.slug,
+    amount: 500_000n,
   });
-  const tx2 = buildInitializeCoveragePool(authority.publicKey, poolPda, vaultKp2.publicKey, mint, svm);
-  tx2.recentBlockhash = svm.latestBlockhash();
-  tx2.feePayer = authority.publicKey;
-  tx2.sign(authority);
-  const result = svm.sendTransaction(tx2);
-
-  expect(result instanceof FailedTransactionMetadata).toBe(true);
-});
-
-test("initialize_settlement_authority creates PDA with correct signer", () => {
-  const { svm, authority, mint, poolPda, vaultKp } = setup();
-
-  // First init pool
-  const tx1 = buildInitializeCoveragePool(authority.publicKey, poolPda, vaultKp.publicKey, mint, svm);
-  tx1.recentBlockhash = svm.latestBlockhash();
-  tx1.feePayer = authority.publicKey;
-  tx1.sign(authority);
-  svm.sendTransaction(tx1);
-
-  const settler = Keypair.generate();
-  const [saPda] = deriveSettlementAuthority();
-
-  const ix = buildInitializeSettlementAuthority(
-    authority.publicKey,
-    poolPda,
-    saPda,
-    settler.publicKey
-  );
-  const tx2 = new Transaction();
-  tx2.add(ix);
-  tx2.recentBlockhash = svm.latestBlockhash();
-  tx2.feePayer = authority.publicKey;
-  tx2.sign(authority);
-  const result = svm.sendTransaction(tx2);
-
+  const tx = new Transaction();
+  tx.add(ix);
+  tx.recentBlockhash = base.svm.latestBlockhash();
+  tx.feePayer = base.authority.publicKey;
+  tx.sign(base.authority);
+  const result = base.svm.sendTransaction(tx);
+  if ("err" in result) console.log("TOPUP ERR:", JSON.stringify(result), "logs:", (result as any).meta?.logs);
   expect(result instanceof FailedTransactionMetadata).toBe(false);
 
-  const data = getAccountData(svm, saPda);
-  expect(data).not.toBeNull();
-  // signer at bytes 8-39
-  expect(Buffer.from(data!.slice(8, 40)).toString("hex")).toBe(
-    settler.publicKey.toBuffer().toString("hex")
-  );
+  // A's pool current_balance updated; A's vault has the tokens; B untouched.
+  const aPool = getAccountData(base.svm, epA.poolPda)!;
+  expect(readU64(aPool, 144)).toBe(500_000n);
+  expect(getTokenBalance(base.svm, epA.poolVault)).toBe(500_000n);
+
+  const bPool = getAccountData(base.svm, epB.poolPda)!;
+  expect(readU64(bPool, 144)).toBe(0n);
+  expect(getTokenBalance(base.svm, epB.poolVault)).toBe(0n);
 });
 
-test("initialize_settlement_authority rejected for non-authority", () => {
-  const { svm, authority, mint, poolPda, vaultKp } = setup();
+test("top_up rejects mismatched pool/slug pair (slug seed != pool PDA)", () => {
+  const base = setupProtocolAndTreasury(new LiteSVM());
+  const epA = registerSimpleEndpoint(base, "helius");
+  const _epB = registerSimpleEndpoint(base, "jupiter");
 
-  const tx1 = buildInitializeCoveragePool(authority.publicKey, poolPda, vaultKp.publicKey, mint, svm);
-  tx1.recentBlockhash = svm.latestBlockhash();
-  tx1.feePayer = authority.publicKey;
-  tx1.sign(authority);
-  svm.sendTransaction(tx1);
+  const authAta = createTokenAccount(base.svm, base.mint, base.authority.publicKey);
+  mintTokensToAccount(base.svm, authAta, 1_000_000n);
 
-  const attacker = generateKeypair(svm);
-  const settler = Keypair.generate();
-  const [saPda] = deriveSettlementAuthority();
-
-  const ix = buildInitializeSettlementAuthority(
-    attacker.publicKey, // wrong signer
-    poolPda,
-    saPda,
-    settler.publicKey
-  );
-  const tx2 = new Transaction();
-  tx2.add(ix);
-  tx2.recentBlockhash = svm.latestBlockhash();
-  tx2.feePayer = attacker.publicKey;
-  tx2.sign(attacker);
-  const result = svm.sendTransaction(tx2);
-
-  expect(result instanceof FailedTransactionMetadata).toBe(true);
+  // Pass A's pool but B's slug — derived pool from B's slug != A's pool PDA.
+  const ix = buildTopUpCoveragePool({
+    authority: base.authority.publicKey,
+    poolPda: epA.poolPda,
+    authorityAta: authAta,
+    poolVault: epA.poolVault,
+    slug: slugBytes("jupiter"),
+    amount: 500_000n,
+  });
+  const tx = new Transaction();
+  tx.add(ix);
+  tx.recentBlockhash = base.svm.latestBlockhash();
+  tx.feePayer = base.authority.publicKey;
+  tx.sign(base.authority);
+  expect(base.svm.sendTransaction(tx) instanceof FailedTransactionMetadata).toBe(true);
 });
