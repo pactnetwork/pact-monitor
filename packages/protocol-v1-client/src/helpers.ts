@@ -347,9 +347,11 @@ export async function getAgentInsurableState(
   };
 }
 
-// Standard associated-token-program PDA: [owner, TOKEN_PROGRAM_ID, mint] with
-// program ID ATokenGPvbdGVwbAfbXJqMC9G7eb6V8tHEXBvgz3HoMnv. Inlined here to
-// avoid a dependency on @solana/spl-token in the runtime.
+// Standard SPL Associated Token Account program: PDA derived from
+// [owner, TOKEN_PROGRAM_ID, mint] under program ID
+// ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL. Matches
+// @solana/spl-token@0.4.x's exported ASSOCIATED_TOKEN_PROGRAM_ID; inlined
+// here to avoid a runtime dependency on @solana/spl-token.
 const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey(
   "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
 );
