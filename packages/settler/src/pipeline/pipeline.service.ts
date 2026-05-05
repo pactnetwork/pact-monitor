@@ -56,9 +56,9 @@ export class PipelineService implements OnModuleInit {
     const start = Date.now();
     this.batchSizeHist.observe(batch.messages.length);
 
-    let signature: string;
+    let outcome;
     try {
-      signature = await this.submitter.submit(batch);
+      outcome = await this.submitter.submit(batch);
     } catch (err) {
       if (err instanceof BatchSubmitError) {
         this.txFailuresCounter.inc();
@@ -72,7 +72,7 @@ export class PipelineService implements OnModuleInit {
     this.lastSuccessAt = Date.now();
     this.batchDurationHist.observe(Date.now() - start);
 
-    await this.indexerPusher.push(signature, batch);
+    await this.indexerPusher.push(outcome, batch);
     this.consumer.ack(batch.messages);
     this.queueLagGauge.set(this.consumer.queueLength);
   }
