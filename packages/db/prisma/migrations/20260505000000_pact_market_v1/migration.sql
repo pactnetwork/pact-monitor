@@ -1,3 +1,6 @@
+-- Pact Market v1 reset migration.
+-- Devnet DB is empty; this is a clean install of the layered schema (per §5.8).
+
 -- CreateTable
 CREATE TABLE "Endpoint" (
     "slug" VARCHAR(16) NOT NULL,
@@ -19,9 +22,7 @@ CREATE TABLE "Endpoint" (
 -- CreateTable
 CREATE TABLE "Agent" (
     "pubkey" VARCHAR(44) NOT NULL,
-    "walletPda" VARCHAR(44) NOT NULL,
     "displayName" TEXT,
-    "totalDepositsLamports" BIGINT NOT NULL DEFAULT 0,
     "totalPremiumsLamports" BIGINT NOT NULL DEFAULT 0,
     "totalRefundsLamports" BIGINT NOT NULL DEFAULT 0,
     "callCount" BIGINT NOT NULL DEFAULT 0,
@@ -61,15 +62,37 @@ CREATE TABLE "Settlement" (
 );
 
 -- CreateTable
+CREATE TABLE "SettlementRecipientShare" (
+    "id" TEXT NOT NULL,
+    "settlementSig" VARCHAR(88) NOT NULL,
+    "recipientKind" INTEGER NOT NULL,
+    "recipientPubkey" VARCHAR(44) NOT NULL,
+    "amountLamports" BIGINT NOT NULL,
+
+    CONSTRAINT "SettlementRecipientShare_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable: per-endpoint pool state.
 CREATE TABLE "PoolState" (
-    "id" INTEGER NOT NULL DEFAULT 1,
+    "endpointSlug" VARCHAR(16) NOT NULL,
     "currentBalanceLamports" BIGINT NOT NULL,
     "totalDepositsLamports" BIGINT NOT NULL,
     "totalPremiumsLamports" BIGINT NOT NULL,
+    "totalFeesPaidLamports" BIGINT NOT NULL,
     "totalRefundsLamports" BIGINT NOT NULL,
     "lastUpdated" TIMESTAMP(3) NOT NULL,
 
-    CONSTRAINT "PoolState_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "PoolState_pkey" PRIMARY KEY ("endpointSlug")
+);
+
+-- CreateTable
+CREATE TABLE "RecipientEarnings" (
+    "recipientPubkey" VARCHAR(44) NOT NULL,
+    "recipientKind" INTEGER NOT NULL,
+    "lifetimeEarnedLamports" BIGINT NOT NULL,
+    "lastUpdated" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "RecipientEarnings_pkey" PRIMARY KEY ("recipientPubkey")
 );
 
 -- CreateTable
@@ -102,8 +125,20 @@ CREATE INDEX "Call_ts_idx" ON "Call"("ts" DESC);
 -- CreateIndex
 CREATE INDEX "Call_breach_ts_idx" ON "Call"("breach", "ts" DESC);
 
+-- CreateIndex
+CREATE INDEX "SettlementRecipientShare_recipientPubkey_idx" ON "SettlementRecipientShare"("recipientPubkey");
+
+-- CreateIndex
+CREATE INDEX "SettlementRecipientShare_settlementSig_idx" ON "SettlementRecipientShare"("settlementSig");
+
 -- AddForeignKey
 ALTER TABLE "Call" ADD CONSTRAINT "Call_agentPubkey_fkey" FOREIGN KEY ("agentPubkey") REFERENCES "Agent"("pubkey") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "Call" ADD CONSTRAINT "Call_endpointSlug_fkey" FOREIGN KEY ("endpointSlug") REFERENCES "Endpoint"("slug") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "SettlementRecipientShare" ADD CONSTRAINT "SettlementRecipientShare_settlementSig_fkey" FOREIGN KEY ("settlementSig") REFERENCES "Settlement"("signature") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "PoolState" ADD CONSTRAINT "PoolState_endpointSlug_fkey" FOREIGN KEY ("endpointSlug") REFERENCES "Endpoint"("slug") ON DELETE RESTRICT ON UPDATE CASCADE;
