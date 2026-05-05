@@ -4,6 +4,7 @@ const Env = z.object({
   PG_URL: z.string().url(),
   RPC_URL: z.string().url(),
   PROGRAM_ID: z.string().min(32),
+  USDC_MINT: z.string().min(32),
   PUBSUB_PROJECT: z.string(),
   PUBSUB_TOPIC: z.string(),
   ENDPOINTS_RELOAD_TOKEN: z.string().min(16),

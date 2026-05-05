@@ -1,53 +1,69 @@
-import { LRUCache } from "lru-cache";
+// Agent custody / balance check.
+//
+// In the new layered model the proxy does NOT read a Pact-owned `AgentWallet`
+// PDA. Instead it reads the agent's USDC associated token account (ATA)
+// directly via Solana RPC and confirms two things:
+//
+//   1. ATA balance >= required premium (the agent has the funds), AND
+//   2. SPL Token `delegated_amount` >= required premium (the agent has
+//      approved Pact's settlement authority to debit at least that much).
+//
+// Both conditions are needed: a balance with no allowance is uncollectable;
+// an allowance with no balance is uncashable. Either failure surfaces as a
+// 402 Payment Required, which wrap composes for us.
+//
+// We delegate the work to `createDefaultBalanceCheck` from
+// @pact-network/wrap, which speaks plain Solana JSON-RPC over fetch and
+// caches results for 30s. The proxy supplies the `resolveAta` helper using
+// @solana/web3.js + @solana/spl-token (already in the monorepo).
 
-export interface BalanceEntry {
-  balance: bigint;
-  expires: number;
+import {
+  createDefaultBalanceCheck,
+  type BalanceCheck,
+} from "@pact-network/wrap";
+
+export interface BalanceCheckOptions {
+  /** Solana JSON-RPC endpoint URL. */
+  rpcUrl: string;
+  /** USDC mint pubkey for this network (mainnet/devnet differ). */
+  usdcMint: string;
+  /** Optional fetch override (tests). */
+  fetchImpl?: typeof fetch;
+  /** Optional cache TTL override (default 30s, matches wrap default). */
+  cacheTtlMs?: number;
+  /**
+   * Optional injected ATA resolver — primarily for tests. When omitted,
+   * the production resolver loads `@solana/web3.js` + `@solana/spl-token`
+   * lazily and computes the canonical ATA.
+   */
+  resolveAta?: (walletPubkey: string) => string | Promise<string>;
 }
 
-export interface RpcClient {
-  getAccountInfo(pubkey: string): Promise<{ data: Buffer | Uint8Array } | null>;
+export function createBalanceCheck(opts: BalanceCheckOptions): BalanceCheck {
+  const resolveAta =
+    opts.resolveAta ?? buildProductionResolver(opts.usdcMint);
+  return createDefaultBalanceCheck({
+    rpcUrl: opts.rpcUrl,
+    fetchImpl: opts.fetchImpl,
+    cacheTtlMs: opts.cacheTtlMs,
+    resolveAta,
+  });
 }
 
-const TTL_MS = 30_000;
-
-export class BalanceCache {
-  private cache: LRUCache<string, BalanceEntry>;
-
-  constructor(
-    private readonly rpc: RpcClient,
-    maxSize = 1000
-  ) {
-    this.cache = new LRUCache({ max: maxSize });
-  }
-
-  get size(): number {
-    return this.cache.size;
-  }
-
-  async get(walletPubkey: string): Promise<bigint> {
-    const cached = this.cache.get(walletPubkey);
-    if (cached && Date.now() < cached.expires) {
-      return cached.balance;
-    }
-    return this.fetch(walletPubkey);
-  }
-
-  private async fetch(walletPubkey: string): Promise<bigint> {
-    try {
-      const info = await this.rpc.getAccountInfo(walletPubkey);
-      if (!info?.data) {
-        this.cache.set(walletPubkey, { balance: 0n, expires: Date.now() + TTL_MS });
-        return 0n;
-      }
-      // AgentWallet layout: discriminator (8 bytes) + owner (32 bytes) + balance (8 bytes u64 LE)
-      const buf = Buffer.isBuffer(info.data) ? info.data : Buffer.from(info.data);
-      const balance = buf.readBigUInt64LE(40);
-      this.cache.set(walletPubkey, { balance, expires: Date.now() + TTL_MS });
-      return balance;
-    } catch (err) {
-      console.error("[balance] rpc error for", walletPubkey, err);
-      return 0n;
-    }
-  }
+/**
+ * Lazy resolver that uses @solana/web3.js + @solana/spl-token to compute
+ * the canonical ATA. Loaded lazily (via dynamic import) so test code that
+ * injects a stub resolver doesn't pay the cost.
+ */
+function buildProductionResolver(
+  usdcMint: string,
+): (walletPubkey: string) => Promise<string> {
+  return async (walletPubkey: string): Promise<string> => {
+    const [{ PublicKey }, { getAssociatedTokenAddressSync }] = await Promise.all(
+      [import("@solana/web3.js"), import("@solana/spl-token")],
+    );
+    const owner = new PublicKey(walletPubkey);
+    const mint = new PublicKey(usdcMint);
+    return getAssociatedTokenAddressSync(mint, owner).toBase58();
+  };
 }
