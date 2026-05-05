@@ -14,7 +14,20 @@
 
 ---
 
-## Wave 0 — GCP project + secrets bootstrap
+## Layer legend
+
+This plan is annotated with two layer tags so future contributors know where each piece sits in the eventual product split:
+
+- **[Network rails]** — the trust-minimised insurance protocol: the on-chain program, the settler that drives it, the indexer + DB that feeds the public scorecard, and any generic agent-side surfaces (CLI, SDK wrappers). This layer is the public good; anyone — Pact's own market or a third party — can build a market interface on top of it.
+- **[Market interface]** — Pact's first commercial product on top of the rails: the proxy that sits in front of upstream APIs, the dashboard customers actually log into, billing/quotas, refund-claim UX. A market interface is one possible consumer of the rails; it is **not** required for the rails to work.
+
+Waves that don't fit cleanly into one layer are tagged **[infra]** (cross-cutting GCP/DNS/keys) or **[cross-cutting]** (integration, ops, submission).
+
+For the renaming and re-org that makes this split explicit, see `docs/superpowers/plans/2026-05-05-network-market-layering-and-v1-v2-rename.md`.
+
+---
+
+## Wave 0 — GCP project + secrets bootstrap [infra]
 
 **Owner:** Captain. Sequential, blocks all wave 1 deploys (but not local dev).
 
@@ -192,7 +205,9 @@ git commit -m "chore(deploy): gitignore deploy/gcp.env"
 
 ---
 
-## Wave 1A — `pact-market-pinocchio` program
+## Wave 1A — `pact-market-pinocchio` program [Network rails]
+
+> **Layering note:** This crate will be renamed to `pact-network-v1-pinocchio` as part of Step B in the layering refactor (see `docs/superpowers/plans/2026-05-05-network-market-layering-and-v1-v2-rename.md`). The on-chain program will absorb four substantive changes during that refactor — per-endpoint coverage pools, agent custody via SPL Token approval (instead of a custodial AgentWallet PDA), interchangeable fee recipients, and an explicit treasury account. Tasks below describe the V1 design as currently scoped; the layering plan tracks the V2 follow-ups.
 
 **Branch:** `feat/pact-market-program`
 **Owner:** Crew agent `program-crew`
@@ -1108,7 +1123,9 @@ pnpm --filter @pact-network/shared codama:generate-pact-market
 
 ---
 
-## Wave 1B — `pact-proxy` (Hono on Cloud Run)
+## Wave 1B — `pact-proxy` (Hono on Cloud Run) [Market interface]
+
+> **Layering note:** This package will be renamed `@pact-network/proxy` → `@pact-network/market-proxy` in Step B of the layering refactor (see `docs/superpowers/plans/2026-05-05-network-market-layering-and-v1-v2-rename.md`). It will consume a new `@pact-network/wrap` Network-rails library that holds the generic agent-side wrapping primitives, so this proxy keeps only the market-specific surface (registry, pricing, billing UX).
 
 **Branch:** `feat/pact-market-proxy`
 **Owner:** Crew agent `proxy-crew`
@@ -1489,7 +1506,7 @@ gcloud run deploy pact-proxy \
 
 ---
 
-## Wave 1C — `pact-settler` (NestJS on Cloud Run)
+## Wave 1C — `pact-settler` (NestJS on Cloud Run) [Network rails]
 
 **Branch:** `feat/pact-market-settler`
 **Owner:** Crew agent `settler-crew`
@@ -1604,7 +1621,9 @@ gcloud run deploy pact-settler \
 
 ---
 
-## Wave 1D — `pact-indexer` (NestJS on Cloud Run)
+## Wave 1D — `pact-indexer` (NestJS on Cloud Run) [Network rails]
+
+> **Layering note:** Indexer + `@pact-network/db` are part of the public Network rails — they expose the read side of the protocol (call history, scorecard, refund proofs) that any market interface (or third party) consumes.
 
 **Branch:** `feat/pact-market-indexer`
 **Owner:** Crew agent `indexer-crew`
@@ -1688,7 +1707,9 @@ cloud-sql-proxy $CLOUDSQL_INSTANCE --port=5432 &
 
 ---
 
-## Wave 1E — `pact-dashboard` (Next.js on Vercel)
+## Wave 1E — `pact-dashboard` (Next.js on Vercel) [Market interface]
+
+> **Layering note:** This package will be renamed `@pact-network/dashboard` → `@pact-network/market-dashboard` in Step B of the layering refactor (see `docs/superpowers/plans/2026-05-05-network-market-layering-and-v1-v2-rename.md`). It is the customer-facing surface of Pact's market interface — separate from the public scorecard, which lives on the Network-rails side.
 
 **Branch:** `feat/pact-market-dashboard`
 **Owner:** Crew agent `dashboard-crew`
@@ -1768,7 +1789,7 @@ When `pendingRefund > 0` for 2 consecutive polls (debounce against tx race), bui
 
 ---
 
-## Wave 2 — Integration (Captain, Wed PM)
+## Wave 2 — Integration (Captain, Wed PM) [cross-cutting]
 
 **Owner:** Captain (Alan + assistant). Sequential.
 
@@ -1846,7 +1867,9 @@ Demo per spec §8.4.
 
 ---
 
-## Wave 3 — Thu/Fri features
+## Wave 3 — Thu/Fri features [cross-cutting]
+
+> **Layering note:** Tasks here span both layers. The CLI (Task 3.4) is a generic agent-side surface and is **[Network rails]**. The dashboard tour (3.1), backfill (3.3), `/ops` console (3.5), and Telegram alerts (3.6) are **[Market interface]** or operator infra. New endpoints (3.2) are market-registry data, **[Market interface]**.
 
 ### Task 3.1: Driver.js Colosseum tour
 
@@ -1871,7 +1894,7 @@ Demo per spec §8.4.
 - [ ] **Step 1:** POST `/admin/backfill` (bearer-gated). Args: `since: ISO8601`. Walks `getSignaturesForAddress(programId, {until: since})`, fetches each tx, parses logs, upserts rows.
 - [ ] **Step 2:** Test, commit.
 
-### Task 3.4: Pact CLI (Friday)
+### Task 3.4: Pact CLI (Friday) [Network rails]
 
 **Branch:** `feat/pact-cli`
 **Files:** `packages/cli/`
@@ -1903,7 +1926,7 @@ Demo per spec §8.4.
 
 ---
 
-## Wave 4 — Pre-mainnet (Sat-Sun May 9-10)
+## Wave 4 — Pre-mainnet (Sat-Sun May 9-10) [infra]
 
 PRD §20 checklist applied to our stack. Each item is a task.
 
@@ -1962,7 +1985,7 @@ PRD §20 checklist:
 
 ---
 
-## Wave 5 — Colosseum submission (Mon May 11)
+## Wave 5 — Colosseum submission (Mon May 11) [cross-cutting]
 
 ### Task 5.1: SKILL.md repo published
 

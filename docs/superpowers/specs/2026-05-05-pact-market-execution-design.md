@@ -1,6 +1,7 @@
 # Pact Market V1 — Execution Design
 
 **Status:** approved by Alan 2026-05-05
+**Updated 2026-05-05** — Network/Market layering, per-endpoint pools, agent-custody-via-approval, interchangeable fee recipients (Treasury + Affiliates, pool residual).
 **Owner:** Alan (eng), Rick (product)
 **Target ship:** May 11, 2026 (Colosseum submission)
 **Wed gate:** May 6, 2026 — public devnet end-to-end, 3 endpoints, dashboard, demoed to Rick
@@ -43,6 +44,19 @@ Public devnet end-to-end, shareable link `dashboard.pactnetwork.io`:
 - Availability/schema SLAs (PRD §1.1)
 - AI API endpoints (OpenAI, Anthropic — PRD V2)
 - Cross-chain (PRD V3)
+
+### 1.5 Pact Network rails vs Pact Market interface
+
+The codebase is split into two layers. **Every contributor must respect this rule.**
+
+- **Pact Network = the rails.** On-chain program(s), `@pact-network/wrap` library, settler, indexer, classifier protocol, Postgres schema, shared types. Generic; consumed by any interface.
+- **Pact Market = one curated interface.** The 5 provider handlers (Helius, Birdeye, Jupiter, Elfa, fal.ai), the hosted Hono proxy that uses `@pact-network/wrap` underneath, the dashboard UX, the demo allowlist, the brand surface agents call. One opinionated product on top of the rails.
+
+**Versioning rule:** v1 (this spec, ships now) and v2 (future multi-underwriter design with third-party capital) are **both Network-layer artifacts**, not Market-layer. The on-chain crates rename to `pact-network-v1-pinocchio` (this) and `pact-network-v2-pinocchio` (the existing insurance program).
+
+**Wrap-mechanism layering rule:** the *protocol* of wrapping a fetch call (time it, check balance, forward, classify, emit event, attach `X-Pact-*` headers) lives in Network (`@pact-network/wrap`). *Per-endpoint classifier plugins* (how a JSON-RPC response vs a REST 4xx maps to ok/breach/no-charge) live in the consuming interface — Market ships its 5 provider plugins; future BYO integrators ship their own.
+
+**Acceptance test for the layering:** an external integrator can install `@pact-network/wrap` + `@pact-network/protocol-v1-client`, register their endpoint with their own affiliate pubkey, and start collecting insured calls — without touching any Market code. If that works, Network rails are real.
 
 ---
 
@@ -89,72 +103,190 @@ Five independent units, each owns one concern. Settler doesn't read Postgres; in
 
 ## 3. Components
 
-### 3.1 `pact-market-pinocchio` (on-chain program)
+### 3.1 `pact-market-pinocchio` (on-chain program) — **Network rails**
 
 A separate Pinocchio crate at `packages/program/programs-pinocchio/pact-market-pinocchio/`. Distinct from the existing `pact-insurance-pinocchio` crate; no shared state, no shared error namespace.
+
+**Crate rename target:** `pact-network-v1-pinocchio` (Step C of refactor plan). This is Network-layer code: generic protocol primitives, no Market-specific logic. The v2 multi-underwriter program (today's `pact-insurance-pinocchio`) renames to `pact-network-v2-pinocchio` separately.
 
 **State accounts** (per PRD §11, with extensions):
 
 | Account | PDA seeds | Notes |
 |---|---|---|
-| `CoveragePool` | `[b"coverage_pool"]` | singleton; pool authority + USDC vault |
-| `EndpointConfig` | `[b"endpoint", slug]` | slug max 16 bytes; **adds `current_period_start: i64` + `current_period_refunds: u64`** for in-program hourly cap enforcement |
-| `AgentWallet` | `[b"agent_wallet", owner.key()]` | per-agent prepaid balance + 24h withdrawal cooldown |
+| `CoveragePool` | `[b"coverage_pool", endpoint_slug]` | **per-endpoint** (was singleton — see §3.1.1); pool authority + USDC vault |
+| `EndpointConfig` | `[b"endpoint", slug]` | slug max 16 bytes; **adds `current_period_start: i64` + `current_period_refunds: u64`** for in-program hourly cap enforcement; **adds `coverage_pool: Pubkey`, `fee_recipients: [FeeRecipient; 8]`, `fee_recipient_count: u8`** (see §3.1.1, §3.1.3) |
+| ~~`AgentWallet`~~ | ~~`[b"agent_wallet", owner.key()]`~~ | **Removed (see §3.1.2). Agent custody is now SPL Token approval-based; agent keeps USDC in their own ATA.** |
 | `CallRecord` | `[b"call", call_id]` | 16-byte UUID; init constraint = dedup |
-| `SettlementAuthority` | `[b"settlement_authority"]` | singleton; hot key V1, multisig V2 |
+| `SettlementAuthority` | `[b"settlement_authority"]` | singleton; hot key V1, multisig V2; also the SPL Token *delegate* the agent approves |
+| `Treasury` | `[b"treasury"]` | **NEW (§3.1.3).** Singleton USDC vault for the protocol fee. Authority = pool authority V1, multisig at mainnet flip |
+| `ProtocolConfig` | `[b"protocol_config"]` | **NEW (§3.1.3).** Stores `max_total_fee_bps` + default fee recipient template |
 
 **Instructions:**
 
 | Instruction | Signer | Notes |
 |---|---|---|
-| `initialize_coverage_pool` | pool authority | one-time |
+| ~~`initialize_coverage_pool`~~ | ~~pool authority~~ | **Folded into `register_endpoint` (§3.1.1).** Endpoints can no longer exist in a registered-but-unfunded state. |
 | `initialize_settlement_authority(signer)` | pool authority | one-time |
-| `register_endpoint(slug, premium, percent_bps, sla_ms, imputed_cost, exposure_cap)` | pool authority | |
+| `initialize_treasury` | pool authority | **NEW (§3.1.3).** Singleton bootstrap for the protocol fee vault. |
+| `initialize_protocol_config` | pool authority | **NEW (§3.1.3).** Sets `max_total_fee_bps` and default fee-recipient template. |
+| `register_endpoint(slug, premium, percent_bps, sla_ms, imputed_cost, exposure_cap, fee_recipients?)` | pool authority | Now also creates the per-endpoint `CoveragePool` PDA + USDC vault atomically; accepts optional `fee_recipients` override (defaults from `ProtocolConfig`); enforces fee-recipient invariants (§3.1.3) |
 | `update_endpoint_config(...)` | pool authority | optional fields |
+| `update_fee_recipients(slug, fee_recipients)` | pool authority | **NEW (§3.1.3).** Atomic replace of an endpoint's fee-recipient array; same invariants enforced |
 | `pause_endpoint(paused)` | pool authority | |
-| `initialize_agent_wallet` | agent | |
-| `deposit_usdc(amount)` | agent | max $25/wallet (PRD §11 constants) |
-| `request_withdrawal(amount)` | agent | starts 24h cooldown |
-| `execute_withdrawal` | agent | after cooldown |
-| `top_up_coverage_pool(amount)` | pool authority | |
-| `settle_batch(events: Vec<SettlementEvent>)` | settlement authority | dedup via CallRecord init; debits AgentWallet → CoveragePool; if breach, credits CoveragePool → AgentWallet |
-| **`claim_refund(amount)`** | agent | **NEW (not in PRD §11)**; transfers AgentWallet vault → owner ATA |
+| ~~`initialize_agent_wallet`~~ | ~~agent~~ | **Removed (§3.1.2).** No PDA — agent uses their regular USDC ATA. |
+| ~~`deposit_usdc(amount)`~~ | ~~agent~~ | **Removed (§3.1.2).** Replaced by SPL Token `Approve` to the `SettlementAuthority` delegate. |
+| ~~`request_withdrawal(amount)`~~ | ~~agent~~ | **Removed (§3.1.2).** Agent always has custody — nothing to withdraw. |
+| ~~`execute_withdrawal`~~ | ~~agent~~ | **Removed (§3.1.2).** |
+| `top_up_coverage_pool(slug, amount)` | pool authority | Now scoped to a specific endpoint's pool |
+| `settle_batch(events: Vec<SettlementEvent>)` | settlement authority | Dedup via CallRecord init. Per event: debits **agent USDC ATA → endpoint's CoveragePool** for full premium via SPL delegate authority (§3.1.2); then per fee recipient transfers **CoveragePool → recipient.destination** for `premium * bps / 10_000` (§3.1.3); on breach, transfers **CoveragePool → agent USDC ATA** for the refund. All atomic in one tx. |
+| ~~`claim_refund(amount)`~~ | ~~agent~~ | **Removed (§3.1.2).** Refunds go directly to agent's USDC ATA inside `settle_batch`. No claim step. |
 
-**Errors:** PRD §11 codes 6000-6014, plus new `ArithmeticOverflow = 6015` (resolves PRD §11 inconsistency).
+**Errors:** PRD §11 codes 6000-6014, plus `ArithmeticOverflow = 6015`, plus new fee-validation codes (`FeeRecipientCountExceeded`, `FeeBpsExceedsCap`, `DuplicateFeeDestination`, `MultipleTreasuryRecipients`, `SettlementDelegateRevoked`).
 
 **Constants:**
 - `MAX_BATCH_SIZE = 50` (per Rick); will benchmark on surfpool, drop to 20 if compute fails
-- `WITHDRAWAL_COOLDOWN_SECS = 86_400`
-- `MAX_DEPOSIT_LAMPORTS = 25_000_000`
+- ~~`WITHDRAWAL_COOLDOWN_SECS = 86_400`~~ (removed — no withdrawals under agent custody)
+- ~~`MAX_DEPOSIT_LAMPORTS = 25_000_000`~~ (removed — no deposit step; agent sets their own SPL approval)
 - `MIN_PREMIUM_LAMPORTS = 100`
+- `MAX_FEE_RECIPIENTS = 8`
+- `MAX_TOTAL_FEE_BPS = 3000` (default protocol cap = 30%; prevents pool starvation)
 
 **Security invariants** (per PRD §11): all 7 hold, plus invariant 4 (hourly exposure cap) is enforced in-program via the new fields above.
 
-**Build target:** Pinocchio 0.10. Codama-generated TS client published as `@pact-network/pact-market-client` (or absorbed into `@pact-network/shared`).
+**Build target:** Pinocchio 0.10. Codama-generated TS client published as `@pact-network/protocol-v1-client` (renamed from `@pact-network/pact-market-client`).
 
-### 3.2 `pact-proxy` (Cloud Run, Hono, Node 22)
+#### 3.1.1 Per-endpoint coverage pools
+
+The original singleton `CoveragePool` PDA `[b"coverage_pool"]` was exploitable: a correlated outage on one popular provider would drain the entire pool, leaving every other insured endpoint uncovered. Bad actors could orchestrate forced breaches on a low-risk endpoint to drain capital meant for high-risk endpoints. v1 isolates risk per endpoint before mainnet.
+
+**Seed change:** `[b"coverage_pool"]` → `[b"coverage_pool", endpoint_slug]`. One pool per registered slug; the pool's USDC vault is its associated token account.
+
+**`EndpointConfig.coverage_pool: Pubkey`** is added so clients/settler resolve the pool by reading EndpointConfig instead of re-deriving the PDA every call. This also gives a future escape hatch: a `coverage_pool_key: [u8; 16]` indirection can let multiple endpoint slugs aggregate under one logical pool (e.g., `helius-rpc` + `helius-das` share `helius` root). For V1 ship, default `coverage_pool_key = slug`.
+
+**`initialize_coverage_pool` is folded into `register_endpoint`.** Registering an endpoint creates its pool + USDC vault atomically. No more registered-but-unfunded state. `top_up_coverage_pool` now takes a slug and credits only that pool.
+
+`settle_batch` resolves each event's pool from `EndpointConfig.coverage_pool` and debits/credits each pool independently within the batch. Pool-depleted error is scoped per pool, not global. Hourly exposure cap (§ invariant 4) was already per-endpoint — no change.
+
+#### 3.1.2 Agent custody via SPL Token approval
+
+**Rick's call (2026-05-05):** the agent's wallet must be managed by the agent, not by Pact. The original PDA-custody design (deposit → settler debits → 24h cooldown withdrawal) was Pact-managed custody — wrong shape. v1 ships with **SPL Token approval/delegation** so the agent always holds custody.
+
+**Model:**
+- Agent keeps USDC in their own ATA at their own pubkey. Pact never holds it.
+- Agent grants Pact's `SettlementAuthority` PDA a spending allowance via the standard SPL Token `Approve` instruction (one wallet click).
+- Settler debits directly from the agent's USDC ATA on `settle_batch` using delegate authority. No deposit step.
+- Agent can call SPL Token `Revoke` any time. Future debits then fail at the SPL Token level; the program marks the event `settlement_failed`, the rest of the batch is unaffected, and the dashboard surfaces "Approval expired — re-approve to resume insured calls".
+- Refunds come from `CoveragePool` **directly to the agent's USDC ATA** inside `settle_batch`. No `claim_refund` step.
+
+**Removed from V1 (vs the original PRD §11 design):** `AgentWallet` PDA + USDC vault, `initialize_agent_wallet`, `deposit_usdc`, `request_withdrawal`, `execute_withdrawal`, `claim_refund`, `WITHDRAWAL_COOLDOWN_SECS`, `MAX_DEPOSIT_LAMPORTS`, dashboard `RefundClaimer`. **5 instructions and 1 PDA gone**, simpler code, simpler tests, simpler UX.
+
+**Per-agent stats live off-chain.** With no `AgentWallet` PDA, the indexer's denormalized `Agent` table aggregates from `CallRecord` PDAs (which still exist for dedup). Lifetime premiums paid, refunds received, calls covered all served from Postgres.
+
+**`SettlementAuthority` keeps its dual role:** it is both (a) the on-chain signer for `settle_batch` and (b) the SPL Token delegate the agent approves to debit their USDC ATA.
+
+**Approval UX (dashboard):** first time the agent connects, dashboard checks if (a) their USDC ATA exists, and (b) `SettlementAuthority` has an active approval. If not, prompts: "Approve $25 spending allowance for Pact to insure your API calls" — one wallet click. When the allowance is exhausted, banner prompts a one-click top-up. "Stop insurance" button calls SPL Token `Revoke` directly.
+
+#### 3.1.3 Premium collection + interchangeable fee recipients
+
+**Rick's call (2026-05-05):** premium collection must be enforced on-chain with most of the premium going to the pool and percentages going to other parties — and the recipient list must be **interchangeable**, not hardcoded. V1 ships a generic recipients model; v2 can add new kinds (Underwriter, Oracle, Governance) without contract churn.
+
+**Routing rule.** Agent-to-network funding is **agent USDC ATA → CoveragePool** for the *full premium*, period. Fee shares are paid out **from the pool** to each recipient in the same atomic `settle_batch` instruction. The pool is the single accounting hub: gross premium-in is always the pool's debit, every fee outflow has the pool as its source.
+
+**Pool is the residual, NOT a slot in the recipients array.** Whatever isn't paid out as a fee stays in the pool by virtue of not being moved. Fee recipients are an interchangeable list of zero or more entries; each has a kind, destination, and bps share *of the premium*.
+
+**On-chain shape:**
+
+```rust
+#[repr(u8)]
+pub enum FeeRecipientKind {
+    Treasury     = 0, // singleton Pact protocol fee; destination = Treasury PDA's USDC vault
+    AffiliateAta = 1, // affiliate / integrator USDC ATA (raw pubkey)
+    AffiliatePda = 2, // affiliate USDC vault owned by a PDA (e.g., a multisig)
+    // future: Oracle, Governance, Referrer, Underwriter — add new kinds only if
+    // transfer semantics differ; most parties can use AffiliateAta / AffiliatePda.
+}
+
+#[repr(C)]
+pub struct FeeRecipient {
+    pub kind: u8,            // FeeRecipientKind
+    pub destination: Pubkey, // 32 bytes; semantics depend on kind
+    pub bps: u16,            // share in basis points, off the premium
+    pub _pad: [u8; 5],       // align to 40 bytes
+}
+
+pub struct EndpointConfig {
+    // ... existing fields plus the §3.1.1 coverage_pool ...
+    pub fee_recipient_count: u8,
+    pub _pad: [u8; 7],
+    pub fee_recipients: [FeeRecipient; 8], // first `fee_recipient_count` valid
+}
+
+pub struct ProtocolConfig {
+    pub max_total_fee_bps: u16,            // protocol cap, default 3000 (30%)
+    pub default_fee_recipient_count: u8,
+    pub _pad: [u8; 5],
+    pub default_fee_recipients: [FeeRecipient; 8],
+}
+```
+
+**Validation invariants** (enforced on `register_endpoint` and `update_fee_recipients`):
+- `fee_recipient_count <= MAX_FEE_RECIPIENTS` (8)
+- `sum(fee.bps) <= 10_000` (100%)
+- `sum(fee.bps) <= MAX_TOTAL_FEE_BPS` (default 3000 = 30%; prevents pool starvation)
+- `Treasury` kind appears at most once
+- No two recipients with the same `destination`
+- For `AffiliateAta`, `destination` must be a valid USDC ATA at registration time (mint check)
+- For `Treasury`, `destination` must equal the Treasury PDA's USDC vault (resolved at runtime)
+
+Fixed-size array of 8 (not Vec) — Pinocchio has no allocator and 8 × 40 bytes = 320 bytes per endpoint is comfortable. Today's needs (Treasury + 0-N Affiliates) and near-future (+ Oracle + Referrer + Governance) leave slots free.
+
+**V1 fee parties: Treasury (always) + zero or more Affiliates (optional).** No external underwriters in V1 — Pact funds the coverage pool itself. v2 adds an Underwriter recipient kind.
+
+**Default V1 fee templates:**
+
+| Template | Kinds | Total fees | Pool retains |
+|---|---|---|---|
+| Pact Market endpoints (default for all 5 launch endpoints) | `[Treasury 10%, Affiliate 5%]` (Affiliate = Pact Market's USDC ATA) | 15% | 85% |
+| BYO integrator with their own affiliate | `[Treasury 10%, Affiliate X%]` | 10% + X% | residual |
+| No-affiliate (raw protocol use) | `[Treasury 10%]` | 10% | 90% |
+
+Rick can override the protocol-level defaults via `initialize_protocol_config`. Any endpoint can override at `register_endpoint` time or via `update_fee_recipients` afterward (subject to `MAX_TOTAL_FEE_BPS`).
+
+**`settle_batch` per-event flow** (channel-then-fan-out):
+1. Transfer **agent USDC ATA → endpoint's CoveragePool vault** for the full premium, signed by `SettlementAuthority` PDA via SPL delegate authority (§3.1.2).
+2. For each `FeeRecipient` in the endpoint's array: transfer **CoveragePool vault → recipient.destination** for `premium * recipient.bps / 10_000`. CoveragePool authority signs (program PDA).
+3. On breach: transfer **CoveragePool vault → agent USDC ATA** for the refund amount. No fee recipients touched on refund.
+
+**Rounding rule:** fee shares use rounded-down bps math; the pool absorbs the rounding remainder. Bias toward pool capital adequacy.
+
+**Min-premium guard:** unchanged — `MIN_PREMIUM_LAMPORTS = 100`. Validator warns at register time if any fee `bps < (10_000 / MIN_PREMIUM_LAMPORTS)` because that share would round to zero on minimum-premium calls.
+
+**Account-list growth in `settle_batch`:** per unique endpoint in a batch, +CoveragePool PDA + USDC vault. Per unique fee-recipient destination across the batch (deduplicated), +1 account. Per unique agent in a batch, +agent USDC ATA (mutable; debit source under SPL delegate authority). Worst case V1 (5 endpoints, default `[Treasury 10%, Affiliate 5%]`, single Market integrator): ~15 accounts beyond per-event agent ATA / CallRecord / EndpointConfig. Surfpool benchmark before Friday confirms compute budget at `MAX_BATCH_SIZE = 50` with the channel-then-fan-out flow.
+
+### 3.2 `pact-proxy` (Cloud Run, Hono, Node 22) — **Market interface**
+
+Package rename target: `@pact-network/market-proxy`. Consumes the new `@pact-network/wrap` library (Network rails) for the generic fetch-call lifecycle; ships only the Market-specific bits (the 5 provider classifier plugins, force-breach demo mode + DemoAllowlist, public-domain wiring for `market.pactnetwork.io`).
 
 Receives `/v1/{slug}/...`, forwards to upstream, measures latency, classifies outcome, publishes event to Pub/Sub, returns response with `X-Pact-*` headers.
 
 **Routes:**
 - `GET /health` — liveness
-- `GET /v1/agents/:pubkey` — read-only AgentWallet snapshot
+- `GET /v1/agents/:pubkey` — read-only agent insurable-state snapshot (USDC ATA balance + SPL `delegated_amount` allowance, §3.1.2)
 - `ALL /v1/:slug/*` — proxy handler
 - `POST /admin/reload-endpoints` — bearer-token gated; clears in-memory caches
 
 **Internals:**
-- `EndpointRegistry` — loads endpoints + demo_allowlist + operator_allowlist from Postgres on cold start; refreshes every 60s or on `/admin/reload-endpoints`.
-- `BalanceCache` — `Map<wallet, {balance, expires}>`; 30s TTL; reads `AgentWallet.balance` field via RPC `getAccountInfo`.
-- `Timer` — `Date.now()` t_start / first-byte / t_end; latency = t_end - t_start.
-- `Classifier` — input: upstream response + latency + endpoint config; output: `{premium, refund, breach, reason}`. Per-endpoint logic in `endpoints/{helius,birdeye,jupiter}.ts`.
-- `EventPublisher` — fire-and-forget `@google-cloud/pubsub` publish.
-- `ForceBreach` — if `query.demo_breach === "1"` AND wallet in `DemoAllowlist`, sleep `sla_latency_ms + 300ms` before forwarding upstream.
+- `EndpointRegistry` — loads endpoints + demo_allowlist + operator_allowlist from Postgres on cold start; refreshes every 60s or on `/admin/reload-endpoints`. **(Market-specific)**
+- Calls `wrapFetch()` from `@pact-network/wrap` (Network rails) per request. Wrap handles balance check (reads agent's USDC ATA balance + delegated allowance via SPL Token RPC — see §3.1.2 — replacing the old `AgentWallet.balance` lookup), timer, forward, classify, emit event.
+- Provides per-provider `Classifier` plugins (`classifiers/helius.ts`, `birdeye.ts`, `jupiter.ts`, `elfa.ts`, `falai.ts`) that implement the wrap library's `Classifier` interface. **(Market-specific.)**
+- Configures wrap's `EventSink` as `PubSubEventSink` for the Cloud Run deployment.
+- `ForceBreach` — if `query.demo_breach === "1"` AND wallet in `DemoAllowlist`, sleep `sla_latency_ms + 300ms` before forwarding upstream. **(Market-specific.)**
 
 **Environment:** `RPC_URL`, `PG_URL`, `PUBSUB_PROJECT`, `PUBSUB_TOPIC`, `ENDPOINTS_RELOAD_TOKEN`. Service account auth for Pub/Sub via Cloud Run workload identity.
 
-### 3.3 `pact-settler` (Cloud Run, NestJS, Node 22, min-instances=1)
+### 3.3 `pact-settler` (Cloud Run, NestJS, Node 22, min-instances=1) — **Network rails**
 
-Pulls events from Pub/Sub, batches up to 50 events / 5s, builds + signs `settle_batch`, submits to devnet, on success POSTs batch summary to indexer.
+Generic; pulls events from a Network-defined sink and signs `settle_batch`. No Market-specific logic. Pulls events from Pub/Sub, batches up to 50 events / 5s, builds + signs `settle_batch`, submits to devnet, on success POSTs batch summary to indexer.
 
 **Modules:**
 - `ConsumerService` — Pub/Sub pull subscriber; in-memory queue.
@@ -166,13 +298,15 @@ Pulls events from Pub/Sub, batches up to 50 events / 5s, builds + signs `settle_
 - `GET /health` — reports `lag_ms` since last successful batch
 - `GET /metrics` — Prometheus (batch_size, batch_duration, queue_lag, tx_failures)
 
-**Note on claim_refund:** settler does NOT auto-fire `claim_refund` (it doesn't have agent's signing key). Dashboard auto-claims while wallet is connected (see 3.5). Headless agents use Pact CLI's `pact claim`.
+**Note on refunds:** under §3.1.2's agent-custody model, refunds land directly in the agent's USDC ATA inside `settle_batch` itself. Settler does not need to fire any `claim_refund` instruction (it's been removed from the program). Dashboard does not need a `RefundClaimer` hook.
+
+**Per-pool / per-recipient account-list builder:** settler groups batch events by `endpoint_slug`, derives per-endpoint pool PDAs (§3.1.1), and deduplicates fee-recipient destinations across the batch (§3.1.3). Each endpoint's CoveragePool vault appears as `mutable` (destination of premium-in AND source of fee payouts AND source of refunds within the same tx). Settler does not compute the split itself — the program reads each EndpointConfig's fee_recipients array on-chain and does the channel-then-fan-out.
 
 **Environment:** `PUBSUB_PROJECT`, `PUBSUB_SUBSCRIPTION`, `SOLANA_RPC_URL`, `SETTLEMENT_AUTHORITY_KEY` (mounted from Secret Manager), `PROGRAM_ID`, `INDEXER_URL`, `INDEXER_PUSH_SECRET`, `LOG_LEVEL`.
 
-### 3.4 `pact-indexer` (Cloud Run, NestJS, Node 22)
+### 3.4 `pact-indexer` (Cloud Run, NestJS, Node 22) — **Network rails**
 
-Receives event pushes from settler, writes Postgres rows. Serves dashboard read API.
+Generic; stores Network primitives (per-call records, per-endpoint pool state, per-agent denormalized stats, per-recipient earnings). Receives event pushes from settler, writes Postgres rows. Serves dashboard read API.
 
 **Routes:**
 - `POST /events` — bearer-token gated; idempotent upsert by `call_id`
@@ -191,24 +325,59 @@ Receives event pushes from settler, writes Postgres rows. Serves dashboard read 
 
 **Environment:** `PG_URL`, `INDEXER_PUSH_SECRET`, `SOLANA_RPC_URL`, `PROGRAM_ID`.
 
-### 3.5 `pact-dashboard` (Vercel, Next.js 15 App Router)
+### 3.5 `pact-dashboard` (Vercel, Next.js 15 App Router) — **Market interface**
 
-Public read-only views + wallet-connect demo flow + auto-claim refunds.
+Package rename target: `@pact-network/market-dashboard`. Human-facing surface for Pact Market specifically — branded Market UX, Market endpoint catalog, demo flow. Public read-only views + wallet-connect approval flow.
 
 **Routes (Wed scope):**
-- `/` Overview — hero stats from RPC (CoveragePool live read), event stream from indexer
-- `/endpoints` — table from `/api/endpoints` (5s cache)
-- `/agents/[pubkey]` — connected agent's history; `RefundClaimer` auto-fires `claim_refund` when `pendingRefund > 0`
+- `/` Overview — hero stats aggregated across per-endpoint pools (§3.1.1) + Treasury earned + top affiliate earnings; event stream from indexer
+- `/endpoints` — table from `/api/endpoints` (5s cache); columns include per-endpoint pool balance + current fee-recipient split
+- `/agents/[pubkey]` — connected agent's history. **No auto-claim** — refunds land directly in the agent's USDC ATA at settle time (§3.1.2).
 
 **Routes (Thu/Fri scope):** `/agents`, `/endpoints/[slug]`, `/calls/[id]`, `/ops`, `/?demo=1` driver.js tour.
 
 **Internals:**
-- `useAgentWallet` hook — reads AgentWallet PDA via RPC every 5s; exposes `balance`, `pendingRefund`, `pendingWithdrawal`, `withdrawalUnlockAt`.
-- `RefundClaimer` — subscribes to `useAgentWallet`; when `pendingRefund > 0`, builds + signs `claim_refund` via wallet adapter, submits, refreshes.
+- `useAgentInsurableState` hook (replaces `useAgentWallet`) — reads agent's USDC ATA balance + `delegated_amount` (allowance remaining) via SPL Token RPC every 5s; exposes `{ ataBalance, allowance, eligible }`.
+- ~~`RefundClaimer`~~ — **removed** (§3.1.2). No client-side claim flow; refunds appear directly in the agent's wallet.
+- Approval/Re-approve/Revoke buttons — call SPL Token `Approve` / `Revoke` directly via wallet adapter.
 - `WalletConnect` — `@solana/wallet-adapter-react` (Phantom, Solflare, Backpack).
 - "Get devnet USDC" button — Next.js API route. Calls Solana's built-in `requestAirdrop` for 1 SOL. For devnet USDC (mint `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU`), we do not own the mint authority; instead, the button links the user to Circle's public devnet USDC faucet (https://faucet.circle.com) and the dashboard polls until the user's ATA shows a positive balance, then unlocks the deposit step. **Whole "Get devnet USDC" flow is removed before mainnet flip.**
 
 **Environment:** `NEXT_PUBLIC_PROGRAM_ID`, `NEXT_PUBLIC_SOLANA_RPC`, `NEXT_PUBLIC_PROXY_URL`, `NEXT_PUBLIC_INDEXER_URL`. No server-side faucet key needed — devnet USDC sourced via Circle's public faucet, not our own mint.
+
+### 3.6 `@pact-network/wrap` (TS library, NEW) — **Network rails**
+
+Generic fetch-call wrap library. Any interface (Market today, BYO SDKs tomorrow, x402 facilitators, future Pact integrators) consumes this to insure any fetch call. Lives in `packages/wrap/`.
+
+**`wrapFetch(opts)`** — the request lifecycle: timer start → balance check → forward → timer end → classify → emit event → attach `X-Pact-*` response headers → return upstream response. One function call replaces the proxy's hand-rolled lifecycle.
+
+**Pluggable interfaces** (consumers wire their own implementations):
+- `BalanceCheck` — input: agent pubkey + endpoint config; output: `{ eligible, ataBalance, allowance }`. Default impl reads agent's USDC ATA balance + SPL Token `delegated_amount` via Solana RPC with LRU cache (§3.1.2 model).
+- `Classifier` — input: upstream response + latency + endpoint config; output: `{ premium, refund, breach, reason }`. Wrap ships the abstract type and a "default classifier" (latency vs `sla_latency_ms`, 5xx → breach, 429 → no-charge, network-error → server_error). **Per-endpoint classifier plugins live in the consuming interface, not in wrap.** Market ships its 5 provider plugins; future BYO integrators ship their own.
+- `EventSink` — pluggable: `PubSubEventSink` (Market default), `HttpEventSink` (for SDK consumers POSTing to a Network settlement endpoint), `MemoryEventSink` (testing). Settler doesn't care which sink the producer used as long as the message conforms to `SettlementEvent`.
+
+**Header constants:** `X-Pact-Premium`, `X-Pact-Refund`, `X-Pact-Latency-Ms`, `X-Pact-Outcome`, `X-Pact-Pool`, `X-Pact-Settlement-Pending`.
+
+**`SettlementEvent` schema** also exported from `@pact-network/shared`.
+
+**Acceptance** — an external integrator wires their own SDK:
+
+```ts
+import { wrapFetch, HttpEventSink } from '@pact-network/wrap';
+import { defaultClassifier } from '@pact-network/wrap/classifiers';
+
+const sink = new HttpEventSink({ url: 'https://settler.pactnetwork.io/events', secret: '...' });
+const response = await wrapFetch({
+  endpointSlug: 'their-api',
+  walletPubkey: agentWallet,
+  upstreamUrl: 'https://their-api.com/v1/whatever',
+  init: { method: 'POST', body },
+  classifier: defaultClassifier,
+  sink,
+});
+```
+
+If this works against a network where their endpoint is registered with their own affiliate pubkey, Network rails are real.
 
 ---
 
@@ -218,8 +387,8 @@ Public read-only views + wallet-connect demo flow + auto-claim refunds.
 
 1. Agent: `GET market.pactnetwork.io/v1/helius/?api-key=KEY&pact_wallet=PUBKEY`
 2. Proxy: lookup endpoint config (in-memory cache, 60s TTL)
-3. Proxy: `getBalance(PUBKEY)` (LRU cache 30s; on miss, RPC `getAccountInfo`)
-4. Proxy: balance >= flat_premium? if no, 402
+3. Proxy (via `wrapFetch` BalanceCheck, §3.6): read agent's USDC ATA balance + SPL Token `delegated_amount` (LRU cache 30s; on miss, RPC)
+4. Proxy: `min(ataBalance, allowance) >= flat_premium`? if no, 402
 5. Proxy: `t_start = Date.now()`
 6. Proxy: forward to upstream
 7. Proxy: `t_end = Date.now()` (first byte received)
@@ -229,26 +398,21 @@ Public read-only views + wallet-connect demo flow + auto-claim refunds.
 
 Async (1-5s):
 11. Settler: pulls batch
-12. Settler: builds `settle_batch(events)` ix
+12. Settler: builds `settle_batch(events)` ix with per-pool + per-fee-recipient accounts (§3.1.1, §3.1.3)
 13. Settler: signs + submits
-14. Solana: settle_batch executes — for each event, init CallRecord, transfer premium AgentWallet vault → CoveragePool vault, increment counters
+14. Solana: settle_batch executes — for each event, init CallRecord, transfer premium **agent USDC ATA → endpoint's CoveragePool vault** (via SPL delegate authority, §3.1.2), then per fee_recipient transfer **CoveragePool → recipient.destination** for `premium * bps / 10_000` (§3.1.3); pool retains the residual; increment counters
 15. Settler: ack Pub/Sub
 16. Settler: POST batch summary to indexer
-17. Indexer: idempotent upsert into `calls` + `agents` + `endpoints` + `pool_state`
+17. Indexer: idempotent upsert into `calls` + `agents` + `endpoints` + per-endpoint `pool_state` + per-recipient `settlement_recipient_share`
 18. Dashboard (next 5s poll): SELECT new rows, re-render
 
 ### 4.2 SLA breach (latency > sla OR upstream 5xx)
 
 Same as 4.1 through step 7. Then:
 - Step 8': classify → `{premium: 500, refund: 1000, breach: true, reason: "latency"|"5xx"}`
-- Step 14': settle_batch transfers premium AgentWallet→CoveragePool AND refund CoveragePool→AgentWallet vault in same ix per event
+- Step 14': `settle_batch` transfers premium **agent USDC ATA → CoveragePool**, fans out fees **CoveragePool → recipients**, AND refund **CoveragePool → agent USDC ATA** — all atomic in the same ix per event.
 
-Dashboard side:
-- 19'. RefundClaimer (running while wallet connected): polls AgentWallet PDA every 5s, sees pendingRefund > 0
-- 20'. Dashboard: builds `claim_refund(amount)` ix
-- 21'. Wallet adapter signs (Phantom popup or silent if pre-approved), submits, confirms
-- 22'. Solana: `claim_refund` transfers AgentWallet vault → owner ATA
-- 23'. Dashboard re-reads, balance updated
+Dashboard side: refund is already in the agent's wallet by the time the next poll runs. No `claim_refund` step. Dashboard just re-reads the agent's USDC ATA balance and shows the updated number.
 
 ### 4.3 Force-breach demo
 
@@ -257,12 +421,14 @@ Same as 4.1 through step 4. Then:
 - Step 6*: if yes, `await sleep(endpoint.sla_latency_ms + 300)`
 - Continue from step 5 onward; latency now exceeds SLA → 4.2 applies.
 
-### 4.4 Agent deposit
+### 4.4 Agent approval (replaces "deposit") — §3.1.2 model
 
-1. Dashboard: user clicks "Deposit 5 USDC"
-2. Dashboard: builds `deposit_usdc(5_000_000)` ix client-side via Codama TS client (no indexer round-trip; deposits don't need allowlist verification)
+1. Dashboard: user clicks "Approve $25 spending allowance for Pact"
+2. Dashboard: builds standard SPL Token `Approve` ix — `approve(agent_usdc_ata, settlement_authority_pda, 25_000_000)`. No protocol-side instruction; this is a vanilla SPL Token call.
 3. Wallet adapter signs, submits, confirms
-4. Dashboard re-reads AgentWallet PDA (RPC), shows new balance
+4. Dashboard re-reads agent's USDC ATA via SPL Token RPC, shows updated `delegated_amount` allowance and confirms `eligible: true`
+
+To stop insurance: dashboard "Stop insurance" button → SPL Token `Revoke` → no protocol cooldown, takes effect on the next settle.
 
 ---
 
@@ -270,10 +436,11 @@ Same as 4.1 through step 4. Then:
 
 | Store | Source of truth for | Read by | Write by |
 |---|---|---|---|
-| Solana devnet program accounts | All money state (CoveragePool, EndpointConfig, AgentWallet, CallRecord, SettlementAuthority) | Settler, Dashboard, Indexer | Settler, Agent, Pool authority |
-| Cloud SQL Postgres | Per-call history, allowlists, denormalized stats | Indexer, Proxy (registry+allowlist on cold load) | Indexer, manual seed scripts |
-| Pub/Sub | Transient event queue | Settler | Proxy |
-| Cloud Run in-memory caches | Endpoint registry (60s), wallet balance (30s) | Proxy | Proxy on miss |
+| Solana devnet program accounts | Pact-controlled money state (per-endpoint CoveragePool, EndpointConfig, CallRecord, SettlementAuthority, Treasury, ProtocolConfig — see §3.1) | Settler, Dashboard, Indexer | Settler, Pool authority |
+| Agent's own USDC ATA + SPL `delegated_amount` | Agent's USDC + approval for SettlementAuthority delegate (§3.1.2) | Proxy/wrap, Dashboard, Settler | Agent (Approve/Revoke), SPL Token program (debits during settle_batch) |
+| Cloud SQL Postgres | Per-call history, allowlists, denormalized stats (per-endpoint pool state, per-recipient earnings — §3.1.3) | Indexer, Proxy (registry+allowlist on cold load) | Indexer, manual seed scripts |
+| Pub/Sub | Transient event queue | Settler | Proxy (via wrap's `PubSubEventSink`) |
+| Cloud Run in-memory caches | Endpoint registry (60s), wallet balance + allowance (30s) | Proxy | Proxy on miss |
 | Browser localStorage | Wallet adapter session | Dashboard | Wallet adapter |
 
 ### 5.1 Postgres schema (Prisma)
@@ -295,11 +462,13 @@ model Endpoint {
   calls                      Call[]
 }
 
+// Per-agent stats now live entirely off-chain (§3.1.2 — no AgentWallet PDA).
+// Indexer aggregates from CallRecord on each settle.
 model Agent {
   pubkey                String   @id @db.VarChar(44)
-  walletPda             String   @db.VarChar(44)
+  // walletPda removed — no PDA in V1
   displayName           String?
-  totalDepositsLamports BigInt   @default(0)
+  // totalDepositsLamports removed — no deposit step
   totalPremiumsLamports BigInt   @default(0)
   totalRefundsLamports  BigInt   @default(0)
   callCount             BigInt   @default(0)
@@ -337,14 +506,37 @@ model Settlement {
   totalPremiumsLamports BigInt
   totalRefundsLamports  BigInt
   ts                    DateTime
+  shares                SettlementRecipientShare[]
 }
 
+// Per-recipient breakdown for §3.1.3 fee fan-out.
+// One row per (settlement, recipient destination).
+model SettlementRecipientShare {
+  id              String     @id @default(cuid())
+  settlementSig   String
+  recipientKind   Int        // FeeRecipientKind enum
+  recipientPubkey String     @db.VarChar(44)
+  amountLamports  BigInt
+  settlement      Settlement @relation(fields: [settlementSig], references: [signature])
+
+  @@index([recipientPubkey])
+  @@index([settlementSig])
+}
+
+model RecipientEarnings {
+  recipientPubkey        String   @id @db.VarChar(44)
+  recipientKind          Int
+  lifetimeEarnedLamports BigInt
+  lastUpdated            DateTime
+}
+
+// Per-endpoint pool state — was singleton (id=1), now keyed by slug (§3.1.1).
 model PoolState {
-  id                     Int      @id @default(1)
+  endpointSlug           String   @id @db.VarChar(16)
   currentBalanceLamports BigInt
-  totalDepositsLamports  BigInt
   totalPremiumsLamports  BigInt
   totalRefundsLamports   BigInt
+  totalFeesPaidLamports  BigInt   @default(0)
   lastUpdated            DateTime
 }
 
@@ -374,7 +566,8 @@ V1 uses plain SQL views or indexer-side aggregation with 5s cache instead of mat
 | Solana tx fails | sendTransaction throws | 3x exp backoff; on 3rd failure, log+alert+no-ack (redeliver) |
 | Duplicate call_id | settle_batch returns "account already in use" | Settler treats as success, acks |
 | Indexer push fails | HTTP error | 3x retry; on persistent failure, log+alert; dashboard falls back to RPC reads for headline totals |
-| Pool depleted | settle_batch returns `PoolDepleted` | Settler skips refund for that event; alert; Rick tops up pool |
+| Pool depleted (per-endpoint, §3.1.1) | settle_batch returns `PoolDepleted` for that endpoint's pool | Settler skips refund for that event only; other endpoints' pools unaffected; alert; pool authority tops up the depleted pool |
+| Agent SPL approval revoked / insufficient (§3.1.2) | SPL Token Transfer fails inside settle_batch | Program marks event `settlement_failed`, continues batch; settler acks Pub/Sub for the failed event; indexer flags it; dashboard surfaces "Approval expired — re-approve to resume insured calls" |
 | Cloud SQL down | indexer reads/writes throw | Dashboard falls back to RPC for headline totals; per-call history stale until DB recovers |
 
 ---
@@ -385,24 +578,24 @@ V1 uses plain SQL views or indexer-side aggregation with 5s cache instead of mat
 
 | Unit | Framework | Coverage |
 |---|---|---|
-| pact-market-pinocchio | LiteSVM (Bun) for unit; surfpool for integration; Codama TS client in tests | Every instruction has happy + at least one negative test. settle_batch dedicated cases: batch-size, dedup, exposure-cap, premium/refund math, paused-endpoint, unauthorized-signer |
+| pact-market-pinocchio (→ pact-network-v1-pinocchio) | LiteSVM (Bun) for unit; surfpool for integration; Codama TS client in tests | Every instruction has happy + at least one negative test. settle_batch dedicated cases: batch-size, dedup, exposure-cap, premium/refund math, paused-endpoint, unauthorized-signer. **Plus: per-endpoint pool isolation (§3.1.1) — each pool debited/credited correctly across mixed-endpoint batches; pool-depleted scoped per pool. Plus: SPL approval flow (§3.1.2) — happy delegate path, revoked-approval marks event `settlement_failed`, refund lands in agent ATA. Plus: fee fan-out (§3.1.3) — default `[Treasury 10%, Affiliate 5%]` template, no-affiliate, multi-affiliate, rounding goes to pool, validation rejects (sum > MAX_TOTAL_FEE_BPS, duplicate destination, multiple Treasury, AffiliateAta with wrong mint), pool-as-source for fee payouts.** |
 | pact-proxy | Vitest. Mock Pub/Sub + fetch | Each route, each endpoint handler, each error path, rate limit, force-breach, balance cache hit/miss |
 | pact-settler | Vitest + @nestjs/testing. Mock Pub/Sub, RPC, indexer | Batcher splits at MAX_BATCH_SIZE. Idempotency on retry. Tx build matches Codama. Failure → no-ack |
 | pact-indexer | Vitest + @nestjs/testing + testcontainers Postgres | Idempotent /events upsert. Operator signed-message verification. Stats cache |
-| pact-dashboard | Vitest for hooks; Playwright e2e (Thu) | useAgentWallet, RefundClaimer logic. Wed: smoke-test by hand |
+| pact-dashboard | Vitest for hooks; Playwright e2e (Thu) | `useAgentInsurableState` hook (ATA balance + allowance read), Approve/Revoke flow, per-pool stats render. Wed: smoke-test by hand |
 
 ### 7.2 Integration: scripts/e2e-devnet.sh
 
 Built Wed PM. Script:
 1. Use existing devnet program deploy (or fresh deploy if first run)
-2. `register_endpoint` for helius, birdeye, jupiter
-3. `initialize_agent_wallet` for test keypair
-4. `deposit_usdc(5_000_000)`
+2. `initialize_treasury` + `initialize_protocol_config` (one-time bootstrap)
+3. `register_endpoint` for helius, birdeye, jupiter (each creates its own CoveragePool atomically — §3.1.1; default `[Treasury 10%, Affiliate 5%]` template — §3.1.3)
+4. Test keypair: ensure USDC ATA exists; SPL Token `Approve(settlement_authority_pda, 5_000_000)` (§3.1.2)
 5. Make 3 calls through deployed proxy URL — assert X-Pact-* headers + Pub/Sub event published
 6. Wait 6s, assert settler picked up, assert tx confirmed
-7. Assert indexer Postgres has 3 `calls` rows
-8. Force-breach call — assert refund credited to AgentWallet
-9. `claim_refund` from test keypair — assert USDC lands in owner ATA
+7. Assert indexer Postgres has 3 `calls` rows + per-endpoint `PoolState` updated + `SettlementRecipientShare` rows for Treasury and Affiliate
+8. Force-breach call — assert refund lands in test keypair's USDC ATA directly (no claim step)
+9. SPL Token `Revoke` from test keypair — next call's settle marks event `settlement_failed`, agent ATA untouched
 10. Re-run script — assert idempotent, no duplicate CallRecord
 
 Pre-Wed-demo gate: this script must pass twice in a row.
@@ -431,7 +624,7 @@ Five parallel crews complete their unit:
 - Top up CoveragePool with 1000 devnet USDC
 
 ### 8.4 Wed evening May 6 (18:00 → 23:00) — Rick walkthrough
-Connect Phantom (devnet), get devnet USDC, deposit to AgentWallet, 5 insured calls, force-breach 2, watch refunds auto-claim. Iterate on rough spots.
+Connect Phantom (devnet), get devnet USDC, **approve $25 SPL spending allowance to `SettlementAuthority`** (§3.1.2), 5 insured calls, force-breach 2, watch refunds appear directly in Phantom's USDC balance (no auto-claim step). Iterate on rough spots.
 
 ### 8.5 Thu May 7
 - Driver.js Colosseum tour
@@ -498,4 +691,7 @@ In order of authorized scope cuts:
 | GCP project setup blocked on Rick | HIGH | Captain sets up personal GCP project tonight as fallback if Rick's not ready by Tue 23:00 |
 | Secret Manager workload identity misconfigured | MEDIUM | Test in Wed AM crew, alert captain at first deploy |
 | Indexer Prisma migration fails on Cloud SQL | LOW | Test migration locally + on staging Cloud SQL Tue night |
-| Refund claim auto-fire fires too aggressively (signs every 5s) | LOW | Debounce: only fire if pendingRefund unchanged for 2 polls (10s) |
+| ~~Refund claim auto-fire fires too aggressively (signs every 5s)~~ | ~~LOW~~ | **Removed** — refunds now land directly in agent's USDC ATA inside `settle_batch` (§3.1.2). No auto-claim flow. |
+| Agent revokes SPL approval mid-session, breaks insured calls silently | MEDIUM | Dashboard banner on `delegated_amount == 0`; settle_batch marks event `settlement_failed` and rest of batch unaffected (§3.1.2); indexer surfaces failure rate per agent |
+| Per-endpoint pool refactor adds account-list overhead in settle_batch | MEDIUM | Surfpool benchmark Wed AM at MAX_BATCH_SIZE=50 with channel-then-fan-out flow (§3.1.3); drop batch size if compute fails |
+| Treasury single-key liability | MEDIUM | V1 ships with treasury authority = pool authority (acceptable for $200 seed pool). Pre-mainnet checklist: rotate to multisig before flip |
