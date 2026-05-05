@@ -1,0 +1,26 @@
+[package]
+name = "pact-market-pinocchio"
+version = "0.1.0"
+description = "Pact Market V1 on-chain parametric insurance for AI agent API payments (Pinocchio)"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "pact_market"
+
+[features]
+default = []
+no-entrypoint = []
+
+[dependencies]
+pinocchio = { version = "0.10", features = ["cpi"] }
+bytemuck = { version = "1.14", features = ["derive"] }
+
+[target.'cfg(any(target_os = "solana", target_arch = "bpf"))'.dependencies]
+solana-address = { version = "2", features = ["decode", "copy"] }
+
+[target.'cfg(not(any(target_os = "solana", target_arch = "bpf")))'.dependencies]
+solana-address = { version = "2", features = ["decode", "curve25519", "copy"] }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))'] }
