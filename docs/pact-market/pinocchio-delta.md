@@ -20,6 +20,7 @@ The existing `pact-insurance-pinocchio` crate models a multi-underwriter insuran
 
 **CoveragePool** (one global pool; no underwriters in V1)
 PDA seeds: `[b"coverage_pool"]`
+
 ```
 pub struct CoveragePool {
     pub bump: u8,
@@ -37,6 +38,7 @@ impl CoveragePool {
 
 **EndpointConfig** (one per registered endpoint slug)
 PDA seeds: `[b"endpoint", slug.as_bytes()]` (slug max 16 bytes)
+
 ```
 pub struct EndpointConfig {
     pub bump: u8,
@@ -60,6 +62,7 @@ impl EndpointConfig {
 
 **AgentWallet** (one per agent)
 PDA seeds: `[b"agent_wallet", owner.key().as_ref()]`
+
 ```
 pub struct AgentWallet {
     pub bump: u8,
@@ -81,6 +84,7 @@ impl AgentWallet {
 
 **CallRecord** (one per call settlement, deduplication record)
 PDA seeds: `[b"call", call_id.as_ref()]` (call_id is 16 bytes UUID)
+
 ```
 pub struct CallRecord {
     pub bump: u8,
@@ -100,6 +104,7 @@ impl CallRecord {
 
 **SettlementAuthority** (singleton)
 PDA seeds: `[b"settlement_authority"]`
+
 ```
 pub struct SettlementAuthority {
     pub bump: u8,
@@ -188,6 +193,7 @@ pub fn settle_batch(
 ```
 
 `SettlementEvent` struct (passed inline in `settle_batch`):
+
 ```rust
 pub struct SettlementEvent {
     pub call_id: [u8; 16],
@@ -329,8 +335,7 @@ pub struct PoolToppedUp {
 5. Each `call_id` can be settled at most once. The CallRecord PDA serves as the deduplication mechanism (init-if-needed pattern; second settlement with same call_id fails because account already exists).
 6. All u64 arithmetic uses checked operations (`checked_add`, `checked_sub`). Any overflow returns `ArithmeticOverflow (6015, new variant)`.
 
-> **PRD inconsistency note:** PRD §11 security invariants point 6 says checked arithmetic returns `MathOverflow`, but the PRD's error enum (codes 6000-6014, §11) has no such variant. The existing pact-insurance crate uses `ArithmeticOverflow = 6023`. Recommend the new pact-market-pinocchio crate add `ArithmeticOverflow = 6015` to its error enum and amend the PRD accordingly.
-7. Authority over endpoint config is the pool's authority pubkey. In V2 this becomes a multisig.
+> **PRD inconsistency note:** PRD §11 security invariants point 6 says checked arithmetic returns `MathOverflow`, but the PRD's error enum (codes 6000-6014, §11) has no such variant. The existing pact-insurance crate uses `ArithmeticOverflow = 6023`. Recommend the new pact-market-pinocchio crate add `ArithmeticOverflow = 6015` to its error enum and amend the PRD accordingly. 7. Authority over endpoint config is the pool's authority pubkey. In V2 this becomes a multisig.
 
 ---
 
@@ -340,31 +345,31 @@ pub struct PoolToppedUp {
 
 ### State structs (`src/state.rs` — 834 LOC)
 
-| Struct | Discriminator | LEN | Key fields |
-|---|---|---|---|
-| `ProtocolConfig` | 0 | 256 | authority, oracle, treasury, usdc_mint; protocol_fee_bps, default_insurance_rate_bps, withdrawal_cooldown_seconds, aggregate_cap_bps, claim_window_seconds, paused, bump |
-| `CoveragePool` | 1 | 320 | authority, usdc_mint, vault; provider_hostname [u8;64], total_deposited, total_available, total_premiums_earned, total_claims_paid, max_coverage_per_call, payouts_this_window, insurance_rate_bps, active_policies, bump, _pad_tail[0]=vault_bump |
-| `UnderwriterPosition` | 2 | 184 | pool, underwriter; deposited, earned_premiums, losses_absorbed, deposit_timestamp, last_claim_timestamp, bump |
-| `Policy` | 3 | 320 | agent, pool, agent_token_account; agent_id [u8;64], total_premiums_paid, total_claims_received, calls_covered, created_at, expires_at, active, referrer [u8;32], referrer_share_bps, referrer_present |
-| `Claim` | 4 | 288 | policy, pool, agent; call_id [u8;32] (SHA-256 digest), evidence_hash [u8;32], payment_amount, refund_amount, latency_ms, status_code, trigger_type, status, bump |
+| Struct                | Discriminator | LEN | Key fields                                                                                                                                                                                                                                          |
+| --------------------- | ------------- | --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ProtocolConfig`      | 0             | 256 | authority, oracle, treasury, usdc_mint; protocol_fee_bps, default_insurance_rate_bps, withdrawal_cooldown_seconds, aggregate_cap_bps, claim_window_seconds, paused, bump                                                                            |
+| `CoveragePool`        | 1             | 320 | authority, usdc_mint, vault; provider_hostname [u8;64], total_deposited, total_available, total_premiums_earned, total_claims_paid, max_coverage_per_call, payouts_this_window, insurance_rate_bps, active_policies, bump, \_pad_tail[0]=vault_bump |
+| `UnderwriterPosition` | 2             | 184 | pool, underwriter; deposited, earned_premiums, losses_absorbed, deposit_timestamp, last_claim_timestamp, bump                                                                                                                                       |
+| `Policy`              | 3             | 320 | agent, pool, agent_token_account; agent_id [u8;64], total_premiums_paid, total_claims_received, calls_covered, created_at, expires_at, active, referrer [u8;32], referrer_share_bps, referrer_present                                               |
+| `Claim`               | 4             | 288 | policy, pool, agent; call_id [u8;32] (SHA-256 digest), evidence_hash [u8;32], payment_amount, refund_amount, latency_ms, status_code, trigger_type, status, bump                                                                                    |
 
 All structs: `#[repr(C)]`, `bytemuck::Pod`, first domain field at byte offset 8, trailing `reserved: [u8;64]`.
 
 ### Instructions (`src/instructions/` — 11 handlers)
 
-| Discriminator | Handler | Signer | Key behavior |
-|---|---|---|---|
-| 0 | `initialize_protocol` | deployer (hardcoded pubkey) | Creates ProtocolConfig PDA, deployer-locked |
-| 1 | `update_config` | authority | Mutates 13 ProtocolConfig fields individually via Option args; frozen fields (treasury, usdc_mint) always rejected |
-| 2 | `update_oracle` | authority | Rotates config.oracle; rejects zero address and self-referential oracle |
-| 3 | `create_pool` | authority | Creates CoveragePool + SPL vault PDA; mints must match config.usdc_mint (bug fix) |
-| 4 | `deposit` | underwriter | Transfer from underwriter ATA to vault; init-or-reopen UnderwriterPosition; resets cooldown on every deposit |
-| 5 | `enable_insurance` | agent | Creates Policy PDA linking agent to pool; snapshots referrer if provided |
-| 6 | `disable_policy` | agent | Sets policy.active=0; decrements pool.active_policies with saturating_sub |
-| 7 | `settle_premium` | oracle | Crank-driven 3-way split: pool_cut + treasury_cut + referrer_cut from agent delegated ATA; H-05 no active gate |
-| 8 | `withdraw` | underwriter | Pool-PDA-signed Transfer vault→underwriter ATA; enforces cooldown (floor 3600s) |
-| 9 | `update_rates` | oracle | Updates pool.insurance_rate_bps; bounded by [min_premium_bps, 10000] |
-| 10 | `submit_claim` | oracle | Creates Claim PDA (dedup by sha256(call_id)); pool-PDA-signed Transfer vault→agent ATA; aggregate cap enforced per window |
+| Discriminator | Handler               | Signer                      | Key behavior                                                                                                              |
+| ------------- | --------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| 0             | `initialize_protocol` | deployer (hardcoded pubkey) | Creates ProtocolConfig PDA, deployer-locked                                                                               |
+| 1             | `update_config`       | authority                   | Mutates 13 ProtocolConfig fields individually via Option args; frozen fields (treasury, usdc_mint) always rejected        |
+| 2             | `update_oracle`       | authority                   | Rotates config.oracle; rejects zero address and self-referential oracle                                                   |
+| 3             | `create_pool`         | authority                   | Creates CoveragePool + SPL vault PDA; mints must match config.usdc_mint (bug fix)                                         |
+| 4             | `deposit`             | underwriter                 | Transfer from underwriter ATA to vault; init-or-reopen UnderwriterPosition; resets cooldown on every deposit              |
+| 5             | `enable_insurance`    | agent                       | Creates Policy PDA linking agent to pool; snapshots referrer if provided                                                  |
+| 6             | `disable_policy`      | agent                       | Sets policy.active=0; decrements pool.active_policies with saturating_sub                                                 |
+| 7             | `settle_premium`      | oracle                      | Crank-driven 3-way split: pool_cut + treasury_cut + referrer_cut from agent delegated ATA; H-05 no active gate            |
+| 8             | `withdraw`            | underwriter                 | Pool-PDA-signed Transfer vault→underwriter ATA; enforces cooldown (floor 3600s)                                           |
+| 9             | `update_rates`        | oracle                      | Updates pool.insurance_rate_bps; bounded by [min_premium_bps, 10000]                                                      |
+| 10            | `submit_claim`        | oracle                      | Creates Claim PDA (dedup by sha256(call_id)); pool-PDA-signed Transfer vault→agent ATA; aggregate cap enforced per window |
 
 ### Errors (`src/error.rs` — 31 variants, 6000–6030)
 
@@ -372,14 +377,14 @@ All structs: `#[repr(C)]`, `bytemuck::Pod`, first domain field at byte offset 8,
 
 ### PDA seeds (`src/pda.rs`)
 
-| Seed | Usage |
-|---|---|
-| `b"protocol"` | Singleton ProtocolConfig |
-| `[b"pool", hostname_bytes]` | Per-provider CoveragePool; variable-length hostname |
-| `[b"vault", pool_pda]` | SPL vault for each pool |
-| `[b"position", pool, underwriter]` | Per-underwriter deposit position |
-| `[b"policy", pool, agent]` | Per-agent insurance policy |
-| `[b"claim", policy, sha256(call_id)]` | Per-call dedup record |
+| Seed                                  | Usage                                               |
+| ------------------------------------- | --------------------------------------------------- |
+| `b"protocol"`                         | Singleton ProtocolConfig                            |
+| `[b"pool", hostname_bytes]`           | Per-provider CoveragePool; variable-length hostname |
+| `[b"vault", pool_pda]`                | SPL vault for each pool                             |
+| `[b"position", pool, underwriter]`    | Per-underwriter deposit position                    |
+| `[b"policy", pool, agent]`            | Per-agent insurance policy                          |
+| `[b"claim", policy, sha256(call_id)]` | Per-call dedup record                               |
 
 ### Infrastructure modules
 
@@ -395,27 +400,27 @@ All structs: `#[repr(C)]`, `bytemuck::Pod`, first domain field at byte offset 8,
 
 ## 4. Overlap Matrix
 
-| PRD §11 item | Existing equivalent | Verdict | Notes |
-|---|---|---|---|
-| **CoveragePool** account | `CoveragePool` (discriminator 1, 320 bytes) | NEW | Pact Market's pool has no underwriters, no per-provider hostname, no insurance_rate_bps, no active_policies counter. Field set is ~30% overlapping by name but semantically different (balance vs total_deposited/available split, no vault_bump trick). Same name is a coincidence; they are different entities. |
-| **EndpointConfig** account | Nothing equivalent | NEW | Concept does not exist in pact-insurance. Closest: provider_hostname inside CoveragePool, but that is a pool key, not a per-endpoint config record. |
-| **AgentWallet** account | `Policy` (discriminator 3, 320 bytes) | NEW | Policy tracks coverage relationships between agent+pool; AgentWallet tracks prepaid USDC balance with a withdrawal state machine. Completely different semantics despite both referencing an agent pubkey. |
-| **CallRecord** account | `Claim` (discriminator 4, 288 bytes) | NEW | Claim stores evidence hashes, trigger types, refund resolution, and status transitions. CallRecord is a thin dedup receipt written atomically in settle_batch. Different shape, different lifecycle. |
-| **SettlementAuthority** account | Partial: `ProtocolConfig.oracle` | NEW | config.oracle is the pact-insurance oracle key embedded in a multi-field singleton config. SettlementAuthority is its own PDA with its own seed and a dedicated signer field. Not shareable without a migration. |
-| **initialize_coverage_pool** ix | `create_pool` (discriminator 3) | NEW | create_pool creates a per-provider pool with SPL vault, hostname seeds, and Underwriter model. PM's initialize_coverage_pool creates a single global pool with no hostname, different seed. |
-| **initialize_settlement_authority** ix | Nothing equivalent | NEW | No counterpart in pact-insurance. |
-| **register_endpoint** ix | Nothing equivalent | NEW | No counterpart. EndpointConfig as a concept is fully absent from pact-insurance. |
-| **update_endpoint_config** ix | `update_rates` (discriminator 9) + `update_config` (discriminator 1) | NEW | update_rates only touches insurance_rate_bps on a CoveragePool; update_config only touches the ProtocolConfig singleton. Neither maps to per-endpoint slug-keyed config mutation. |
-| **pause_endpoint** ix | Partial: `update_config` paused field | NEW | update_config pauses the entire protocol. pause_endpoint pauses a single endpoint. Different scope. |
-| **initialize_agent_wallet** ix | `enable_insurance` (discriminator 5) | NEW | enable_insurance creates a Policy linking agent to a pool with delegation/referrer. initialize_agent_wallet creates a USDC-holding PDA with a balance. Different type, different lifetime, different CPI pattern. |
-| **deposit_usdc** ix | `deposit` (discriminator 4) | ADAPT (50%) | Both: user signs, Transfer from user ATA to a vault PDA, init-or-reopen a PDA, update balance counters. Key differences: deposit targets UnderwriterPosition+CoveragePool (two accounts updated); deposit_usdc targets AgentWallet only. No cooldown reset on agent deposit. vault_bump pattern differs. Token helper modules can be shared. |
-| **request_withdrawal** ix | `withdraw` (discriminator 8) | NEW | withdraw is immediate (after cooldown elapses from deposit_timestamp). request_withdrawal sets a pending state; a separate execute_withdrawal fires after cooldown. Two-step vs one-step. |
-| **execute_withdrawal** ix | Nothing equivalent | NEW | Two-step withdrawal pattern does not exist in pact-insurance. |
-| **top_up_coverage_pool** ix | `deposit` (discriminator 4) | ADAPT (30%) | Both Transfer USDC into a vault. Different target accounts, different signer constraints (pool authority vs agent). Borrows the Transfer helper but logic differs substantially. |
-| **settle_batch** ix | `settle_premium` (7) + `submit_claim` (10) | NEW | settle_batch is a single oracle-gated instruction that atomically writes CallRecord PDAs, debits agent wallets, and credits pool refunds for a Vec of events. pact-insurance uses two separate cranks (settle_premium for premiums, submit_claim for refunds) with very different account structures (Policy PDA required, delegation model, sha256 call_id, aggregate cap window). The batch-settlement-event vector pattern has no analog. |
-| **Errors 6000–6014** | Overlapping codes 6000–6030 | NEW | PM's 15 error variants start at 6000 and have different meanings at each code point. pact-insurance uses 6000–6030 with different semantics (e.g., 6000 = ProtocolPaused vs InsufficientBalance; 6005 = TokenAccountMismatch vs UnauthorizedSettler). Both programs cannot live in the same error namespace without aliasing. This alone is a strong argument against Option A or B. |
-| **Events** (10 events) | None | NEW | pact-insurance emits no events (Pinocchio port does not include an event system). |
-| **Security invariants 1–7** | Partially analogous | NEW | Invariants 1–3 (vault custody, settle_batch gating) parallel pact-insurance's vault + oracle model at a conceptual level, but the account structures that enforce them are entirely different. Cannot share implementation. |
+| PRD §11 item                           | Existing equivalent                                                  | Verdict     | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| -------------------------------------- | -------------------------------------------------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **CoveragePool** account               | `CoveragePool` (discriminator 1, 320 bytes)                          | NEW         | Pact Market's pool has no underwriters, no per-provider hostname, no insurance_rate_bps, no active_policies counter. Field set is ~30% overlapping by name but semantically different (balance vs total_deposited/available split, no vault_bump trick). Same name is a coincidence; they are different entities.                                                                                                                            |
+| **EndpointConfig** account             | Nothing equivalent                                                   | NEW         | Concept does not exist in pact-insurance. Closest: provider_hostname inside CoveragePool, but that is a pool key, not a per-endpoint config record.                                                                                                                                                                                                                                                                                          |
+| **AgentWallet** account                | `Policy` (discriminator 3, 320 bytes)                                | NEW         | Policy tracks coverage relationships between agent+pool; AgentWallet tracks prepaid USDC balance with a withdrawal state machine. Completely different semantics despite both referencing an agent pubkey.                                                                                                                                                                                                                                   |
+| **CallRecord** account                 | `Claim` (discriminator 4, 288 bytes)                                 | NEW         | Claim stores evidence hashes, trigger types, refund resolution, and status transitions. CallRecord is a thin dedup receipt written atomically in settle_batch. Different shape, different lifecycle.                                                                                                                                                                                                                                         |
+| **SettlementAuthority** account        | Partial: `ProtocolConfig.oracle`                                     | NEW         | config.oracle is the pact-insurance oracle key embedded in a multi-field singleton config. SettlementAuthority is its own PDA with its own seed and a dedicated signer field. Not shareable without a migration.                                                                                                                                                                                                                             |
+| **initialize_coverage_pool** ix        | `create_pool` (discriminator 3)                                      | NEW         | create_pool creates a per-provider pool with SPL vault, hostname seeds, and Underwriter model. PM's initialize_coverage_pool creates a single global pool with no hostname, different seed.                                                                                                                                                                                                                                                  |
+| **initialize_settlement_authority** ix | Nothing equivalent                                                   | NEW         | No counterpart in pact-insurance.                                                                                                                                                                                                                                                                                                                                                                                                            |
+| **register_endpoint** ix               | Nothing equivalent                                                   | NEW         | No counterpart. EndpointConfig as a concept is fully absent from pact-insurance.                                                                                                                                                                                                                                                                                                                                                             |
+| **update_endpoint_config** ix          | `update_rates` (discriminator 9) + `update_config` (discriminator 1) | NEW         | update_rates only touches insurance_rate_bps on a CoveragePool; update_config only touches the ProtocolConfig singleton. Neither maps to per-endpoint slug-keyed config mutation.                                                                                                                                                                                                                                                            |
+| **pause_endpoint** ix                  | Partial: `update_config` paused field                                | NEW         | update_config pauses the entire protocol. pause_endpoint pauses a single endpoint. Different scope.                                                                                                                                                                                                                                                                                                                                          |
+| **initialize_agent_wallet** ix         | `enable_insurance` (discriminator 5)                                 | NEW         | enable_insurance creates a Policy linking agent to a pool with delegation/referrer. initialize_agent_wallet creates a USDC-holding PDA with a balance. Different type, different lifetime, different CPI pattern.                                                                                                                                                                                                                            |
+| **deposit_usdc** ix                    | `deposit` (discriminator 4)                                          | ADAPT (50%) | Both: user signs, Transfer from user ATA to a vault PDA, init-or-reopen a PDA, update balance counters. Key differences: deposit targets UnderwriterPosition+CoveragePool (two accounts updated); deposit_usdc targets AgentWallet only. No cooldown reset on agent deposit. vault_bump pattern differs. Token helper modules can be shared.                                                                                                 |
+| **request_withdrawal** ix              | `withdraw` (discriminator 8)                                         | NEW         | withdraw is immediate (after cooldown elapses from deposit_timestamp). request_withdrawal sets a pending state; a separate execute_withdrawal fires after cooldown. Two-step vs one-step.                                                                                                                                                                                                                                                    |
+| **execute_withdrawal** ix              | Nothing equivalent                                                   | NEW         | Two-step withdrawal pattern does not exist in pact-insurance.                                                                                                                                                                                                                                                                                                                                                                                |
+| **top_up_coverage_pool** ix            | `deposit` (discriminator 4)                                          | ADAPT (30%) | Both Transfer USDC into a vault. Different target accounts, different signer constraints (pool authority vs agent). Borrows the Transfer helper but logic differs substantially.                                                                                                                                                                                                                                                             |
+| **settle_batch** ix                    | `settle_premium` (7) + `submit_claim` (10)                           | NEW         | settle_batch is a single oracle-gated instruction that atomically writes CallRecord PDAs, debits agent wallets, and credits pool refunds for a Vec of events. pact-insurance uses two separate cranks (settle_premium for premiums, submit_claim for refunds) with very different account structures (Policy PDA required, delegation model, sha256 call_id, aggregate cap window). The batch-settlement-event vector pattern has no analog. |
+| **Errors 6000–6014**                   | Overlapping codes 6000–6030                                          | NEW         | PM's 15 error variants start at 6000 and have different meanings at each code point. pact-insurance uses 6000–6030 with different semantics (e.g., 6000 = ProtocolPaused vs InsufficientBalance; 6005 = TokenAccountMismatch vs UnauthorizedSettler). Both programs cannot live in the same error namespace without aliasing. This alone is a strong argument against Option A or B.                                                         |
+| **Events** (10 events)                 | None                                                                 | NEW         | pact-insurance emits no events (Pinocchio port does not include an event system).                                                                                                                                                                                                                                                                                                                                                            |
+| **Security invariants 1–7**            | Partially analogous                                                  | NEW         | Invariants 1–3 (vault custody, settle_batch gating) parallel pact-insurance's vault + oracle model at a conceptual level, but the account structures that enforce them are entirely different. Cannot share implementation.                                                                                                                                                                                                                  |
 
 **Summary: 0 REUSE, 2 ADAPT (30–50%, token Transfer helpers only), 9 NEW state accounts/instructions (counting groups).**
 
@@ -447,7 +452,7 @@ The account shapes are incompatible at a deep level. pact-insurance's `CoverageP
 
 - **Pro:** Single program; single set of Codama-generated TS bindings.
 - **Con:** Requires devnet state migration (5 accounts); breaks Codama-TS SDK (currently used in production-intent integration tests); structural incompatibility forces branching handler logic that defeats the purpose of typed state; two unrelated product models in one layout spec.
-- **Risk:** CRITICAL. Migrating live devnet state mid-development breaks the existing pact-insurance test suite (tests-pinocchio/*.ts, ~5,213 LOC). The insurance team is still actively iterating (PR #47 open). Any regression here directly delays Colosseum submission.
+- **Risk:** CRITICAL. Migrating live devnet state mid-development breaks the existing pact-insurance test suite (tests-pinocchio/\*.ts, ~5,213 LOC). The insurance team is still actively iterating (PR #47 open). Any regression here directly delays Colosseum submission.
 - **Hours:** 50–70h (migration instruction, layout changes, Codama regen, full regression).
 - **Confidence:** Very low. This option is not recommended under any scenario.
 
@@ -488,36 +493,36 @@ The PRD's original Anchor 0.31.1 choice was also coherent, but given the existin
 
 ### New crate root
 
-| Path | Contents |
-|---|---|
+| Path                                                                   | Contents                                                                                                                                                                                                            |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `packages/program/programs-pinocchio/pact-market-pinocchio/Cargo.toml` | Package metadata; deps: pinocchio 0.10 + cpi, bytemuck 1.14, solana-address 2 (same as pact-insurance); no sha2 needed (call_id is 16-byte UUID, no hashing required since UUID fits within the 32-byte seed limit) |
-| `packages/program/programs-pinocchio/pact-market-pinocchio/src/lib.rs` | `declare_id!`, module declarations, DEPLOYER_PUBKEY constant |
+| `packages/program/programs-pinocchio/pact-market-pinocchio/src/lib.rs` | `declare_id!`, module declarations, DEPLOYER_PUBKEY constant                                                                                                                                                        |
 
 ### New source files
 
-| Path | Description | Est. LOC |
-|---|---|---|
-| `src/state.rs` | 5 structs: CoveragePool, EndpointConfig, AgentWallet, CallRecord, SettlementAuthority; `#[repr(C)]`, `bytemuck::Pod`, offset asserts, round-trip tests | 400 |
-| `src/error.rs` | PactMarketError enum, 15 variants 6000–6014 | 60 |
-| `src/pda.rs` | 5 seed sets + derive_* helpers + pinned fixture tests | 200 |
-| `src/constants.rs` | MAX_SLUG_LEN=16, MAX_BATCH_SIZE, WITHDRAWAL_COOLDOWN_SECONDS, EXPOSURE_CAP_WINDOW_SECONDS | 30 |
-| `src/discriminator.rs` | 11-variant Discriminator enum (0=InitializeCoveragePool … 10=SettleBatch) | 40 |
-| `src/entrypoint.rs` | `process_instruction` dispatcher | 30 |
-| `src/token.rs` | Copy from pact-insurance (or import shared lib): user-signed Transfer, pool-PDA-signed Transfer, InitializeAccount3 | 153 |
-| `src/token_account.rs` | Copy from pact-insurance: raw byte readers | 217 |
-| `src/system.rs` | Copy from pact-insurance: CreateAccount CPI | 60 |
-| `src/instructions/mod.rs` | Module declarations | 15 |
-| `src/instructions/initialize_coverage_pool.rs` | Creates CoveragePool PDA + SPL vault; authority-signed | 120 |
-| `src/instructions/initialize_settlement_authority.rs` | Creates SettlementAuthority PDA; authority-signed; signer arg | 80 |
-| `src/instructions/register_endpoint.rs` | Creates EndpointConfig PDA; authority-signed; slug + pricing args | 150 |
-| `src/instructions/update_endpoint_config.rs` | Mutates EndpointConfig; authority-signed; Option<T> args per field | 180 |
-| `src/instructions/pause_endpoint.rs` | Sets EndpointConfig.paused; authority-signed | 80 |
-| `src/instructions/initialize_agent_wallet.rs` | Creates AgentWallet PDA + SPL vault; agent-signed | 120 |
-| `src/instructions/deposit_usdc.rs` | User-signed Transfer ATA→agent vault; updates balance; init-if-needed omitted (wallet already exists) | 150 |
-| `src/instructions/request_withdrawal.rs` | Sets pending_withdrawal + withdrawal_unlock_at; agent-signed; no CPI | 100 |
-| `src/instructions/execute_withdrawal.rs` | After cooldown: wallet-PDA-signed Transfer vault→agent ATA; clears pending state | 150 |
-| `src/instructions/top_up_coverage_pool.rs` | authority-signed Transfer from authority ATA to pool vault | 100 |
-| `src/instructions/settle_batch.rs` | Core instruction: oracle-signed; iterates Vec<SettlementEvent>; init-or-no-op CallRecord PDA per call_id; debits AgentWallet; credits pool on breach; enforces exposure cap per endpoint per window; checked arithmetic throughout | 500 |
+| Path                                                  | Description                                                                                                                                                                                                                        | Est. LOC |
+| ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| `src/state.rs`                                        | 5 structs: CoveragePool, EndpointConfig, AgentWallet, CallRecord, SettlementAuthority; `#[repr(C)]`, `bytemuck::Pod`, offset asserts, round-trip tests                                                                             | 400      |
+| `src/error.rs`                                        | PactMarketError enum, 15 variants 6000–6014                                                                                                                                                                                        | 60       |
+| `src/pda.rs`                                          | 5 seed sets + derive\_\* helpers + pinned fixture tests                                                                                                                                                                            | 200      |
+| `src/constants.rs`                                    | MAX_SLUG_LEN=16, MAX_BATCH_SIZE, WITHDRAWAL_COOLDOWN_SECONDS, EXPOSURE_CAP_WINDOW_SECONDS                                                                                                                                          | 30       |
+| `src/discriminator.rs`                                | 11-variant Discriminator enum (0=InitializeCoveragePool … 10=SettleBatch)                                                                                                                                                          | 40       |
+| `src/entrypoint.rs`                                   | `process_instruction` dispatcher                                                                                                                                                                                                   | 30       |
+| `src/token.rs`                                        | Copy from pact-insurance (or import shared lib): user-signed Transfer, pool-PDA-signed Transfer, InitializeAccount3                                                                                                                | 153      |
+| `src/token_account.rs`                                | Copy from pact-insurance: raw byte readers                                                                                                                                                                                         | 217      |
+| `src/system.rs`                                       | Copy from pact-insurance: CreateAccount CPI                                                                                                                                                                                        | 60       |
+| `src/instructions/mod.rs`                             | Module declarations                                                                                                                                                                                                                | 15       |
+| `src/instructions/initialize_coverage_pool.rs`        | Creates CoveragePool PDA + SPL vault; authority-signed                                                                                                                                                                             | 120      |
+| `src/instructions/initialize_settlement_authority.rs` | Creates SettlementAuthority PDA; authority-signed; signer arg                                                                                                                                                                      | 80       |
+| `src/instructions/register_endpoint.rs`               | Creates EndpointConfig PDA; authority-signed; slug + pricing args                                                                                                                                                                  | 150      |
+| `src/instructions/update_endpoint_config.rs`          | Mutates EndpointConfig; authority-signed; Option<T> args per field                                                                                                                                                                 | 180      |
+| `src/instructions/pause_endpoint.rs`                  | Sets EndpointConfig.paused; authority-signed                                                                                                                                                                                       | 80       |
+| `src/instructions/initialize_agent_wallet.rs`         | Creates AgentWallet PDA + SPL vault; agent-signed                                                                                                                                                                                  | 120      |
+| `src/instructions/deposit_usdc.rs`                    | User-signed Transfer ATA→agent vault; updates balance; init-if-needed omitted (wallet already exists)                                                                                                                              | 150      |
+| `src/instructions/request_withdrawal.rs`              | Sets pending_withdrawal + withdrawal_unlock_at; agent-signed; no CPI                                                                                                                                                               | 100      |
+| `src/instructions/execute_withdrawal.rs`              | After cooldown: wallet-PDA-signed Transfer vault→agent ATA; clears pending state                                                                                                                                                   | 150      |
+| `src/instructions/top_up_coverage_pool.rs`            | authority-signed Transfer from authority ATA to pool vault                                                                                                                                                                         | 100      |
+| `src/instructions/settle_batch.rs`                    | Core instruction: oracle-signed; iterates Vec<SettlementEvent>; init-or-no-op CallRecord PDA per call_id; debits AgentWallet; credits pool on breach; enforces exposure cap per endpoint per window; checked arithmetic throughout | 500      |
 
 **New implementation subtotal: ~2,935 LOC**
 
@@ -527,12 +532,12 @@ Everything under `packages/program/programs-pinocchio/pact-insurance-pinocchio/`
 
 ### Test files to add
 
-| Path | Description | Est. LOC |
-|---|---|---|
-| `packages/program/tests-pinocchio/pact-market/pool.ts` | initialize_coverage_pool, top_up_coverage_pool, authority guards | 200 |
-| `packages/program/tests-pinocchio/pact-market/endpoints.ts` | register_endpoint, update_endpoint_config, pause_endpoint | 250 |
-| `packages/program/tests-pinocchio/pact-market/wallet.ts` | initialize_agent_wallet, deposit, request/execute withdrawal, cooldown enforcement | 300 |
-| `packages/program/tests-pinocchio/pact-market/settle.ts` | settle_batch: happy path, SLA breach + refund, dedup (duplicate call_id), exposure cap exceeded, unauthorized settler | 400 |
+| Path                                                        | Description                                                                                                           | Est. LOC |
+| ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- | -------- |
+| `packages/program/tests-pinocchio/pact-market/pool.ts`      | initialize_coverage_pool, top_up_coverage_pool, authority guards                                                      | 200      |
+| `packages/program/tests-pinocchio/pact-market/endpoints.ts` | register_endpoint, update_endpoint_config, pause_endpoint                                                             | 250      |
+| `packages/program/tests-pinocchio/pact-market/wallet.ts`    | initialize_agent_wallet, deposit, request/execute withdrawal, cooldown enforcement                                    | 300      |
+| `packages/program/tests-pinocchio/pact-market/settle.ts`    | settle_batch: happy path, SLA breach + refund, dedup (duplicate call_id), exposure cap exceeded, unauthorized settler | 400      |
 
 **Test subtotal: ~1,150 LOC**
 
@@ -542,20 +547,20 @@ Everything under `packages/program/programs-pinocchio/pact-insurance-pinocchio/`
 
 ## 8. Risk Register
 
-| Risk | Severity | Notes |
-|---|---|---|
-| **`settle_batch` compute budget** | HIGH | For a batch of N events with K breaches: N × CreateAccount CPI (one CallRecord PDA per event, dedup mechanism) + N × Transfer CPI (premium debit: AgentWallet vault → CoveragePool vault) + K × Transfer CPI (refund credit: CoveragePool vault → refund destination\*). Total CPIs per batch = 2N + K. Worked example: batch of 10 events with 5 breaches = 10 + 10 + 5 = 25 CPIs. Default compute limit is 200,000 CU. Each CreateAccount + Token Transfer chain costs ~15,000–20,000 CU. At MAX\_BATCH\_SIZE=12 (Alan's earlier recommendation, may be revised to 50 per Rick), the upper-bound CPI count is 2\*12 + 12 = 36. With a refund-to-client-ATA model (Option 2), the writable-account count is 12\*2 (AgentWallet vault + client ATA per event) + 1 (CoveragePool vault) = 25 writable accounts per tx, near Solana's ~32 writable account limit per tx, which likely forces MAX\_BATCH\_SIZE down to ~12–20. PRD §11 sets a `BatchTooLarge` error but does not specify the max. Alan needs to pick a concrete limit before implementation begins. \*Refund destination is currently TBD — PRD §11 routes refunds to AgentWallet PDA balance, but Rick (2026-05-04) requested refunds land directly on the agent's client wallet ATA. If the latter is chosen, each batch must include the recipient's ATA in the writable accounts list, tightening both compute budget and account-list size limits. |
-| **AgentWallet vault authority pattern** | MEDIUM | Pact Market's AgentWallet vault is owned by the AgentWallet PDA, not by the pool. The Transfer CPI on `execute_withdrawal` must be wallet-PDA-signed (seeds: `[b"agent_wallet", owner]`). The pattern is identical to pact-insurance's pool-PDA-signed Transfer — well-understood — but the seed must be constructed carefully since the agent's pubkey is in the seed (not a hostname byte slice). |
-| **Exposure cap per endpoint per hour** | MEDIUM | EndpointConfig has a single `exposure_cap_per_hour_lamports` field but no rolling window counters in the PRD §11 spec. `settle_batch` must track `(current_period_start, current_period_refunds)` somewhere. The CallRecord approach (count from chain state) is too expensive per-call. Either the EndpointConfig needs two additional fields (period_start: i64, period_refunds: u64) not in the PRD §11 layout, or the settler worker pre-validates. This is an open question the PRD does not fully answer — see ASK-ALAN below. |
-| **Devnet USDC mint** | LOW | Both programs must use the same USDC mint address on devnet (likely the Circle devnet USDC or a local test mint). The pact-insurance ProtocolConfig.usdc_mint is set at initialize_protocol. Pact Market's CoveragePool.usdc_vault must use the same mint. No conflict, but whoever initializes the PM pool must use the same USDC mint that the existing devnet infrastructure already minted test tokens for. |
-| **Two program IDs in settler worker** | LOW | The Fly.io settler worker currently submits transactions to one program. It needs a second program ID constant and a Codama-generated TS SDK for pact-market. This is a TypeScript config change, not an on-chain risk. |
-| **No state migration needed** | NONE | This is a new crate. No existing accounts are touched. |
+| Risk                                    | Severity | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| --------------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`settle_batch` compute budget**       | HIGH     | For a batch of N events with K breaches: N × CreateAccount CPI (one CallRecord PDA per event, dedup mechanism) + N × Transfer CPI (premium debit: AgentWallet vault → CoveragePool vault) + K × Transfer CPI (refund credit: CoveragePool vault → refund destination\*). Total CPIs per batch = 2N + K. Worked example: batch of 10 events with 5 breaches = 10 + 10 + 5 = 25 CPIs. Default compute limit is 200,000 CU. Each CreateAccount + Token Transfer chain costs ~15,000–20,000 CU. At MAX_BATCH_SIZE=12 (Alan's earlier recommendation, may be revised to 50 per Rick), the upper-bound CPI count is 2\*12 + 12 = 36. With a refund-to-client-ATA model (Option 2), the writable-account count is 12\*2 (AgentWallet vault + client ATA per event) + 1 (CoveragePool vault) = 25 writable accounts per tx, near Solana's ~32 writable account limit per tx, which likely forces MAX_BATCH_SIZE down to ~12–20. PRD §11 sets a `BatchTooLarge` error but does not specify the max. Alan needs to pick a concrete limit before implementation begins. \*Refund destination is currently TBD — PRD §11 routes refunds to AgentWallet PDA balance, but Rick (2026-05-04) requested refunds land directly on the agent's client wallet ATA. If the latter is chosen, each batch must include the recipient's ATA in the writable accounts list, tightening both compute budget and account-list size limits. |
+| **AgentWallet vault authority pattern** | MEDIUM   | Pact Market's AgentWallet vault is owned by the AgentWallet PDA, not by the pool. The Transfer CPI on `execute_withdrawal` must be wallet-PDA-signed (seeds: `[b"agent_wallet", owner]`). The pattern is identical to pact-insurance's pool-PDA-signed Transfer — well-understood — but the seed must be constructed carefully since the agent's pubkey is in the seed (not a hostname byte slice).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| **Exposure cap per endpoint per hour**  | MEDIUM   | EndpointConfig has a single `exposure_cap_per_hour_lamports` field but no rolling window counters in the PRD §11 spec. `settle_batch` must track `(current_period_start, current_period_refunds)` somewhere. The CallRecord approach (count from chain state) is too expensive per-call. Either the EndpointConfig needs two additional fields (period_start: i64, period_refunds: u64) not in the PRD §11 layout, or the settler worker pre-validates. This is an open question the PRD does not fully answer — see ASK-ALAN below.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| **Devnet USDC mint**                    | LOW      | Both programs must use the same USDC mint address on devnet (likely the Circle devnet USDC or a local test mint). The pact-insurance ProtocolConfig.usdc_mint is set at initialize_protocol. Pact Market's CoveragePool.usdc_vault must use the same mint. No conflict, but whoever initializes the PM pool must use the same USDC mint that the existing devnet infrastructure already minted test tokens for.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| **Two program IDs in settler worker**   | LOW      | The Fly.io settler worker currently submits transactions to one program. It needs a second program ID constant and a Codama-generated TS SDK for pact-market. This is a TypeScript config change, not an on-chain risk.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| **No state migration needed**           | NONE     | This is a new crate. No existing accounts are touched.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 
 ---
 
 ## 9. Open Questions
 
-**[ASK-ALAN-1]** `settle_batch` compute budget: what is the maximum batch size? PRD §11 defines `BatchTooLarge = 6012` but does not give a number. The settler worker (Fly.io, Node.js) can split into multiple transactions at any size, so the on-chain limit just needs to be a safe ceiling. At N=12 events all breaching, the total is 2\*12 + 12 = 36 CPIs (~540k–720k CU at 15k–20k per CPI), which would require `set_compute_unit_limit`. For a no-`set_compute_unit_limit` path, N=5 worst-case yields 2\*5 + 5 = 15 CPIs (~225k–300k CU). Confirm MAX\_BATCH\_SIZE and whether `set_compute_unit_limit` is acceptable.
+**[ASK-ALAN-1]** `settle_batch` compute budget: what is the maximum batch size? PRD §11 defines `BatchTooLarge = 6012` but does not give a number. The settler worker (Fly.io, Node.js) can split into multiple transactions at any size, so the on-chain limit just needs to be a safe ceiling. At N=12 events all breaching, the total is 2\*12 + 12 = 36 CPIs (~540k–720k CU at 15k–20k per CPI), which would require `set_compute_unit_limit`. For a no-`set_compute_unit_limit` path, N=5 worst-case yields 2\*5 + 5 = 15 CPIs (~225k–300k CU). Confirm MAX_BATCH_SIZE and whether `set_compute_unit_limit` is acceptable.
 
 **[ASK-ALAN-2]** Exposure cap enforcement: EndpointConfig has `exposure_cap_per_hour_lamports` and `total_refunds` but the PRD §11 struct has no rolling-window state (no `period_start` or `period_refunds` fields). The program needs somewhere to store the current window's refund accumulator to enforce security invariant #4. Options: (a) add two fields to EndpointConfig not in the PRD layout (period_start: i64, period_refunds: u64, +16 bytes), (b) enforce only in the settler worker (off-chain, weaker security), (c) derive it from scanning CallRecord accounts (too expensive). Recommended: option (a). Confirm.
 
