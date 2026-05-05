@@ -38,6 +38,9 @@ export async function agentsWatchCommand(opts: {
   }
   const url = `${opts.gatewayUrl.replace(/\/$/, "")}/v1/agents/${pubkey}/events`;
   const resp = await fetch(url);
+  if (!resp.ok) {
+    throw new Error(`watch: HTTP ${resp.status}`);
+  }
   if (!resp.body) throw new Error("watch: no response body");
   const reader = resp.body.getReader();
   const decoder = new TextDecoder();
