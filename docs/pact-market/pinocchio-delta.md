@@ -327,7 +327,9 @@ pub struct PoolToppedUp {
 3. `settle_batch` is gated to the `settlement_authority.signer` keypair. No other caller can credit refunds or debit premiums.
 4. Per-endpoint hourly exposure cap is enforced in-program: each batch checks current period's refund total against cap; rejects events that would exceed.
 5. Each `call_id` can be settled at most once. The CallRecord PDA serves as the deduplication mechanism (init-if-needed pattern; second settlement with same call_id fails because account already exists).
-6. All u64 arithmetic uses checked operations (`checked_add`, `checked_sub`). Any overflow returns `MathOverflow`.
+6. All u64 arithmetic uses checked operations (`checked_add`, `checked_sub`). Any overflow returns `ArithmeticOverflow (6015, new variant)`.
+
+> **PRD inconsistency note:** PRD §11 security invariants point 6 says checked arithmetic returns `MathOverflow`, but the PRD's error enum (codes 6000-6014, §11) has no such variant. The existing pact-insurance crate uses `ArithmeticOverflow = 6023`. Recommend the new pact-market-pinocchio crate add `ArithmeticOverflow = 6015` to its error enum and amend the PRD accordingly.
 7. Authority over endpoint config is the pool's authority pubkey. In V2 this becomes a multisig.
 
 ---
