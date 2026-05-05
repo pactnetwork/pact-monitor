@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
+import { Connection, PublicKey } from "@solana/web3.js";
 import { fetchEndpoints, resolveSlug, invalidateCache } from "../lib/discovery.ts";
 import { loadOrCreateWallet } from "../lib/wallet.ts";
-import { signedRequest } from "../lib/transport.ts";
+import { signedRequest, type SignedRequestResult } from "../lib/transport.ts";
+import { getUsdcAtaBalanceLamports, USDC_DEVNET_MINT, USDC_MAINNET_MINT } from "../lib/solana.ts";
 import { type Envelope, type Outcome } from "../lib/envelope.ts";
 
 export interface RunOpts {
@@ -13,9 +15,11 @@ export interface RunOpts {
   gatewayUrl: string;
   project: string;
   cluster: "devnet" | "mainnet";
+  rpcUrl?: string;
   raw?: boolean;
   skipBalanceCheck?: boolean;
   timeoutMs?: number;
+  getBalanceLamports?: (pubkey: PublicKey) => Promise<bigint>;
 }
 
 export async function runCommand(opts: RunOpts): Promise<Envelope> {
@@ -34,6 +38,7 @@ export async function runCommand(opts: RunOpts): Promise<Envelope> {
 
   let slug = "raw";
   let upstreamPath = new URL(opts.url).pathname + new URL(opts.url).search;
+  let provider: { premiumBps: number } | null = null;
 
   if (!opts.raw) {
     const r = resolveSlug({ url: opts.url, endpoints: endpoints.endpoints });
@@ -51,11 +56,39 @@ export async function runCommand(opts: RunOpts): Promise<Envelope> {
     }
     slug = r.slug;
     upstreamPath = r.upstreamPath;
+    provider = endpoints.endpoints.find((e: { slug: string }) => e.slug === r.slug) ?? null;
   }
 
   const wallet = loadOrCreateWallet({ configDir: opts.configDir });
 
-  let resp;
+  if (!opts.skipBalanceCheck && provider) {
+    const pubkey = wallet.keypair.publicKey;
+    let balanceLamports: bigint;
+    if (opts.getBalanceLamports) {
+      balanceLamports = await opts.getBalanceLamports(pubkey);
+    } else {
+      const rpcUrl = opts.rpcUrl ?? (opts.cluster === "mainnet"
+        ? "https://api.mainnet-beta.solana.com"
+        : "https://api.devnet.solana.com");
+      const connection = new Connection(rpcUrl, "confirmed");
+      const mint = opts.cluster === "mainnet" ? USDC_MAINNET_MINT : USDC_DEVNET_MINT;
+      balanceLamports = await getUsdcAtaBalanceLamports({ connection, agentPubkey: pubkey, mint });
+    }
+    const estimatedPremium = BigInt(Math.max(100, Math.ceil(provider.premiumBps * 1_000_000 / 10000)));
+    if (balanceLamports < estimatedPremium) {
+      return {
+        status: "needs_funding",
+        body: {
+          wallet: pubkey.toBase58(),
+          needed_usdc: Number(estimatedPremium) / 1_000_000,
+          current_balance_usdc: Number(balanceLamports) / 1_000_000,
+          deposit_url: `https://dashboard.pactnetwork.io/agents/${pubkey.toBase58()}`,
+        },
+      };
+    }
+  }
+
+  let resp: SignedRequestResult;
   try {
     resp = await signedRequest({
       gatewayUrl: opts.gatewayUrl,
@@ -78,6 +111,13 @@ export async function runCommand(opts: RunOpts): Promise<Envelope> {
         latency_ms: -1,
         tx_signature: null,
       },
+    };
+  }
+
+  if (resp.status === 401 && (resp.headers["x-pact-error"] === "signature_rejected" || resp.body.includes("signature_rejected"))) {
+    return {
+      status: "signature_rejected",
+      body: { hint: "clock skew likely; try `sudo ntpdate` or surface to user" },
     };
   }
 
@@ -121,7 +161,7 @@ export async function runCommand(opts: RunOpts): Promise<Envelope> {
 }
 
 function buildEnvelope(
-  resp: { status: number; body: string; latencyMs: number },
+  resp: SignedRequestResult,
   slug: string,
 ): Envelope {
   let outcome: Outcome;
@@ -136,12 +176,16 @@ function buildEnvelope(
     /* keep raw */
   }
 
+  const callId = resp.callId ?? `call_${randomUUID()}`;
+  const callIdSource: "proxy" | "local_fallback" = resp.callId ? "proxy" : "local_fallback";
+
   return {
     status: outcome,
     body: parsedBody,
     meta: {
       slug,
-      call_id: `call_${randomUUID()}`,
+      call_id: callId,
+      call_id_source: callIdSource,
       latency_ms: resp.latencyMs,
       outcome,
       premium_lamports: 0,
