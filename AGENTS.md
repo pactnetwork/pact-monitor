@@ -1,7 +1,7 @@
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **pact-network** (1838 symbols, 3706 relationships, 133 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **wave1b-proxy** (1966 symbols, 3999 relationships, 136 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -17,7 +17,7 @@ This project is indexed by GitNexus as **pact-network** (1838 symbols, 3706 rela
 
 1. `gitnexus_query({query: "<error or symptom>"})` — find execution flows related to the issue
 2. `gitnexus_context({name: "<suspect function>"})` — see all callers, callees, and process participation
-3. `READ gitnexus://repo/pact-network/process/{processName}` — trace the full execution flow step by step
+3. `READ gitnexus://repo/wave1b-proxy/process/{processName}` — trace the full execution flow step by step
 4. For regressions: `gitnexus_detect_changes({scope: "compare", base_ref: "main"})` — see what your branch changed
 
 ## When Refactoring
@@ -56,10 +56,10 @@ This project is indexed by GitNexus as **pact-network** (1838 symbols, 3706 rela
 
 | Resource | Use for |
 |----------|---------|
-| `gitnexus://repo/pact-network/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/pact-network/clusters` | All functional areas |
-| `gitnexus://repo/pact-network/processes` | All execution flows |
-| `gitnexus://repo/pact-network/process/{name}` | Step-by-step execution trace |
+| `gitnexus://repo/wave1b-proxy/context` | Codebase overview, check index freshness |
+| `gitnexus://repo/wave1b-proxy/clusters` | All functional areas |
+| `gitnexus://repo/wave1b-proxy/processes` | All execution flows |
+| `gitnexus://repo/wave1b-proxy/process/{name}` | Step-by-step execution trace |
 
 ## Self-Check Before Finishing
 
