@@ -1,8 +1,11 @@
-# pact-proxy Cloud Run Deploy
+# pact-market-proxy Cloud Run Deploy
+
+Public domain stays `market.pactnetwork.io`; the Cloud Run service is named
+`pact-market-proxy`.
 
 Blocked on Wave 0 (GCP project + service account provisioning). Run these steps once Wave 0 captain confirms:
 - Artifact Registry repo created
-- Service account `pact-proxy@<GCP_PROJECT>.iam.gserviceaccount.com` created with Pub/Sub Publisher + Cloud SQL Client roles
+- Service account `pact-market-proxy@<GCP_PROJECT>.iam.gserviceaccount.com` created with Pub/Sub Publisher + Cloud SQL Client roles
 - Cloud SQL Postgres instance provisioned (or Cloud SQL Auth Proxy configured)
 
 ## Prerequisites
@@ -13,7 +16,7 @@ openssl rand -hex 32 | gcloud secrets create pact-endpoints-reload-token --data-
 
 # 2. Grant proxy service account access to the secret
 gcloud secrets add-iam-policy-binding pact-endpoints-reload-token \
-  --member="serviceAccount:pact-proxy@$GCP_PROJECT.iam.gserviceaccount.com" \
+  --member="serviceAccount:pact-market-proxy@$GCP_PROJECT.iam.gserviceaccount.com" \
   --role="roles/secretmanager.secretAccessor"
 ```
 
@@ -24,20 +27,20 @@ gcloud secrets add-iam-policy-binding pact-endpoints-reload-token \
 set -euo pipefail
 
 # Required env: GCP_PROJECT, GCP_REGION, ARTIFACT_REGISTRY, CLOUDSQL_INSTANCE,
-#               PG_URL, RPC_URL, PROGRAM_ID
+#               PG_URL, RPC_URL, PROGRAM_ID, USDC_MINT
 
-IMAGE="$ARTIFACT_REGISTRY/proxy:$(git rev-parse --short HEAD)"
+IMAGE="$ARTIFACT_REGISTRY/market-proxy:$(git rev-parse --short HEAD)"
 
-docker build --platform=linux/amd64 -f packages/proxy/Dockerfile -t "$IMAGE" .
+docker build --platform=linux/amd64 -f packages/market-proxy/Dockerfile -t "$IMAGE" .
 docker push "$IMAGE"
 
-gcloud run deploy pact-proxy \
+gcloud run deploy pact-market-proxy \
   --image="$IMAGE" \
   --region="$GCP_REGION" \
   --platform=managed \
-  --service-account="pact-proxy@$GCP_PROJECT.iam.gserviceaccount.com" \
+  --service-account="pact-market-proxy@$GCP_PROJECT.iam.gserviceaccount.com" \
   --add-cloudsql-instances="$CLOUDSQL_INSTANCE" \
-  --set-env-vars="PG_URL=$PG_URL,RPC_URL=$RPC_URL,PROGRAM_ID=$PROGRAM_ID,PUBSUB_PROJECT=$GCP_PROJECT,PUBSUB_TOPIC=pact-settle-events" \
+  --set-env-vars="PG_URL=$PG_URL,RPC_URL=$RPC_URL,PROGRAM_ID=$PROGRAM_ID,USDC_MINT=$USDC_MINT,PUBSUB_PROJECT=$GCP_PROJECT,PUBSUB_TOPIC=pact-settle-events" \
   --set-secrets="ENDPOINTS_RELOAD_TOKEN=pact-endpoints-reload-token:latest" \
   --allow-unauthenticated \
   --min-instances=1 \
@@ -45,18 +48,18 @@ gcloud run deploy pact-proxy \
   --memory=512Mi
 ```
 
-Save the above as `scripts/deploy-proxy.sh` and run:
+Save the above as `scripts/deploy-market-proxy.sh` and run:
 
 ```bash
-chmod +x scripts/deploy-proxy.sh
-bash scripts/deploy-proxy.sh
+chmod +x scripts/deploy-market-proxy.sh
+bash scripts/deploy-market-proxy.sh
 ```
 
 ## Smoke test
 
 ```bash
-curl https://pact-proxy-<hash>.run.app/health
-# Expected: {"status":"ok","version":"v1","endpoints_loaded":<n>,"cache_size":0}
+curl https://pact-market-proxy-<hash>.run.app/health
+# Expected: {"status":"ok","version":"v1","endpoints_loaded":<n>}
 ```
 
 ## Environment variables summary
@@ -66,6 +69,7 @@ curl https://pact-proxy-<hash>.run.app/health
 | `PG_URL` | Postgres connection string (Cloud SQL Auth Proxy socket or TCP) |
 | `RPC_URL` | Solana RPC endpoint (Helius or QuickNode devnet/mainnet) |
 | `PROGRAM_ID` | Pact Market program address (32+ char base58) |
+| `USDC_MINT` | USDC mint pubkey for this network (mainnet/devnet differ) |
 | `PUBSUB_PROJECT` | GCP project ID |
 | `PUBSUB_TOPIC` | Pub/Sub topic name (`pact-settle-events`) |
 | `ENDPOINTS_RELOAD_TOKEN` | Bearer token for `/admin/reload-endpoints` (from Secret Manager) |
