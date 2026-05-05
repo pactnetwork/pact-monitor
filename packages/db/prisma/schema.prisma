@@ -1,5 +1,3 @@
-// models added in PM-4
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -7,4 +5,10 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("PG_URL")
+}
+
+// Placeholder model — real models land in PM-4 (indexer schema).
+// Required so `prisma generate` produces a usable PrismaClient export.
+model Placeholder {
+  id Int @id @default(autoincrement())
 }
