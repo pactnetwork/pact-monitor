@@ -2,7 +2,7 @@
 
 This Anchor crate is retained as a rollback fallback for the Pinocchio port
 completed in WP-17 (2026-04-24). Default builds and deploys target the
-Pinocchio crate at ../../programs-pinocchio/pact-insurance-pinocchio/.
+Pinocchio crate at ../../programs-pinocchio/pact-network-v2-pinocchio/.
 
 To fall back to this legacy crate:
     anchor build

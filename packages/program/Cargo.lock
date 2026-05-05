@@ -1851,7 +1851,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "pact-insurance-pinocchio"
+name = "pact-network-v2-pinocchio"
 version = "0.1.0"
 dependencies = [
  "bytemuck",

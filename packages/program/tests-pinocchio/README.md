@@ -13,11 +13,11 @@ pnpm tsx tests-pinocchio/protocol.ts
 
 The test harness launches a fresh `solana-test-validator` per invocation with
 the Pinocchio-built `.so` pre-loaded at the program ID declared in
-`programs-pinocchio/pact-insurance-pinocchio/src/lib.rs`. The Anchor test suite
+`programs-pinocchio/pact-network-v2-pinocchio/src/lib.rs`. The Anchor test suite
 (`anchor test`) is untouched and continues to pass.
 
 ## Prerequisites
 
 - `solana-test-validator` on `$PATH` (Agave CLI install).
-- `cargo build-sbf --manifest-path programs-pinocchio/pact-insurance-pinocchio/Cargo.toml --features bpf-entrypoint`
-  has been run and produced `target/deploy/pact_insurance_pinocchio.so`.
+- `cargo build-sbf --manifest-path programs-pinocchio/pact-network-v2-pinocchio/Cargo.toml --features bpf-entrypoint`
+  has been run and produced `target/deploy/pact_network_v2_pinocchio.so`.

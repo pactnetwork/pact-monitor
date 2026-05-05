@@ -19,7 +19,7 @@ packages/
   backend/    — @pact-network/backend: Fastify API server aggregating monitoring data
   scorecard/  — @pact-network/scorecard: Vite+React dashboard showing provider reliability rankings
   program/    — On-chain programs (two crates, see below)
-    programs-pinocchio/pact-insurance-pinocchio/  — PRIMARY: Pinocchio 0.10 crate (default build + deploy target as of WP-17)
+    programs-pinocchio/pact-network-v2-pinocchio/  — PRIMARY: Pinocchio 0.10 crate (default build + deploy target as of WP-17; renamed from pact-insurance-pinocchio per Step C', see docs/superpowers/plans/2026-05-05-network-market-layering-and-v1-v2-rename.md)
     programs/pact-insurance/                      — LEGACY: Anchor 1.0 crate (rollback fallback only; do not modify)
 deploy/       — Docker Compose + Caddyfile
 docs/         — PRD, design spec, implementation plan

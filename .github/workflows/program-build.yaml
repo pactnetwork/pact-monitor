@@ -34,7 +34,7 @@ jobs:
 
       - name: cargo test (PDA fixtures, state round-trips, error codes)
         working-directory: packages/program
-        run: cargo test -p pact-insurance-pinocchio --no-fail-fast
+        run: cargo test -p pact-network-v2-pinocchio --no-fail-fast
 
   pinocchio-mainnet-artifact:
     name: Build Pinocchio (mainnet artifact, deployer enforced)
@@ -76,21 +76,21 @@ jobs:
         working-directory: packages/program
         run: |
           cargo build-sbf \
-            --manifest-path programs-pinocchio/pact-insurance-pinocchio/Cargo.toml \
+            --manifest-path programs-pinocchio/pact-network-v2-pinocchio/Cargo.toml \
             --features bpf-entrypoint
 
       - name: Record binary size
         working-directory: packages/program
         run: |
-          SO=target/deploy/pact_insurance_pinocchio.so
+          SO=target/deploy/pact_network_v2_pinocchio.so
           SIZE=$(stat -c%s "$SO" 2>/dev/null || stat -f%z "$SO")
           echo "Mainnet binary: ${SIZE} bytes ($(( SIZE / 1024 )) KiB)"
 
       - name: Upload mainnet artifact
         uses: actions/upload-artifact@v4
         with:
-          name: pact_insurance_pinocchio-mainnet
-          path: packages/program/target/deploy/pact_insurance_pinocchio.so
+          name: pact_network_v2_pinocchio-mainnet
+          path: packages/program/target/deploy/pact_network_v2_pinocchio.so
           if-no-files-found: error
           retention-days: 30
 
@@ -125,20 +125,20 @@ jobs:
         working-directory: packages/program
         run: |
           cargo build-sbf \
-            --manifest-path programs-pinocchio/pact-insurance-pinocchio/Cargo.toml \
+            --manifest-path programs-pinocchio/pact-network-v2-pinocchio/Cargo.toml \
             --features bpf-entrypoint,unsafe-bypass-deployer
 
       - name: Record binary size
         working-directory: packages/program
         run: |
-          SO=target/deploy/pact_insurance_pinocchio.so
+          SO=target/deploy/pact_network_v2_pinocchio.so
           SIZE=$(stat -c%s "$SO" 2>/dev/null || stat -f%z "$SO")
           echo "Test binary: ${SIZE} bytes ($(( SIZE / 1024 )) KiB)"
 
       - name: Upload test artifact (do NOT deploy this binary)
         uses: actions/upload-artifact@v4
         with:
-          name: pact_insurance_pinocchio-test-bypass
-          path: packages/program/target/deploy/pact_insurance_pinocchio.so
+          name: pact_network_v2_pinocchio-test-bypass
+          path: packages/program/target/deploy/pact_network_v2_pinocchio.so
           if-no-files-found: error
           retention-days: 7
