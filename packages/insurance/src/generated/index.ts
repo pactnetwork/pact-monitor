@@ -1,8 +1,8 @@
-// Codama-style TS client surface for `@pact-network/insurance`.
+// Codama-style TS client surface for `@q3labs/pact-insurance`.
 //
 // Bootstrapped in WP-5 (first Pinocchio handler). Extends per-instruction in
 // successive WPs. Re-generate with:
-//   pnpm --filter @pact-network/insurance codama:generate
+//   pnpm --filter @q3labs/pact-insurance codama:generate
 
 export * from './programs/pactInsurance.js';
 export * from './instructions/initializeProtocol.js';

@@ -6,7 +6,7 @@
 
 **Architecture:** Three independent sample folders plus one new backend endpoint. The demo script uses the SDK directly. The playground calls a new `POST /api/v1/monitor` backend endpoint that wraps the SDK server-side. Integration examples are standalone runnable files.
 
-**Tech Stack:** TypeScript, @pact-network/monitor SDK, Fastify (backend endpoint), vanilla HTML/CSS/JS (playground)
+**Tech Stack:** TypeScript, @q3labs/pact-monitor SDK, Fastify (backend endpoint), vanilla HTML/CSS/JS (playground)
 
 **Spec:** `docs/superpowers/specs/2026-04-08-samples-demo-design.md`
 

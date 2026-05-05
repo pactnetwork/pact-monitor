@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { address } from "@solana/kit";
-import { generated } from "@pact-network/insurance";
+import { generated } from "@q3labs/pact-insurance";
 const {
   decodeCoveragePool,
   decodeUnderwriterPosition,

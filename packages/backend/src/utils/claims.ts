@@ -6,9 +6,13 @@ import {
 } from "../services/claim-settlement.js";
 import { hasPendingFlag } from "./fraud-detection.js";
 
+// Refund percentages per claim trigger type. client_error (4xx) is
+// intentionally absent — those are agent-side failures (bad URL, missing auth,
+// rate-limited) and should never trigger a claim. maybeCreateClaim returns
+// null when REFUND_PCT[triggerType] is undefined.
 const REFUND_PCT: Record<string, number> = {
   timeout: 100,
-  error: 100,
+  server_error: 100,
   schema_mismatch: 75,
   latency_sla: 50,
 };

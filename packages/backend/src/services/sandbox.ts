@@ -65,20 +65,23 @@ export class PolicyNotProvisionedError extends Error {
 
 // Map sandbox-facing classification to the CallRecord classification and
 // synthetic HTTP status the on-chain trigger type expects. The 4 on-chain
-// triggers in claim-settlement.ts:35 are `timeout | error | schema_mismatch
-// | latency_sla`. `provider_rate_limit` maps to `error` with status 429 so
-// on-chain accounting treats it the same as any other upstream failure.
+// triggers in claim-settlement.ts:35 are `timeout | server_error |
+// schema_mismatch | latency_sla`. `provider_rate_limit` (429) is a 4xx and
+// is intentionally a sandbox no-op for claims — it maps to client_error so
+// the call is recorded but maybeCreateClaim returns null. Sandbox callers
+// who want to exercise on-chain claim flow should use provider_5xx or
+// provider_timeout.
 function mapClassification(c: SandboxClassification): {
   callClassification: CallRecord["classification"];
   statusCode: number;
 } {
   switch (c) {
     case "provider_5xx":
-      return { callClassification: "error", statusCode: 503 };
+      return { callClassification: "server_error", statusCode: 503 };
     case "provider_timeout":
       return { callClassification: "timeout", statusCode: 0 };
     case "provider_rate_limit":
-      return { callClassification: "error", statusCode: 429 };
+      return { callClassification: "client_error", statusCode: 429 };
   }
 }
 

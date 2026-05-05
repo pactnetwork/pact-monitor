@@ -122,7 +122,7 @@ describe("API integration tests", () => {
               timestamp: new Date().toISOString(),
               status_code: 500,
               latency_ms: 3000,
-              classification: "error",
+              classification: "server_error",
             },
           ],
         },
@@ -153,7 +153,7 @@ describe("API integration tests", () => {
               timestamp: new Date().toISOString(),
               status_code: 500,
               latency_ms: 3000,
-              classification: "error",
+              classification: "server_error",
               payment_protocol: "x402",
               payment_amount: 10000,
               payment_asset: "USDC",
@@ -172,7 +172,7 @@ describe("API integration tests", () => {
       );
       assert.equal(claimResult.rows.length, 1);
       const claim = claimResult.rows[0];
-      assert.equal(claim.trigger_type, "error");
+      assert.equal(claim.trigger_type, "server_error");
       assert.equal(claim.refund_pct, 100);
       assert.equal(Number(claim.call_cost), 10000);
       assert.equal(Number(claim.refund_amount), 10000);
@@ -232,7 +232,7 @@ describe("API integration tests", () => {
               timestamp: new Date().toISOString(),
               status_code: 500,
               latency_ms: 3000,
-              classification: "error",
+              classification: "server_error",
             },
           ],
         },
@@ -438,7 +438,7 @@ describe("API integration tests", () => {
       const rec = await getOne<{ id: string }>(
         `INSERT INTO call_records (provider_id, endpoint, timestamp, status_code,
            latency_ms, classification, agent_id, agent_pubkey)
-         VALUES ($1, '/v1', NOW(), 500, 100, 'error', 'agent-b', NULL) RETURNING id`,
+         VALUES ($1, '/v1', NOW(), 500, 100, 'server_error', 'agent-b', NULL) RETURNING id`,
         [prov!.id],
       );
       const resp = await testApp.inject({
@@ -478,7 +478,7 @@ describe("API integration tests", () => {
       const rec = await getOne<{ id: string }>(
         `INSERT INTO call_records (provider_id, endpoint, timestamp, status_code,
            latency_ms, classification, agent_id, agent_pubkey)
-         VALUES ($1, '/v1', NOW(), 500, 100, 'error', $2, $3) RETURNING id`,
+         VALUES ($1, '/v1', NOW(), 500, 100, 'server_error', $2, $3) RETURNING id`,
         [provX!.id, agentLabel, "AgentPubkey1111111111111111111111111111111"],
       );
       const resp = await testApp.inject({
@@ -514,7 +514,7 @@ describe("API integration tests", () => {
       const rec = await getOne<{ id: string }>(
         `INSERT INTO call_records (provider_id, endpoint, timestamp, status_code,
            latency_ms, classification, agent_id, agent_pubkey)
-         VALUES ($1, '/v1', NOW(), 500, 100, 'error', $2, $3) RETURNING id`,
+         VALUES ($1, '/v1', NOW(), 500, 100, 'server_error', $2, $3) RETURNING id`,
         [prov!.id, agentLabel, "AgentPubkey2222222222222222222222222222222"],
       );
       const resp = await testApp.inject({
@@ -610,7 +610,7 @@ describe("API integration tests", () => {
       const otherId = other.rows[0]!.id;
 
       await query(
-        "INSERT INTO call_records (provider_id, endpoint, timestamp, status_code, latency_ms, classification) VALUES ($1, '/x', NOW(), 500, 100, 'error')",
+        "INSERT INTO call_records (provider_id, endpoint, timestamp, status_code, latency_ms, classification) VALUES ($1, '/x', NOW(), 500, 100, 'server_error')",
         [matchedId],
       );
       await query(

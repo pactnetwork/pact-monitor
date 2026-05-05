@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { PublicKey } from "@solana/web3.js";
 import { getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { address } from "@solana/kit";
-import { generated } from "@pact-network/insurance";
+import { generated } from "@q3labs/pact-insurance";
 const {
   decodeProtocolConfig,
   decodeCoveragePool,

@@ -48,7 +48,7 @@ describe("POST /api/v1/claims/submit — providerHostname canonicalization (F2)"
     const rec = await getOne<{ id: string }>(
       `INSERT INTO call_records (provider_id, endpoint, timestamp, status_code,
          latency_ms, classification, agent_id, agent_pubkey)
-       VALUES ($1, '/v1/submit', NOW(), 500, 100, 'error', $2, $3) RETURNING id`,
+       VALUES ($1, '/v1/submit', NOW(), 500, 100, 'server_error', $2, $3) RETURNING id`,
       [providerId, agentLabel, agentPubkey],
     );
     callRecordId = rec!.id;

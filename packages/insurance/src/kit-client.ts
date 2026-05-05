@@ -5,7 +5,10 @@ import {
   createSolanaRpc,
   createSolanaRpcSubscriptions,
   createTransactionMessage,
+  fixEncoderSize,
+  getAddressEncoder,
   getBase64EncodedWireTransaction,
+  getProgramDerivedAddress,
   pipe,
   setTransactionMessageFeePayerSigner,
   setTransactionMessageLifetimeUsingBlockhash,
@@ -13,6 +16,7 @@ import {
   type Address,
   type Instruction,
   type KeyPairSigner,
+  type ProgramDerivedAddress,
   type Rpc,
   type RpcSubscriptions,
   type SolanaRpcApi,
@@ -21,20 +25,19 @@ import {
 } from '@solana/kit';
 import { Keypair, PublicKey } from '@solana/web3.js';
 import {
-  createApproveInstruction,
   getAccount,
   getAssociatedTokenAddressSync,
 } from '@solana/spl-token';
+import { getApproveInstruction } from '@solana-program/token';
 import {
-  findProtocolConfigPda,
-  findCoveragePoolPda,
-  findPolicyPda,
   decodeProtocolConfig,
   decodeCoveragePool,
   decodePolicy,
   getPolicyAgentId,
-  PACT_INSURANCE_PROGRAM_ADDRESS,
   getEnableInsuranceInstruction,
+  COVERAGE_POOL_SEED,
+  POLICY_SEED,
+  PROTOCOL_CONFIG_SEED,
 } from './generated/index.js';
 import type {
   EnableInsuranceArgs as GeneratedEnableInsuranceArgs,
@@ -121,6 +124,46 @@ function toPublicKey(addr: Address): PublicKey {
   return new PublicKey(addr as string);
 }
 
+// Override the hardcoded programAddress baked into Codama-generated
+// instructions so the SDK honors the programId passed to PactInsurance.
+// Without this, pointing the SDK at a different deploy via config silently
+// sends to the wrong program.
+function withProgramAddress<T extends { programAddress: Address }>(
+  ix: T,
+  programAddress: Address,
+): T {
+  return { ...ix, programAddress };
+}
+
+// Codama generated PDA helpers (findProtocolConfigPda / findCoveragePoolPda /
+// findPolicyPda) hardcode PACT_INSURANCE_PROGRAM_ADDRESS as the programAddress
+// arg to getProgramDerivedAddress. That makes the configurable programId on
+// PactInsurance a half-truth: instructions get re-pointed via withProgramAddress
+// above, but PDAs would still be derived against the baked-in default. The
+// helpers below redo the derivation against client.programId so every account
+// the SDK touches lives under the configured deploy.
+async function deriveProtocolConfigPda(programId: Address): Promise<ProgramDerivedAddress> {
+  return getProgramDerivedAddress({
+    programAddress: programId,
+    seeds: [PROTOCOL_CONFIG_SEED],
+  });
+}
+
+async function deriveCoveragePoolPda(programId: Address, hostname: string): Promise<ProgramDerivedAddress> {
+  return getProgramDerivedAddress({
+    programAddress: programId,
+    seeds: [COVERAGE_POOL_SEED, new TextEncoder().encode(hostname)],
+  });
+}
+
+async function derivePolicyPda(programId: Address, pool: Address, agent: Address): Promise<ProgramDerivedAddress> {
+  const addressEncoder = fixEncoderSize(getAddressEncoder(), 32);
+  return getProgramDerivedAddress({
+    programAddress: programId,
+    seeds: [POLICY_SEED, addressEncoder.encode(pool), addressEncoder.encode(agent)],
+  });
+}
+
 async function fetchBase64Account(
   rpc: Rpc<SolanaRpcApi>,
   addr: Address,
@@ -134,10 +177,10 @@ export async function kitEnableInsurance(
   client: KitClient,
   args: EnableInsuranceArgs,
 ): Promise<string> {
-  const [protocolConfigAddr] = await findProtocolConfigPda();
-  const [poolAddr] = await findCoveragePoolPda(args.providerHostname);
+  const [protocolConfigAddr] = await deriveProtocolConfigPda(client.programId);
+  const [poolAddr] = await deriveCoveragePoolPda(client.programId, args.providerHostname);
   const agentAddr = toAddress(client.agentKeypair.publicKey);
-  const [policyAddr] = await findPolicyPda(poolAddr, agentAddr);
+  const [policyAddr] = await derivePolicyPda(client.programId, poolAddr, agentAddr);
 
   const configBytes = await fetchBase64Account(client.rpc, protocolConfigAddr);
   if (!configBytes) throw new Error('Protocol config account not found');
@@ -145,13 +188,14 @@ export async function kitEnableInsurance(
 
   const usdcMint = toPublicKey(config.usdcMint);
   const agentAta = getAssociatedTokenAddressSync(usdcMint, client.agentKeypair.publicKey);
+  const agentAtaAddr = address(agentAta.toBase58());
 
-  const approveIx = createApproveInstruction(
-    agentAta,
-    toPublicKey(poolAddr),
-    client.agentKeypair.publicKey,
-    args.allowanceUsdc,
-  ) as unknown as Instruction;
+  const approveIx = getApproveInstruction({
+    source: agentAtaAddr,
+    delegate: poolAddr,
+    owner: client.signer,
+    amount: args.allowanceUsdc,
+  });
 
   const ZERO_REFERRER = new Uint8Array(32);
   const generatedArgs: GeneratedEnableInsuranceArgs = {
@@ -162,14 +206,17 @@ export async function kitEnableInsurance(
     referrerShareBps: 0,
   };
 
-  const enableIx = getEnableInsuranceInstruction({
-    config: protocolConfigAddr,
-    pool: poolAddr,
-    policy: policyAddr,
-    agentTokenAccount: toAddress(agentAta),
-    agent: client.signer,
-    args: generatedArgs,
-  });
+  const enableIx = withProgramAddress(
+    getEnableInsuranceInstruction({
+      config: protocolConfigAddr,
+      pool: poolAddr,
+      policy: policyAddr,
+      agentTokenAccount: agentAtaAddr,
+      agent: client.signer,
+      args: generatedArgs,
+    }),
+    client.programId,
+  );
 
   return sendTx(client, [approveIx, enableIx]);
 }
@@ -178,8 +225,8 @@ export async function kitTopUpDelegation(
   client: KitClient,
   args: TopUpDelegationArgs,
 ): Promise<string> {
-  const [protocolConfigAddr] = await findProtocolConfigPda();
-  const [poolAddr] = await findCoveragePoolPda(args.providerHostname);
+  const [protocolConfigAddr] = await deriveProtocolConfigPda(client.programId);
+  const [poolAddr] = await deriveCoveragePoolPda(client.programId, args.providerHostname);
 
   const configBytes = await fetchBase64Account(client.rpc, protocolConfigAddr);
   if (!configBytes) throw new Error('Protocol config account not found');
@@ -187,13 +234,14 @@ export async function kitTopUpDelegation(
 
   const usdcMint = toPublicKey(config.usdcMint);
   const agentAta = getAssociatedTokenAddressSync(usdcMint, client.agentKeypair.publicKey);
+  const agentAtaAddr = address(agentAta.toBase58());
 
-  const approveIx = createApproveInstruction(
-    agentAta,
-    toPublicKey(poolAddr),
-    client.agentKeypair.publicKey,
-    args.newTotalAllowanceUsdc,
-  ) as unknown as Instruction;
+  const approveIx = getApproveInstruction({
+    source: agentAtaAddr,
+    delegate: poolAddr,
+    owner: client.signer,
+    amount: args.newTotalAllowanceUsdc,
+  });
 
   return sendTx(client, [approveIx]);
 }
@@ -203,8 +251,8 @@ export async function kitGetPolicy(
   providerHostname: string,
 ): Promise<PolicyInfo | null> {
   const agentAddr = toAddress(client.agentKeypair.publicKey);
-  const [poolAddr] = await findCoveragePoolPda(providerHostname);
-  const [policyAddr] = await findPolicyPda(poolAddr, agentAddr);
+  const [poolAddr] = await deriveCoveragePoolPda(client.programId, providerHostname);
+  const [policyAddr] = await derivePolicyPda(client.programId, poolAddr, agentAddr);
 
   const policyBytes = await fetchBase64Account(client.rpc, policyAddr);
   if (!policyBytes) return null;
@@ -245,7 +293,7 @@ export async function kitListPolicies(
   const base58Key = client.agentKeypair.publicKey.toBase58();
 
   const accounts = await (client.rpc as any).getProgramAccounts(
-    PACT_INSURANCE_PROGRAM_ADDRESS,
+    client.programId,
     {
       encoding: 'base64',
       filters: [
@@ -291,7 +339,7 @@ export async function kitEstimateCoverage(
   providerHostname: string,
   usdcAmount: bigint,
 ): Promise<CoverageEstimate> {
-  const [poolAddr] = await findCoveragePoolPda(providerHostname);
+  const [poolAddr] = await deriveCoveragePoolPda(client.programId, providerHostname);
   const poolBytes = await fetchBase64Account(client.rpc, poolAddr);
   if (!poolBytes) throw new Error(`Coverage pool not found for hostname: ${providerHostname}`);
   const pool = decodeCoveragePool(poolBytes);

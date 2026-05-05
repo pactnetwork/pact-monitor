@@ -121,7 +121,7 @@ Response:
 ### `basic.ts` — Minimal Integration
 
 ```typescript
-import { pactMonitor } from '@pact-network/monitor'
+import { pactMonitor } from '@q3labs/pact-monitor'
 
 const monitor = pactMonitor({
   apiKey: process.env.PACT_API_KEY,

@@ -6,13 +6,25 @@ import { detectAnomalies } from "../utils/fraud-detection.js";
 import { getEffectiveRate } from "../utils/insurance.js";
 import { canonicalHostname } from "../utils/hostname.js";
 
+// Mirror of the call_records.classification CHECK constraint in schema.sql.
+// Keep in sync with the migration in
+// migrations/20260503-split-error-classification.ts.
+const VALID_CLASSIFICATIONS = [
+  "success",
+  "timeout",
+  "client_error",
+  "server_error",
+  "schema_mismatch",
+] as const;
+type Classification = (typeof VALID_CLASSIFICATIONS)[number];
+
 interface RecordInput {
   hostname: string;
   endpoint: string;
   timestamp: string;
   status_code: number;
   latency_ms: number;
-  classification: "success" | "timeout" | "error" | "schema_mismatch";
+  classification: Classification;
   payment_protocol?: "x402" | "mpp" | null;
   payment_amount?: number | null;
   payment_asset?: string | null;
@@ -62,6 +74,20 @@ export async function recordsRoutes(app: FastifyInstance): Promise<void> {
         return reply.code(400).send({
           error: `Batch size ${records.length} exceeds maximum of ${MAX_BATCH_SIZE}`,
         });
+      }
+
+      // Validate classification at the boundary so old SDKs / stale
+      // ~/.pact-monitor/records.jsonl retries that emit "error" surface as
+      // 400 instead of crashing into the call_records_classification_check
+      // CHECK constraint and bubbling a Postgres error as a 500.
+      for (let i = 0; i < records.length; i++) {
+        const cls = (records[i] as { classification?: unknown }).classification;
+        if (!VALID_CLASSIFICATIONS.includes(cls as Classification)) {
+          return reply.code(400).send({
+            error: `Invalid classification at records[${i}]: ${JSON.stringify(cls)}. Allowed: ${VALID_CLASSIFICATIONS.join(", ")}`,
+            field: `records[${i}].classification`,
+          });
+        }
       }
 
       const authed = request as FastifyRequest & {

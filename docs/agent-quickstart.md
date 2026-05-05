@@ -26,34 +26,49 @@ You'll also need a small amount of **devnet SOL** (for transaction rent). Run `s
 
 Every API provider listed on the scorecard has an on-chain **pool** keyed by hostname (e.g. `api.coingecko.com`). To insure your calls to that provider, you create a **policy** — a PDA derived from (pool, your wallet) — and pre-fund it with TEST-USDC. The protocol deducts premiums from that balance as you make calls, and pays out refunds from the pool vault when calls fail.
 
-The easiest way to see this end-to-end is the bundled demo:
+The easiest way to see this end-to-end is the bundled external-agent demo. It works without Phantom mint authority — anyone can run it:
 
 ```bash
 cd samples/demo
 pnpm install
-pnpm tsx insured-agent.ts api.coingecko.com 5
+pnpm tsx external-agent.ts api.coingecko.com 3
 ```
 
 The script:
 1. Loads or generates a demo agent keypair at `~/.config/solana/pact-demo-agent.json`.
-2. Funds it with SOL and TEST-USDC from your Phantom deployer wallet (used as the mint authority).
-3. Calls `enable_insurance` to create a policy on the target pool.
-4. Runs 5 successful calls to the provider through `@pact-network/monitor`, tagging each record with the agent's on-chain pubkey.
-5. Runs 1 deliberate failure (a 404 endpoint) — classified as `error`.
-6. Prints pool balance deltas and Solana Explorer links.
+2. Tops up SOL via `solana airdrop` (or skips if balance is OK).
+3. Drips TEST-USDC from the public faucet at `POST /api/v1/faucet/drip` — no Phantom required.
+4. Calls `enable_insurance` to create a policy on the target pool (or `top_up_delegation` if a policy already exists for this agent + hostname).
+5. Runs 3 successful calls through `@q3labs/pact-monitor`.
+6. Runs 1 forced timeout (latency budget = 1ms) — classified as `timeout`, **claimable**.
+7. Runs 1 forced 404 — classified as `client_error`, **NOT claimable**.
+8. Prints pool deltas and Solana Explorer links.
 
-Watch for the "submit_claim" step after the failed call — that's the backend oracle noticing the error classification and filing a refund against the pool vault.
+> The full `insured-agent.ts` demo is also bundled but requires the Pact deployer's Phantom mint-authority keypair. Prefer `external-agent.ts` unless you have direct mint access.
+
+Watch for the "submit_claim" step after the timeout call — that's the backend oracle noticing the claimable classification and filing a refund against the pool vault. The 404 call is intentionally not refunded: 4xx is an agent-side issue (wrong URL, bad auth, rate-limited), not a provider failure, so it should never trigger an insurance payout.
+
+### Claim eligibility table
+
+| Classification | When? | Refund |
+|---|---|---|
+| `success` | 2xx + valid body + within latency budget | — |
+| `timeout` | 2xx but latency exceeded the agent's threshold | 100% |
+| `server_error` | 5xx, network unreachable, DNS failure, connection reset | 100% |
+| `schema_mismatch` | 2xx but response body fails the agent's expected shape | 75% |
+| `client_error` | 4xx (404, 400, 401, 403, 429, ...) | **none** |
+| `latency_sla` | latency-SLA breach surfaced by the backend later | 50% |
 
 ---
 
 ## 3. Use the SDK in your own code
 
 ```ts
-import { pactMonitor } from "@pact-network/monitor";
+import { pactMonitor } from "@q3labs/pact-monitor";
 
 const pact = pactMonitor({
-  apiKey: process.env.PACT_API_KEY!,       // issued via the admin CLI
-  backendUrl: "https://pactnetwork.io",    // Cloud Run URL in staging
+  apiKey: process.env.PACT_API_KEY!,
+  backendUrl: "https://api.pactnetwork.io",
   agentPubkey: myAgentKeypair.publicKey.toBase58(),
 });
 
@@ -63,15 +78,24 @@ const res = await pact.fetch("https://api.coingecko.com/api/v3/ping", {
 });
 ```
 
-Every `pact.fetch` call is classified into one of `success | timeout | error | schema_mismatch` and flushed to the backend. Failures trigger on-chain claims against your active policy — the refund lands in your wallet's USDC ATA once the oracle confirms.
+Every `pact.fetch` call is classified into one of `success | timeout | client_error | server_error | schema_mismatch` and flushed to the backend. **Server-side failures** (`server_error`, `timeout`, `schema_mismatch`) trigger on-chain claims against your active policy — the refund lands in your wallet's USDC ATA once the oracle confirms. **`client_error` (4xx)** is agent-side and never refunded.
 
-**How to get a `PACT_API_KEY`:** ask your admin (or yourself, if you're self-hosting) to run:
+**How to get a `PACT_API_KEY`:**
+
+```bash
+curl -s -X POST https://api.pactnetwork.io/api/v1/keys/self-serve \
+  -H "Content-Type: application/json" \
+  -H "User-Agent: pact-monitor-sdk/0.1.0" \
+  -d '{"agent_pubkey":"<your-pubkey>"}'
+```
+
+Returns `{ "apiKey": "pact_...", "label": "self-serve-...", "agentPubkey": "...", "network": "devnet" }`. Devnet-only, rate-limited to 1 key per pubkey per hour. Save the returned key — it's hashed server-side and cannot be retrieved later.
+
+`samples/demo/external-agent.ts` calls this endpoint automatically when `PACT_API_KEY` is unset, so you can usually skip this step entirely. If you're self-hosting, you can also run:
 
 ```bash
 pnpm --filter @pact-network/backend run generate-key my-agent --agent-pubkey <your-pubkey>
 ```
-
-Keys are hashed in the `api_keys` table — they're printed once at creation and never stored in plaintext.
 
 ---
 

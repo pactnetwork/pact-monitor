@@ -6,6 +6,14 @@ export async function claimsRoutes(app: FastifyInstance): Promise<void> {
     Querystring: {
       provider_id?: string;
       agent_id?: string;
+      // Filter by the on-chain wallet pubkey of the agent that authored the
+      // call_record. Resolves through call_records.agent_pubkey, NOT
+      // claims.agent_id (which is a backend label). Documented in
+      // docs/agent-quickstart.md; previously the param was accepted by
+      // Fastify's loose querystring schema but completely ignored by the
+      // handler — every query returned the global claim list, breaking the
+      // documented "find my own claims" UX.
+      agent_pubkey?: string;
       trigger_type?: string;
       limit?: string;
       offset?: string;
@@ -25,6 +33,13 @@ export async function claimsRoutes(app: FastifyInstance): Promise<void> {
     if (request.query.agent_id) {
       conditions.push(`c.agent_id = $${paramIndex++}`);
       params.push(request.query.agent_id);
+    }
+    if (request.query.agent_pubkey) {
+      // Reads agent_pubkey off the joined call_records row. The claims
+      // table only stores the label-style agent_id; the wallet pubkey
+      // lives on the source call_record.
+      conditions.push(`cr.agent_pubkey = $${paramIndex++}`);
+      params.push(request.query.agent_pubkey);
     }
     if (request.query.trigger_type) {
       conditions.push(`c.trigger_type = $${paramIndex++}`);
@@ -57,6 +72,7 @@ export async function claimsRoutes(app: FastifyInstance): Promise<void> {
         c.refund_amount::text, c.status, c.created_at
       FROM claims c
       JOIN providers p ON p.id = c.provider_id
+      JOIN call_records cr ON cr.id = c.call_record_id
       ${where}
       ORDER BY c.created_at DESC
       LIMIT ${limitParam} OFFSET ${offsetParam}
