@@ -42,7 +42,7 @@ describe("SecretLoaderService", () => {
     const mockAccess = vi.fn().mockResolvedValue([
       { payload: { data: Buffer.from(encoded) } },
     ]);
-    (SecretManagerServiceClient as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+    (SecretManagerServiceClient as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
       accessSecretVersion: mockAccess,
     }));
 
