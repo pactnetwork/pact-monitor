@@ -23,8 +23,10 @@
       "@pact-network/settler/*": ["./packages/settler/src/*"],
       "@pact-network/indexer": ["./packages/indexer/src/main.ts"],
       "@pact-network/indexer/*": ["./packages/indexer/src/*"],
-      "@pact-network/dashboard": ["./packages/dashboard/app/page.tsx"],
-      "@pact-network/dashboard/*": ["./packages/dashboard/*"]
+      "@pact-network/market-dashboard": ["./packages/market-dashboard/app/page.tsx"],
+      "@pact-network/market-dashboard/*": ["./packages/market-dashboard/*"],
+      "@pact-network/protocol-v1-client": ["./packages/protocol-v1-client/src/index.ts"],
+      "@pact-network/protocol-v1-client/*": ["./packages/protocol-v1-client/src/*"]
     }
   }
 }

@@ -12,6 +12,7 @@
     "clean": "rm -rf .next out"
   },
   "dependencies": {
+    "@pact-network/protocol-v1-client": "workspace:*",
     "@solana/wallet-adapter-base": "^0.9.27",
     "@solana/wallet-adapter-react": "^0.15.39",
     "@solana/wallet-adapter-react-ui": "^0.9.39",
