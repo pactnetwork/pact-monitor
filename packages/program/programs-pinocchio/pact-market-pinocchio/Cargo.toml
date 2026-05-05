@@ -11,6 +11,7 @@ name = "pact_market"
 [features]
 default = []
 no-entrypoint = []
+bpf-entrypoint = []
 
 [dependencies]
 pinocchio = { version = "0.10", features = ["cpi"] }

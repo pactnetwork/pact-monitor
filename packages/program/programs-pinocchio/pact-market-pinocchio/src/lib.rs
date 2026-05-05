@@ -14,10 +14,7 @@ use solana_address::Address;
 
 use discriminator::Discriminator;
 
-#[cfg(not(feature = "no-entrypoint"))]
-pinocchio::nostd_panic_handler!();
-
-#[cfg(not(feature = "no-entrypoint"))]
+#[cfg(feature = "bpf-entrypoint")]
 pinocchio::entrypoint!(process_instruction);
 
 solana_address::declare_id!("11111111111111111111111111111111");
