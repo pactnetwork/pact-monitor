@@ -7,6 +7,9 @@ datasource db {
   url      = env("PG_URL")
 }
 
+// Per layering plan §5.8 — per-endpoint pools, agent custody (no AgentWallet PDA),
+// and per-recipient settlement breakdown.
+
 model Endpoint {
   slug                       String   @id @db.VarChar(16)
   flatPremiumLamports        BigInt
@@ -21,16 +24,16 @@ model Endpoint {
   registeredAt               DateTime
   lastUpdated                DateTime
   calls                      Call[]
+  poolState                  PoolState?
 }
 
 model Agent {
-  pubkey                String    @id @db.VarChar(44)
-  walletPda             String    @db.VarChar(44)
+  pubkey                String     @id @db.VarChar(44)
+  // walletPda is GONE — no AgentWallet PDA in v1 anymore (agent custody).
   displayName           String?
-  totalDepositsLamports BigInt    @default(0)
-  totalPremiumsLamports BigInt    @default(0)
-  totalRefundsLamports  BigInt    @default(0)
-  callCount             BigInt    @default(0)
+  totalPremiumsLamports BigInt     @default(0)
+  totalRefundsLamports  BigInt     @default(0)
+  callCount             BigInt     @default(0)
   lastCallAt            DateTime?
   createdAt             DateTime
   calls                 Call[]
@@ -60,19 +63,45 @@ model Call {
 }
 
 model Settlement {
-  signature             String   @id @db.VarChar(88)
+  signature             String                     @id @db.VarChar(88)
   batchSize             Int
   totalPremiumsLamports BigInt
   totalRefundsLamports  BigInt
   ts                    DateTime
+  shares                SettlementRecipientShare[]
 }
 
+// Per-recipient breakdown of a settlement batch's fee outflows.
+// recipientKind ∈ FeeRecipientKind: 0=Treasury, 1=AffiliateAta, 2=AffiliatePda.
+model SettlementRecipientShare {
+  id              String     @id @default(cuid())
+  settlementSig   String     @db.VarChar(88)
+  recipientKind   Int
+  recipientPubkey String     @db.VarChar(44)
+  amountLamports  BigInt
+  settlement      Settlement @relation(fields: [settlementSig], references: [signature])
+
+  @@index([recipientPubkey])
+  @@index([settlementSig])
+}
+
+// Per-endpoint pool state — replaces the old singleton PoolState.
 model PoolState {
-  id                     Int      @id @default(1)
+  endpointSlug           String   @id @db.VarChar(16)
   currentBalanceLamports BigInt
   totalDepositsLamports  BigInt
-  totalPremiumsLamports  BigInt
+  totalPremiumsLamports  BigInt   // gross in, before fees
+  totalFeesPaidLamports  BigInt   // sum of fee outflows
   totalRefundsLamports   BigInt
+  lastUpdated            DateTime
+  endpoint               Endpoint @relation(fields: [endpointSlug], references: [slug])
+}
+
+// Lifetime earnings per fee recipient — used for integrator leaderboards.
+model RecipientEarnings {
+  recipientPubkey        String   @id @db.VarChar(44)
+  recipientKind          Int
+  lifetimeEarnedLamports BigInt
   lastUpdated            DateTime
 }
 
