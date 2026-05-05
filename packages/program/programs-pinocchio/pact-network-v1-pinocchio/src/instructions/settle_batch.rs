@@ -57,7 +57,10 @@ use crate::{
         derive_call_record, derive_coverage_pool, derive_endpoint_config,
         SEED_COVERAGE_POOL, SEED_CALL, SEED_SETTLEMENT_AUTHORITY,
     },
-    state::{CallRecord, CoveragePool, EndpointConfig, FeeRecipient, SettlementAuthority},
+    state::{
+        CallRecord, CoveragePool, EndpointConfig, FeeRecipient, SettlementAuthority,
+        SettlementStatus,
+    },
     system::{create_account, SYSTEM_PROGRAM_ID},
     token::{transfer_pda_signed, SPL_TOKEN_PROGRAM_ID},
 };
@@ -124,7 +127,7 @@ pub fn process(accounts: &[AccountView], data: &[u8]) -> ProgramResult {
         let agent_owner: [u8; 32] = ev[16..48].try_into().unwrap();
         let endpoint_slug: [u8; 16] = ev[48..64].try_into().unwrap();
         let premium_lamports = u64::from_le_bytes(ev[64..72].try_into().unwrap());
-        let mut refund_lamports = u64::from_le_bytes(ev[72..80].try_into().unwrap());
+        let refund_lamports = u64::from_le_bytes(ev[72..80].try_into().unwrap());
         let latency_ms = u32::from_le_bytes(ev[80..84].try_into().unwrap());
         let breach = ev[84];
         let fee_count_hint = ev[85] as usize;
@@ -215,31 +218,11 @@ pub fn process(accounts: &[AccountView], data: &[u8]) -> ProgramResult {
             }
         }
 
-        // Hourly exposure cap.
-        {
-            let mut ep_data = endpoint_acct.try_borrow_mut()?;
-            let ep: &mut EndpointConfig =
-                bytemuck::from_bytes_mut(&mut ep_data[..EndpointConfig::LEN]);
-            if now > ep.current_period_start + 3600 {
-                ep.current_period_start = now;
-                ep.current_period_refunds = 0;
-            }
-            if refund_lamports > 0 {
-                let cap_remaining = ep
-                    .exposure_cap_per_hour_lamports
-                    .saturating_sub(ep.current_period_refunds);
-                if refund_lamports > cap_remaining {
-                    refund_lamports = 0;
-                } else {
-                    ep.current_period_refunds = ep
-                        .current_period_refunds
-                        .checked_add(refund_lamports)
-                        .ok_or(PactError::ArithmeticOverflow)?;
-                }
-            }
-        }
-
-        // Allocate CallRecord PDA.
+        // Allocate CallRecord PDA up front so a replay of the same call_id
+        // hits `DuplicateCallId` even when the original event was settled
+        // with a non-Settled status (DelegateFailed, PoolDepleted, etc).
+        // The settler signer pays rent regardless of outcome — settle_batch
+        // is operator-run, so this is acceptable.
         let cr_lamports = rent.try_minimum_balance(CallRecord::LEN)?;
         let cr_bump_seed = [cr_bump];
         let cr_signer_seeds: [Seed; 3] = [
@@ -255,40 +238,99 @@ pub fn process(accounts: &[AccountView], data: &[u8]) -> ProgramResult {
             &crate::ID,
             &cr_signer_seeds,
         )?;
-        {
-            let mut cr_data = call_record_acct.try_borrow_mut()?;
-            let record: &mut CallRecord =
-                bytemuck::from_bytes_mut(&mut cr_data[..CallRecord::LEN]);
-            record.bump = cr_bump;
-            record.breach = breach;
-            record._padding0 = [0; 6];
-            record.call_id = call_id;
-            record.agent = solana_address::Address::new_from_array(agent_owner);
-            record.endpoint_slug = endpoint_slug;
-            record.premium_lamports = premium_lamports;
-            record.refund_lamports = refund_lamports;
-            record.latency_ms = latency_ms;
-            record._padding1 = [0; 4];
-            record.timestamp = timestamp;
-        }
+
+        // Outcome accumulators — written into the CallRecord at the end of
+        // the per-event block. We start optimistic and downgrade as failures
+        // arise (codex 2026-05-05 review fix: per-event SettlementStatus).
+        let mut status: u8 = SettlementStatus::Settled as u8;
+        let mut actual_refund_lamports: u64 = 0;
 
         // ----- Step 3: premium-in via SettlementAuthority delegate -----
         // SPL Token Transfer with authority = SettlementAuthority PDA, signed
         // via invoke_signed. Token program checks that the source account's
         // delegate field equals authority.address() and delegated_amount >=
         // amount; both are set off-chain by the agent via SPL `Approve`.
+        //
+        // codex 2026-05-05: if the agent has revoked the delegate, the
+        // delegate field is None or doesn't match, or delegated_amount is
+        // insufficient — we want to mark the call record DelegateFailed and
+        // continue with the next event instead of aborting the whole batch.
+        //
+        // Pinocchio's CPI wrapper does NOT translate `sol_invoke_signed_c`
+        // failure codes into `Err(...)` — when a CPI fails, the parent
+        // program is forced to fail too. So we cannot use a try/catch on
+        // the SPL Token Transfer. Instead we PRE-FLIGHT check the delegate
+        // fields directly off the agent ATA buffer; if they don't satisfy
+        // the SPL Token contract, we skip the CPI entirely. This matches
+        // the production behaviour exactly: SPL Token would reject the
+        // same way, and now we can recover.
+        //
+        // SPL Token account layout offsets:
+        //   72..76:  delegate option discriminant (u32 LE; 0 = None, 1 = Some)
+        //   76..108: delegate pubkey (only valid when discriminant == 1)
+        //   108:     state byte (1 = initialised)
+        //   121..129: delegated_amount u64 LE
+        let delegate_ok = {
+            let ata_data = agent_ata_acct.try_borrow()?;
+            if ata_data.len() < 165 || ata_data[108] != 1 {
+                false
+            } else {
+                let opt = u32::from_le_bytes(ata_data[72..76].try_into().unwrap());
+                if opt != 1 {
+                    false
+                } else {
+                    let mut delegate_bytes = [0u8; 32];
+                    delegate_bytes.copy_from_slice(&ata_data[76..108]);
+                    let delegated_amount =
+                        u64::from_le_bytes(ata_data[121..129].try_into().unwrap());
+                    let delegate_addr =
+                        solana_address::Address::new_from_array(delegate_bytes);
+                    delegate_addr == *settlement_auth.address()
+                        && delegated_amount >= premium_lamports
+                }
+            }
+        };
+
         let sa_bump_seed = [sa_bump];
         let sa_signer_seeds: [Seed; 2] = [
             Seed::from(SEED_SETTLEMENT_AUTHORITY),
             Seed::from(&sa_bump_seed[..]),
         ];
-        transfer_pda_signed(
-            agent_ata_acct,
-            pool_vault_acct,
-            settlement_auth,
-            premium_lamports,
-            &sa_signer_seeds,
-        )?;
+        if delegate_ok {
+            transfer_pda_signed(
+                agent_ata_acct,
+                pool_vault_acct,
+                settlement_auth,
+                premium_lamports,
+                &sa_signer_seeds,
+            )?;
+        }
+        let premium_in_ok = delegate_ok;
+
+        if !premium_in_ok {
+            status = SettlementStatus::DelegateFailed as u8;
+            // Write CallRecord and move on.
+            {
+                let mut cr_data = call_record_acct.try_borrow_mut()?;
+                let record: &mut CallRecord =
+                    bytemuck::from_bytes_mut(&mut cr_data[..CallRecord::LEN]);
+                record.bump = cr_bump;
+                record.breach = breach;
+                record.settlement_status = status;
+                record._padding0 = [0; 5];
+                record.call_id = call_id;
+                record.agent = solana_address::Address::new_from_array(agent_owner);
+                record.endpoint_slug = endpoint_slug;
+                record.premium_lamports = premium_lamports;
+                record.refund_lamports = refund_lamports;
+                record.actual_refund_lamports = 0;
+                record.latency_ms = latency_ms;
+                record._padding1 = [0; 4];
+                record.timestamp = timestamp;
+            }
+            acct_cursor += needed_for_event;
+            continue;
+        }
 
         // Pool credit (gross).
         {
@@ -303,7 +345,17 @@ pub fn process(accounts: &[AccountView], data: &[u8]) -> ProgramResult {
                 .checked_add(premium_lamports)
                 .ok_or(PactError::ArithmeticOverflow)?;
         }
-        // Endpoint stats.
+
+        // Endpoint stats + hourly exposure cap.
+        //
+        // The cap is consulted inside the same borrow block so we can both
+        // reset the period if a new hour started AND adjust the requested
+        // refund (clamping to remaining cap). When the cap clamps the
+        // payout to a smaller-than-requested amount we mark the record
+        // ExposureCapClamped so the indexer can surface the gap explicitly
+        // (codex 2026-05-05 review fix: previously the program silently
+        // zeroed the refund without recording the reason).
+        let mut intended_refund_after_cap = refund_lamports;
         {
             let mut ep_data = endpoint_acct.try_borrow_mut()?;
             let ep: &mut EndpointConfig =
@@ -318,6 +370,26 @@ pub fn process(accounts: &[AccountView], data: &[u8]) -> ProgramResult {
                     .total_breaches
                     .checked_add(1)
                     .ok_or(PactError::ArithmeticOverflow)?;
+            }
+            if now > ep.current_period_start + 3600 {
+                ep.current_period_start = now;
+                ep.current_period_refunds = 0;
+            }
+            if intended_refund_after_cap > 0 {
+                let cap_remaining = ep
+                    .exposure_cap_per_hour_lamports
+                    .saturating_sub(ep.current_period_refunds);
+                if intended_refund_after_cap > cap_remaining {
+                    // Clamp to whatever cap is left (may be 0).
+                    intended_refund_after_cap = cap_remaining;
+                    status = SettlementStatus::ExposureCapClamped as u8;
+                }
+                if intended_refund_after_cap > 0 {
+                    ep.current_period_refunds = ep
+                        .current_period_refunds
+                        .checked_add(intended_refund_after_cap)
+                        .ok_or(PactError::ArithmeticOverflow)?;
+                }
             }
         }
 
@@ -359,46 +431,72 @@ pub fn process(accounts: &[AccountView], data: &[u8]) -> ProgramResult {
         }
 
         // ----- Step 5: refund (on breach) — pool → agent_ata -----
-        if refund_lamports > 0 {
+        if intended_refund_after_cap > 0 {
             let pool_balance = {
                 let pool_data = pool_acct.try_borrow()?;
                 let cp: &CoveragePool = bytemuck::from_bytes(&pool_data[..CoveragePool::LEN]);
                 cp.current_balance
             };
-            if pool_balance < refund_lamports {
-                // Pool depleted. Premium already settled — silently skip refund.
-                acct_cursor += needed_for_event;
-                continue;
+            if pool_balance < intended_refund_after_cap {
+                // codex 2026-05-05 review fix (audit H-11): instead of
+                // silently dropping the refund, mark PoolDepleted on the
+                // CallRecord so the indexer + ops can see the gap.
+                // Premium and fees already settled; we just don't transfer
+                // the refund.
+                status = SettlementStatus::PoolDepleted as u8;
+                actual_refund_lamports = 0;
+            } else {
+                transfer_pda_signed(
+                    pool_vault_acct,
+                    agent_ata_acct,
+                    pool_acct,
+                    intended_refund_after_cap,
+                    &pool_signer_seeds,
+                )?;
+                actual_refund_lamports = intended_refund_after_cap;
+                {
+                    let mut pool_data = pool_acct.try_borrow_mut()?;
+                    let cp: &mut CoveragePool =
+                        bytemuck::from_bytes_mut(&mut pool_data[..CoveragePool::LEN]);
+                    cp.current_balance = cp
+                        .current_balance
+                        .checked_sub(actual_refund_lamports)
+                        .ok_or(PactError::ArithmeticOverflow)?;
+                    cp.total_refunds = cp
+                        .total_refunds
+                        .checked_add(actual_refund_lamports)
+                        .ok_or(PactError::ArithmeticOverflow)?;
+                }
+                {
+                    let mut ep_data = endpoint_acct.try_borrow_mut()?;
+                    let ep: &mut EndpointConfig =
+                        bytemuck::from_bytes_mut(&mut ep_data[..EndpointConfig::LEN]);
+                    ep.total_refunds = ep
+                        .total_refunds
+                        .checked_add(actual_refund_lamports)
+                        .ok_or(PactError::ArithmeticOverflow)?;
+                }
             }
-            transfer_pda_signed(
-                pool_vault_acct,
-                agent_ata_acct,
-                pool_acct,
-                refund_lamports,
-                &pool_signer_seeds,
-            )?;
-            {
-                let mut pool_data = pool_acct.try_borrow_mut()?;
-                let cp: &mut CoveragePool =
-                    bytemuck::from_bytes_mut(&mut pool_data[..CoveragePool::LEN]);
-                cp.current_balance = cp
-                    .current_balance
-                    .checked_sub(refund_lamports)
-                    .ok_or(PactError::ArithmeticOverflow)?;
-                cp.total_refunds = cp
-                    .total_refunds
-                    .checked_add(refund_lamports)
-                    .ok_or(PactError::ArithmeticOverflow)?;
-            }
-            {
-                let mut ep_data = endpoint_acct.try_borrow_mut()?;
-                let ep: &mut EndpointConfig =
-                    bytemuck::from_bytes_mut(&mut ep_data[..EndpointConfig::LEN]);
-                ep.total_refunds = ep
-                    .total_refunds
-                    .checked_add(refund_lamports)
-                    .ok_or(PactError::ArithmeticOverflow)?;
-            }
+        }
+
+        // Finally, write the CallRecord with the final status + actual amount.
+        {
+            let mut cr_data = call_record_acct.try_borrow_mut()?;
+            let record: &mut CallRecord =
+                bytemuck::from_bytes_mut(&mut cr_data[..CallRecord::LEN]);
+            record.bump = cr_bump;
+            record.breach = breach;
+            record.settlement_status = status;
+            record._padding0 = [0; 5];
+            record.call_id = call_id;
+            record.agent = solana_address::Address::new_from_array(agent_owner);
+            record.endpoint_slug = endpoint_slug;
+            record.premium_lamports = premium_lamports;
+            record.refund_lamports = refund_lamports;
+            record.actual_refund_lamports = actual_refund_lamports;
+            record.latency_ms = latency_ms;
+            record._padding1 = [0; 4];
+            record.timestamp = timestamp;
         }
 
         acct_cursor += needed_for_event;

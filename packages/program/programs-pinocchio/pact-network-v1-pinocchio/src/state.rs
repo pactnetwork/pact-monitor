@@ -138,17 +138,50 @@ const _: () = assert!(core::mem::size_of::<EndpointConfig>() == 544);
 // CallRecord — PDA [b"call", call_id[16]] — dedup sentinel
 // ---------------------------------------------------------------------------
 
+/// Settlement outcome flag stamped on every CallRecord during settle_batch.
+///
+/// Added 2026-05-05 in response to codex review feedback (per-event status +
+/// explicit pool-depleted / cap-clamped accounting). Off-chain indexers read
+/// this byte to surface settlement failures instead of inferring them from
+/// `actual_refund_lamports == 0` — premium can be charged with no refund for
+/// reasons other than a non-breach call.
+#[repr(u8)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum SettlementStatus {
+    /// Happy path — premium charged + refund (if any) paid in full.
+    Settled = 0,
+    /// SPL Token Transfer with delegate authority failed. Premium was NOT
+    /// charged for this event; the rest of the batch continues.
+    DelegateFailed = 1,
+    /// Premium charged + fees fanned out, but pool USDC vault did not have
+    /// enough liquidity to pay the requested refund. `actual_refund_lamports`
+    /// is 0 in this case; intended refund is still in `refund_lamports`.
+    PoolDepleted = 2,
+    /// Premium charged + fees fanned out, but the hourly per-endpoint exposure
+    /// cap clamped the refund. `actual_refund_lamports` is the partial amount
+    /// actually transferred (may be 0).
+    ExposureCapClamped = 3,
+}
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct CallRecord {
     pub bump: u8,
     pub breach: u8,
-    pub _padding0: [u8; 6],
+    /// SettlementStatus discriminant. See `SettlementStatus`.
+    pub settlement_status: u8,
+    pub _padding0: [u8; 5],
     pub call_id: [u8; 16],
     pub agent: Address, // agent owner pubkey (was agent_wallet PDA before)
     pub endpoint_slug: [u8; 16],
     pub premium_lamports: u64,
+    /// Intended/requested refund (= breach amount the settler computed).
     pub refund_lamports: u64,
+    /// Refund actually paid out of the pool to the agent ATA. Equal to
+    /// `refund_lamports` on the happy path; smaller (incl. 0) when the pool
+    /// was depleted or the hourly exposure cap clamped the payout. Indexer
+    /// should display both so ops can see the gap.
+    pub actual_refund_lamports: u64,
     pub latency_ms: u32,
     pub _padding1: [u8; 4],
     pub timestamp: i64,
@@ -158,9 +191,12 @@ unsafe impl Zeroable for CallRecord {}
 unsafe impl Pod for CallRecord {}
 
 impl CallRecord {
-    // 1+1+6+16+32+16+8+8+4+4+8 = 104
-    pub const LEN: usize = 1 + 1 + 6 + 16 + 32 + 16 + 8 + 8 + 4 + 4 + 8;
+    // 1+1+1+5+16+32+16+8+8+8+4+4+8 = 112
+    pub const LEN: usize = 1 + 1 + 1 + 5 + 16 + 32 + 16 + 8 + 8 + 8 + 4 + 4 + 8;
 }
+
+const _: () = assert!(CallRecord::LEN == 112);
+const _: () = assert!(core::mem::size_of::<CallRecord>() == 112);
 
 // ---------------------------------------------------------------------------
 // SettlementAuthority — singleton PDA [b"settlement_authority"]

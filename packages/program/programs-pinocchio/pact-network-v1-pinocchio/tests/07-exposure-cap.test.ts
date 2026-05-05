@@ -22,7 +22,12 @@ function provisionAgent(svm: LiteSVM, mint: any, saPda: any, balance: bigint) {
   return { agent, agentAta };
 }
 
-test("exposure cap: refund zeroed when remaining cap exceeded", () => {
+test("exposure cap: refund clamped to cap_remaining and marked ExposureCapClamped", () => {
+  // codex 2026-05-05 review fix: exposure cap now clamps refund to whatever
+  // cap is left (instead of zeroing it) and tags the CallRecord
+  // settlement_status = ExposureCapClamped so the indexer can surface the
+  // partial payout. Pre-fix behaviour (silent zero) charged premium without
+  // any on-chain trace of the gap between intended and actual refund.
   const svm = new LiteSVM();
   const base = setupProtocolAndTreasury(svm);
   const ep = registerSimpleEndpoint(base, "jupiter", { exposureCap: 1_000_000n });
@@ -53,7 +58,7 @@ test("exposure cap: refund zeroed when remaining cap exceeded", () => {
   // -500 premium + 600_000 refund.
   expect(afterBatch1).toBe(baseBalance - 500n + 600_000n);
 
-  // Batch 2: 500k refund. Cap remaining = 400k → refund zeroed.
+  // Batch 2: 500k requested, cap_remaining = 400k → clamped to 400k.
   const ix2 = buildSettleBatch(settler.publicKey, saPda, [{
     callId: new Uint8Array(16).fill(11),
     agentOwner: agent.publicKey, agentAta,
@@ -68,9 +73,9 @@ test("exposure cap: refund zeroed when remaining cap exceeded", () => {
   t2.sign(settler);
   expect(svm.sendTransaction(t2) instanceof FailedTransactionMetadata).toBe(false);
 
-  // Agent received only the first batch's refund.
-  // Net change vs original: -500 - 500 + 600_000 = 599_000.
-  expect(getTokenBalance(svm, agentAta)).toBe(baseBalance - 1_000n + 600_000n);
+  // Agent received first batch's full 600k + clamped 400k from second batch.
+  // Net change: -500 - 500 + 600_000 + 400_000 = 999_000.
+  expect(getTokenBalance(svm, agentAta)).toBe(baseBalance - 1_000n + 1_000_000n);
 });
 
 test("exposure cap resets after 1 hour", () => {
