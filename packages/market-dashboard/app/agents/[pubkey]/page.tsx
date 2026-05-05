@@ -1,8 +1,8 @@
 import { fetchAgent } from "@/lib/api";
-import { AgentWalletPanel } from "@/components/agent-wallet-panel";
+import { AgentApprovalPanel } from "@/components/agent-approval-panel";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { formatUsdcShort, formatLatency, formatRelativeTime, formatPubkey } from "@/lib/format";
+import { formatUsdcShort, formatLatency, formatRelativeTime } from "@/lib/format";
 
 export default async function AgentPage({
   params,
@@ -19,7 +19,7 @@ export default async function AgentPage({
         <p className="font-mono text-sm text-[#8a7a70] break-all">{pubkey}</p>
       </div>
 
-      <AgentWalletPanel pubkey={pubkey} initialState={agent} />
+      <AgentApprovalPanel pubkey={pubkey} initialState={agent} />
 
       <div>
         <h2 className="font-serif text-xl text-[#f5f0eb] mb-3">Call History</h2>
