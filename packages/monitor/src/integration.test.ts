@@ -1,4 +1,4 @@
-// Integration tests for @pact-network/monitor.
+// Integration tests for @q3labs/pact-monitor.
 //
 // Unlike the other *.test.ts files in this package (which stub globalThis.fetch
 // and exercise pure logic), these tests hit a LIVE local backend + postgres to
@@ -207,7 +207,7 @@ describe("PactMonitor integration (live backend)", { skip: skipReason }, () => {
       timestamp: new Date().toISOString(),
       statusCode: 404,
       latencyMs: 80,
-      classification: "error" as const,
+      classification: "server_error" as const,
       payment: null,
       synced: false,
       agentPubkey,

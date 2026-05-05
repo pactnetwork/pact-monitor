@@ -2,7 +2,7 @@ import { PublicKey, type TransactionSignature } from "@solana/web3.js";
 import { getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { createHash } from "crypto";
 import { address } from "@solana/kit";
-import { generated } from "@pact-network/insurance";
+import { generated } from "@q3labs/pact-insurance";
 const {
   decodeProtocolConfig,
   decodeClaim,
@@ -31,7 +31,13 @@ export interface CallRecord {
   payment_amount: number;
   latency_ms: number;
   status_code: number;
-  classification: "success" | "timeout" | "error" | "schema_mismatch" | "latency_sla";
+  classification:
+    | "success"
+    | "timeout"
+    | "client_error"
+    | "server_error"
+    | "schema_mismatch"
+    | "latency_sla";
   created_at: Date;
 }
 
@@ -42,9 +48,14 @@ export interface ClaimSubmissionResult {
   claimPda: string;
 }
 
+// Map agent-side classification to the on-chain TriggerType enum.
+// `client_error` (4xx) is intentionally absent — those are agent-side
+// failures and never trigger an on-chain claim. submitClaimOnChain throws
+// if it ever sees one (defense in depth; maybeCreateClaim should already
+// have filtered it out via REFUND_PCT).
 const triggerTypeMap: Record<string, number> = {
   timeout: TriggerType.Timeout,
-  error: TriggerType.Error,
+  server_error: TriggerType.Error,
   schema_mismatch: TriggerType.SchemaMismatch,
   latency_sla: TriggerType.LatencySla,
 };

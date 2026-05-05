@@ -1,5 +1,21 @@
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
+-- Self-serve API key issuance challenges. Single-use nonces issued by
+-- POST /api/v1/keys/self-serve/challenge and consumed by the matching
+-- /self-serve issuance call after the caller signs the challenge with the
+-- ed25519 keypair backing the agent_pubkey. Without this proof-of-ownership
+-- step, anyone could mint a key bound to any wallet (codex review on PR
+-- #50). Rows expire after a short TTL and the consumption is idempotent
+-- via DELETE … RETURNING.
+CREATE TABLE IF NOT EXISTS api_key_challenges (
+  nonce        TEXT PRIMARY KEY,
+  agent_pubkey TEXT NOT NULL,
+  expires_at   TIMESTAMPTZ NOT NULL,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_api_key_challenges_pubkey ON api_key_challenges(agent_pubkey);
+CREATE INDEX IF NOT EXISTS idx_api_key_challenges_expires_at ON api_key_challenges(expires_at);
+
 CREATE TABLE IF NOT EXISTS providers (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name TEXT NOT NULL,
@@ -16,7 +32,7 @@ CREATE TABLE IF NOT EXISTS call_records (
   timestamp TIMESTAMPTZ NOT NULL,
   status_code INTEGER NOT NULL,
   latency_ms INTEGER NOT NULL,
-  classification TEXT NOT NULL CHECK (classification IN ('success', 'timeout', 'error', 'schema_mismatch')),
+  classification TEXT NOT NULL CHECK (classification IN ('success', 'timeout', 'client_error', 'server_error', 'schema_mismatch')),
   payment_protocol TEXT CHECK (payment_protocol IN ('x402', 'mpp') OR payment_protocol IS NULL),
   payment_amount BIGINT,
   payment_asset TEXT,
@@ -134,7 +150,7 @@ CREATE TABLE IF NOT EXISTS claims (
   provider_id     UUID NOT NULL REFERENCES providers(id),
   agent_id        TEXT,
   policy_id       TEXT,
-  trigger_type    TEXT NOT NULL CHECK (trigger_type IN ('timeout', 'error', 'schema_mismatch', 'latency_sla')),
+  trigger_type    TEXT NOT NULL CHECK (trigger_type IN ('timeout', 'server_error', 'schema_mismatch', 'latency_sla')),
   call_cost       BIGINT,
   refund_pct      INTEGER NOT NULL,
   refund_amount   BIGINT,

@@ -24,12 +24,23 @@ echo "  Node $(node -v), pnpm $(pnpm -v), Docker $(docker -v | cut -d' ' -f3 | t
 echo ""
 
 # ── Step 1: Dependencies ────────────────────────────────────
-echo "[1/5] Installing dependencies..."
+echo "[1/6] Installing dependencies..."
 pnpm install --frozen-lockfile 2>/dev/null || pnpm install
 echo ""
 
-# ── Step 2: PostgreSQL via Docker Compose ───────────────────
-echo "[2/5] Starting PostgreSQL..."
+# ── Step 2: Build SDK packages ──────────────────────────────
+# Codex review on PR #52: previously this script only ran `pnpm install`
+# and never built the workspace SDKs. The backend's tsc resolves
+# @pact-network/insurance through its package.json `main` (dist/index.js),
+# so a fresh `pnpm install + pnpm dev:backend` failed with
+# ERR_MODULE_NOT_FOUND. Run the root `pnpm build` here so dev:backend
+# works on first launch from a clean clone.
+echo "[2/6] Building workspace packages (monitor + insurance + backend + scorecard)..."
+pnpm build
+echo ""
+
+# ── Step 3: PostgreSQL via Docker Compose ───────────────────
+echo "[3/6] Starting PostgreSQL..."
 docker compose -f docker-compose.dev.yml up -d 2>/dev/null
 
 # Wait for healthy status (docker compose healthcheck)
@@ -56,8 +67,8 @@ while [ $RETRIES -lt $MAX_RETRIES ]; do
 done
 echo ""
 
-# ── Step 3: Environment ────────────────────────────────────
-echo "[3/5] Creating .env files..."
+# ── Step 4: Environment ────────────────────────────────────
+echo "[4/6] Creating .env files..."
 if [ ! -f packages/backend/.env ]; then
   cp .env.example packages/backend/.env
   echo "  Created packages/backend/.env from .env.example"
@@ -66,8 +77,8 @@ else
 fi
 echo ""
 
-# ── Step 4: API Key ─────────────────────────────────────────
-echo "[4/5] Generating API key..."
+# ── Step 5: API Key ─────────────────────────────────────────
+echo "[5/6] Generating API key..."
 API_KEY_OUTPUT=$(cd packages/backend && pnpm tsx src/scripts/generate-key.ts dev-agent 2>&1) || true
 API_KEY=$(echo "$API_KEY_OUTPUT" | grep '^pact_')
 if [ -n "$API_KEY" ]; then
@@ -78,8 +89,8 @@ else
 fi
 echo ""
 
-# ── Step 5: Seed Data ───────────────────────────────────────
-echo "[5/5] Seeding database..."
+# ── Step 6: Seed Data ───────────────────────────────────────
+echo "[6/6] Seeding database..."
 (cd packages/backend && pnpm tsx src/scripts/seed.ts)
 echo ""
 

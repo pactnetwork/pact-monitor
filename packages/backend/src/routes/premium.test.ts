@@ -33,7 +33,7 @@ describe("GET /api/v1/premium/:hostname", () => {
     const rows = [
       { classification: "success", offsetMs: 0 },
       { classification: "success", offsetMs: 1000 },
-      { classification: "error", offsetMs: 2000 },
+      { classification: "server_error", offsetMs: 2000 },
     ];
     for (const r of rows) {
       await query(

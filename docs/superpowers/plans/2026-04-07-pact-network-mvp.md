@@ -42,7 +42,7 @@
 ### packages/sdk/
 | File | Action | Responsibility |
 |------|--------|---------------|
-| `package.json` | Create | @pact-network/monitor, zero runtime deps |
+| `package.json` | Create | @q3labs/pact-monitor, zero runtime deps |
 | `tsconfig.json` | Create | Extends root, outDir: dist, declaration: true |
 | `src/index.ts` | Create | Barrel export: pactMonitor(), types |
 | `src/types.ts` | Create | CallRecord, PactConfig, Classification, PaymentData |
@@ -190,7 +190,7 @@ PORT=3000
 
 ```json
 {
-  "name": "@pact-network/monitor",
+  "name": "@q3labs/pact-monitor",
   "version": "0.1.0",
   "type": "module",
   "main": "dist/index.js",

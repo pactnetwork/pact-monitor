@@ -1,6 +1,8 @@
 import {
   Connection,
+  LAMPORTS_PER_SOL,
   PublicKey,
+  SystemProgram,
   type TransactionSignature,
 } from "@solana/web3.js";
 import {
@@ -25,6 +27,23 @@ export const MIN_DRIP_USDC = 1;
 
 // USDC has 6 decimals; 1 whole USDC = 1_000_000 base units.
 const USDC_DECIMALS = 6;
+
+// SOL top-up policy (PR 2). When the recipient has less than this much SOL,
+// the drip transfers SOL_TOP_UP_LAMPORTS alongside the USDC mint. This
+// removes the "now go run `solana airdrop`" hop for first-time agents whose
+// devnet airdrops are 429ing on the public faucet.
+//
+// Threshold of 0.01 SOL covers the rent for an enable_insurance + a few
+// records-route signatures. SOL_TOP_UP_LAMPORTS gives the agent ~25 typical
+// txs of headroom. Both are conservative — the goal is "enough to finish
+// the demo", not "enough to live on devnet."
+const SOL_TOP_UP_THRESHOLD_LAMPORTS = 0.01 * LAMPORTS_PER_SOL;
+const SOL_TOP_UP_LAMPORTS = 0.05 * LAMPORTS_PER_SOL;
+// Minimum SOL the faucet keypair must retain after a top-up. Below this,
+// dripUsdc skips the SOL leg and logs a warning so ops gets paged before
+// the keypair drains to zero. The USDC mint leg still proceeds — minting
+// USDC doesn't actually deduct SOL beyond the tx fee.
+const FAUCET_MIN_RESERVE_LAMPORTS = 0.1 * LAMPORTS_PER_SOL;
 
 export class FaucetDisabledError extends Error {
   constructor(reason: string) {
@@ -54,6 +73,15 @@ export interface DripResult {
   ata: string;
   network: string;
   explorer: string;
+  // Lamports of SOL transferred to the recipient on this drip. 0 means the
+  // recipient was already above the SOL_TOP_UP_THRESHOLD or the faucet
+  // keypair was below its reserve. Lets the client log "got 0.05 SOL" or
+  // skip a separate `solana airdrop` step entirely.
+  solTransferred: number;
+  // Faucet keypair's SOL balance AFTER this drip, in lamports. Surfaced so
+  // ops can monitor headroom — once it dips below FAUCET_MIN_RESERVE_LAMPORTS
+  // the SOL leg silently turns off.
+  faucetSolBalance: number;
 }
 
 export interface FaucetStatus {
@@ -127,6 +155,36 @@ export function getFaucetStatus(): FaucetStatus {
     mint: config.usdcMint,
   };
 }
+
+// Exposed for tests + ops monitoring. Pure decision: given the recipient's
+// current SOL balance and the faucet keypair's current SOL balance, should
+// dripUsdc piggyback a SOL transfer onto this drip? Centralized so the
+// route handler, tests, and any future "do I need to ask ops to top up?"
+// telemetry all read the same rule.
+export function shouldTopUpSol(
+  recipientLamports: number,
+  faucetLamports: number,
+): { topUp: boolean; lamports: number; reason: string } {
+  if (recipientLamports >= SOL_TOP_UP_THRESHOLD_LAMPORTS) {
+    return { topUp: false, lamports: 0, reason: "recipient already has enough SOL" };
+  }
+  if (faucetLamports <= FAUCET_MIN_RESERVE_LAMPORTS + SOL_TOP_UP_LAMPORTS) {
+    return {
+      topUp: false,
+      lamports: 0,
+      reason: "faucet keypair below reserve — page ops to top up",
+    };
+  }
+  return { topUp: true, lamports: SOL_TOP_UP_LAMPORTS, reason: "ok" };
+}
+
+// Exposed for tests so they can read the constants without importing them
+// from the module file (which would couple every test to internal renames).
+export const __faucetSolPolicyForTests = {
+  thresholdLamports: SOL_TOP_UP_THRESHOLD_LAMPORTS,
+  topUpLamports: SOL_TOP_UP_LAMPORTS,
+  minReserveLamports: FAUCET_MIN_RESERVE_LAMPORTS,
+};
 
 // Exported for direct unit testing of the pure validation rules.
 export function validateRecipient(raw: string): PublicKey {
@@ -207,12 +265,54 @@ export async function dripUsdc(args: DripArgs): Promise<DripResult> {
     baseUnits,
   );
 
+  // SOL top-up: piggyback on the same tx if the recipient is below the
+  // threshold AND the faucet has enough headroom. Skipping the SOL leg
+  // (rather than failing the whole drip) keeps the USDC drip working even
+  // when the faucet is running low — ops sees the warning, the user still
+  // gets USDC.
+  let solTransferred = 0;
+  let faucetSolBefore = 0;
+  try {
+    faucetSolBefore = await connection.getBalance(faucetKeypair.publicKey, "confirmed");
+  } catch {
+    // If we can't read the faucet balance, fall through with solTransferred=0.
+    // Better to ship USDC than to fail closed on a transient RPC blip.
+  }
+  let recipientSolBefore = 0;
+  try {
+    recipientSolBefore = await connection.getBalance(recipientPk, "confirmed");
+  } catch {
+    // Same reasoning — degrade gracefully.
+  }
+
   const tx = new Transaction().add(mintIx);
+  const decision = shouldTopUpSol(recipientSolBefore, faucetSolBefore);
+  if (decision.topUp) {
+    tx.add(
+      SystemProgram.transfer({
+        fromPubkey: faucetKeypair.publicKey,
+        toPubkey: recipientPk,
+        lamports: decision.lamports,
+      }),
+    );
+    solTransferred = decision.lamports;
+  }
+
   const signature = await sendAndConfirmTransaction(connection, tx, [faucetKeypair], {
     commitment: "confirmed",
   });
 
   const network = getCachedNetwork();
+
+  // Re-read the faucet balance post-drip so the response reflects reality
+  // and ops can chart this over time. Best-effort — falls back to the
+  // pre-drip balance minus what we just sent.
+  let faucetSolAfter = Math.max(0, faucetSolBefore - solTransferred);
+  try {
+    faucetSolAfter = await connection.getBalance(faucetKeypair.publicKey, "confirmed");
+  } catch {
+    // ignore — best-effort
+  }
 
   // Audit row — no uniqueness, no enforcement. Purely for "who got what" on
   // the devnet mint so we can retrospectively notice abuse patterns.
@@ -238,6 +338,8 @@ export async function dripUsdc(args: DripArgs): Promise<DripResult> {
     ata: recipientAta.address.toBase58(),
     network,
     explorer,
+    solTransferred,
+    faucetSolBalance: faucetSolAfter,
   };
 }
 

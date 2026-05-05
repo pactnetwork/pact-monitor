@@ -1,0 +1,67 @@
+name: Cold-clone build
+
+# Catches regressions in the root-level `pnpm build` script ordering. The
+# external-agent UX test on develop showed that an outsider running
+# `pnpm install && pnpm build` from a fresh clone hit
+#   error TS2307: Cannot find module '@pact-network/insurance' or its
+#   corresponding type declarations.
+# because the root build script invoked monitor → backend → scorecard but
+# skipped @pact-network/insurance, which the backend's tsc resolves via the
+# insurance package's `main` (dist/index.js). Without the explicit build,
+# backend's typecheck fails on a fresh clone.
+#
+# This workflow runs from the same starting state an external agent would:
+# clone, install, build. No DB, no env, no migrations — pure compile.
+
+on:
+  pull_request:
+    branches:
+      - develop
+      - main
+    paths:
+      - "package.json"
+      - "pnpm-workspace.yaml"
+      - "pnpm-lock.yaml"
+      - "packages/*/package.json"
+      - "packages/*/tsconfig*.json"
+      - ".github/workflows/cold-build.yaml"
+  push:
+    branches:
+      - develop
+      - "feat/**"
+      - "fix/**"
+
+concurrency:
+  group: cold-build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: pnpm build from a fresh checkout
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+          fetch-depth: 1
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.30.3
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+
+      - name: Install workspace deps
+        run: pnpm install --frozen-lockfile
+
+      # The whole point of this job: simulate a clean clone running the
+      # documented build command. If this step fails, the README's install
+      # path is broken for any external developer.
+      - name: pnpm build (root script)
+        run: pnpm build

@@ -22,8 +22,10 @@ async function findOrCreateProvider(hostname: string): Promise<string> {
 }
 
 function classify(statusCode: number, latencyMs: number, networkError: boolean): string {
-  if (networkError || statusCode === 0) return "error";
-  if (statusCode < 200 || statusCode >= 300) return "error";
+  if (networkError || statusCode === 0) return "server_error";
+  if (statusCode >= 400 && statusCode < 500) return "client_error";
+  if (statusCode >= 500) return "server_error";
+  if (statusCode < 200 || statusCode >= 300) return "server_error";
   if (latencyMs > 5000) return "timeout";
   return "success";
 }
