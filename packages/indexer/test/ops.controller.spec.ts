@@ -8,6 +8,11 @@ describe("OpsController", () => {
   let app: INestApplication;
   const mockVerify = jest.fn();
   const mockPauseTx = jest.fn().mockResolvedValue("dW5zaWduZWQ=");
+  const mockUpdateConfigTx = jest.fn().mockResolvedValue("dW5zaWduZWQ=");
+  const mockTopupTx = jest.fn().mockResolvedValue("dW5zaWduZWQ=");
+  const mockUpdateFeeRecipientsTx = jest
+    .fn()
+    .mockResolvedValue("dW5zaWduZWQ=");
 
   beforeAll(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -18,8 +23,9 @@ describe("OpsController", () => {
           useValue: {
             verifyOperator: mockVerify,
             buildPauseEndpointTx: mockPauseTx,
-            buildUpdateConfigTx: jest.fn().mockResolvedValue("dW5zaWduZWQ="),
-            buildTopupTx: jest.fn().mockResolvedValue("dW5zaWduZWQ="),
+            buildUpdateConfigTx: mockUpdateConfigTx,
+            buildTopupTx: mockTopupTx,
+            buildUpdateFeeRecipientsTx: mockUpdateFeeRecipientsTx,
           },
         },
       ],
@@ -29,7 +35,13 @@ describe("OpsController", () => {
   });
 
   afterAll(() => app.close());
-  beforeEach(() => { mockVerify.mockReset(); mockPauseTx.mockClear(); });
+  beforeEach(() => {
+    mockVerify.mockReset();
+    mockPauseTx.mockClear();
+    mockUpdateConfigTx.mockClear();
+    mockTopupTx.mockClear();
+    mockUpdateFeeRecipientsTx.mockClear();
+  });
 
   it("POST /api/ops/pause with valid allowlisted signer returns unsignedTx", async () => {
     mockVerify.mockResolvedValue(undefined);
@@ -49,7 +61,9 @@ describe("OpsController", () => {
   });
 
   it("POST /api/ops/pause with pubkey NOT in allowlist returns 401", async () => {
-    mockVerify.mockRejectedValue(new UnauthorizedException("Pubkey not in operator allowlist"));
+    mockVerify.mockRejectedValue(
+      new UnauthorizedException("Pubkey not in operator allowlist"),
+    );
     await request(app.getHttpServer())
       .post("/api/ops/pause")
       .send({
@@ -63,7 +77,9 @@ describe("OpsController", () => {
   });
 
   it("POST /api/ops/pause with invalid signature returns 401", async () => {
-    mockVerify.mockRejectedValue(new UnauthorizedException("Signature verification failed"));
+    mockVerify.mockRejectedValue(
+      new UnauthorizedException("Signature verification failed"),
+    );
     await request(app.getHttpServer())
       .post("/api/ops/pause")
       .send({
@@ -72,6 +88,63 @@ describe("OpsController", () => {
         signature: "badSig",
         slug: "helius",
         paused: true,
+      })
+      .expect(401);
+  });
+
+  it("POST /api/ops/topup forwards slug + amount to the service", async () => {
+    mockVerify.mockResolvedValue(undefined);
+    await request(app.getHttpServer())
+      .post("/api/ops/topup")
+      .send({
+        signerPubkey: "ValidPubkey1111111111111111111111111111111111",
+        message: "topup:helius:1000000",
+        signature: "sigBase58",
+        slug: "helius",
+        amountLamports: "1000000",
+      })
+      .expect(200);
+    expect(mockTopupTx).toHaveBeenCalledWith("helius", "1000000");
+  });
+
+  it("POST /api/ops/update-fee-recipients with allowlisted signer returns unsignedTx", async () => {
+    mockVerify.mockResolvedValue(undefined);
+    const recipients = [
+      {
+        kind: 0,
+        pubkey: "TreasuryPubkey11111111111111111111111111111",
+        bps: 8000,
+      },
+      {
+        kind: 1,
+        pubkey: "AffiliateA111111111111111111111111111111111",
+        bps: 2000,
+      },
+    ];
+    const res = await request(app.getHttpServer())
+      .post("/api/ops/update-fee-recipients")
+      .send({
+        signerPubkey: "ValidPubkey1111111111111111111111111111111111",
+        message: "update_fee_recipients:v1",
+        signature: "sigBase58",
+        recipients,
+      })
+      .expect(200);
+    expect(res.body).toHaveProperty("unsignedTx");
+    expect(mockUpdateFeeRecipientsTx).toHaveBeenCalledWith(recipients);
+  });
+
+  it("POST /api/ops/update-fee-recipients without allowlist returns 401", async () => {
+    mockVerify.mockRejectedValue(
+      new UnauthorizedException("Pubkey not in operator allowlist"),
+    );
+    await request(app.getHttpServer())
+      .post("/api/ops/update-fee-recipients")
+      .send({
+        signerPubkey: "UnknownPubkey1111111111111111111111111111111",
+        message: "update_fee_recipients:v1",
+        signature: "sigBase58",
+        recipients: [],
       })
       .expect(401);
   });

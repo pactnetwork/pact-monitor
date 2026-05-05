@@ -14,6 +14,13 @@ const makePayload = (callId = "call-001") => ({
   totalPremiumsLamports: "500",
   totalRefundsLamports: "0",
   ts: new Date().toISOString(),
+  shares: [
+    {
+      recipientKind: 0,
+      recipientPubkey: "TreasuryPubkey11111111111111111111111111111",
+      amountLamports: "50",
+    },
+  ],
   calls: [
     {
       callId,
@@ -22,7 +29,7 @@ const makePayload = (callId = "call-001") => ({
       premiumLamports: "500",
       refundLamports: "0",
       latencyMs: 120,
-      breach: false,
+      outcome: "ok",
       ts: new Date().toISOString(),
       settledAt: new Date().toISOString(),
       signature: "sig111",
@@ -90,5 +97,20 @@ describe("EventsController", () => {
       .send(makePayload("call-001"))
       .expect(200);
     expect(res.body).toEqual({ accepted: 0 });
+  });
+
+  it("POST /events forwards the recipient shares array to the service", async () => {
+    await request(app.getHttpServer())
+      .post("/events")
+      .set("Authorization", `Bearer ${PUSH_SECRET}`)
+      .send(makePayload("call-002"))
+      .expect(200);
+    const arg = mockIngest.mock.calls[0][0];
+    expect(arg.shares).toHaveLength(1);
+    expect(arg.shares[0]).toEqual({
+      recipientKind: 0,
+      recipientPubkey: "TreasuryPubkey11111111111111111111111111111",
+      amountLamports: "50",
+    });
   });
 });
