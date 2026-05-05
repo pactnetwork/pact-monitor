@@ -7,6 +7,7 @@ import {
   buildRegisterEndpoint,
   buildUpdateFeeRecipients,
   buildUpdateEndpointConfig,
+  createTokenAccount,
   deriveEndpointConfig,
   deriveCoveragePool,
   slugBytes,
@@ -21,12 +22,14 @@ import {
 
 test("register_endpoint with explicit recipients writes them onto endpoint", () => {
   const base = setupProtocolAndTreasury(new LiteSVM());
-  const affiliate = generateKeypair(base.svm).publicKey;
+  const affOwner = generateKeypair(base.svm);
+  const affiliate = createTokenAccount(base.svm, base.mint, affOwner.publicKey);
   const ep = registerSimpleEndpoint(base, "helius", {
     recipientsOverride: [
       { kind: FEE_KIND_TREASURY, destination: PublicKey.default, bps: 1000 },
       { kind: FEE_KIND_AFFILIATE_ATA, destination: affiliate, bps: 500 },
     ],
+    affiliateAtas: [affiliate],
   });
 
   const data = getAccountData(base.svm, ep.endpointPda);
@@ -237,7 +240,8 @@ test("register_endpoint rejects non-ProtocolConfig-authority caller", () => {
 test("update_fee_recipients atomically replaces array + same validations", () => {
   const base = setupProtocolAndTreasury(new LiteSVM());
   const ep = registerSimpleEndpoint(base, "helius");
-  const aff = generateKeypair(base.svm).publicKey;
+  const affOwner = generateKeypair(base.svm);
+  const aff = createTokenAccount(base.svm, base.mint, affOwner.publicKey);
 
   const ix = buildUpdateFeeRecipients({
     authority: base.authority.publicKey,
@@ -249,6 +253,7 @@ test("update_fee_recipients atomically replaces array + same validations", () =>
       { kind: FEE_KIND_TREASURY, destination: PublicKey.default, bps: 800 },
       { kind: FEE_KIND_AFFILIATE_ATA, destination: aff, bps: 200 },
     ],
+    affiliateAtas: [aff],
   });
   const tx = new Transaction();
   tx.add(ix);
@@ -274,6 +279,7 @@ test("update_fee_recipients atomically replaces array + same validations", () =>
     recipients: [
       { kind: FEE_KIND_AFFILIATE_ATA, destination: aff, bps: 11_000 },
     ],
+    affiliateAtas: [aff],
   });
   const txBad = new Transaction();
   txBad.add(bad);
@@ -304,4 +310,154 @@ test("update_endpoint_config updates flat_premium only", () => {
 
   const data = getAccountData(base.svm, ep.endpointPda)!;
   expect(readU64(data, 24)).toBe(999n);
+});
+
+// ---------------------------------------------------------------------------
+// Codex 2026-05-05 review fix: tightened fee-recipient validation.
+// ---------------------------------------------------------------------------
+
+test("register_endpoint rejects zero-entry recipients (missing Treasury)", () => {
+  const base = setupProtocolAndTreasury(new LiteSVM());
+  const slug = slugBytes("no-tre");
+  const [endpointPda] = deriveEndpointConfig(slug);
+  const [poolPda] = deriveCoveragePool(slug);
+  const poolVault = Keypair.generate().publicKey;
+
+  const ix = buildRegisterEndpoint({
+    authority: base.authority.publicKey,
+    pcPda: base.pcPda,
+    treasuryPda: base.treasuryPda,
+    endpointPda,
+    poolPda,
+    poolVault,
+    mint: base.mint,
+    svm: base.svm,
+    slug,
+    flatPremium: 500n,
+    percentBps: 0,
+    slaMs: 5000,
+    imputedCost: 1000n,
+    exposureCap: 5_000_000n,
+    recipientsOverride: [], // no Treasury entry → rejected
+  });
+  const tx = new Transaction();
+  tx.add(ix);
+  tx.recentBlockhash = base.svm.latestBlockhash();
+  tx.feePayer = base.authority.publicKey;
+  tx.sign(base.authority);
+  expect(base.svm.sendTransaction(tx) instanceof FailedTransactionMetadata).toBe(true);
+});
+
+test("register_endpoint rejects Treasury bps = 0", () => {
+  const base = setupProtocolAndTreasury(new LiteSVM());
+  const slug = slugBytes("zero-tre");
+  const [endpointPda] = deriveEndpointConfig(slug);
+  const [poolPda] = deriveCoveragePool(slug);
+  const poolVault = Keypair.generate().publicKey;
+
+  const ix = buildRegisterEndpoint({
+    authority: base.authority.publicKey,
+    pcPda: base.pcPda,
+    treasuryPda: base.treasuryPda,
+    endpointPda,
+    poolPda,
+    poolVault,
+    mint: base.mint,
+    svm: base.svm,
+    slug,
+    flatPremium: 500n,
+    percentBps: 0,
+    slaMs: 5000,
+    imputedCost: 1000n,
+    exposureCap: 5_000_000n,
+    recipientsOverride: [
+      { kind: FEE_KIND_TREASURY, destination: PublicKey.default, bps: 0 },
+    ],
+  });
+  const tx = new Transaction();
+  tx.add(ix);
+  tx.recentBlockhash = base.svm.latestBlockhash();
+  tx.feePayer = base.authority.publicKey;
+  tx.sign(base.authority);
+  expect(base.svm.sendTransaction(tx) instanceof FailedTransactionMetadata).toBe(true);
+});
+
+test("register_endpoint rejects AffiliateAta == Treasury vault post-substitution", () => {
+  // The on-wire Treasury entry has its destination ignored (substituted to
+  // base.treasuryVault at register time). Without post-substitution dup
+  // detection a caller could smuggle an AffiliateAta pointing at the
+  // Treasury vault and double-count fees. Codex 2026-05-05 fix: dup check
+  // re-runs after substitution.
+  const base = setupProtocolAndTreasury(new LiteSVM());
+  const slug = slugBytes("smuggle");
+  const [endpointPda] = deriveEndpointConfig(slug);
+  const [poolPda] = deriveCoveragePool(slug);
+  const poolVault = Keypair.generate().publicKey;
+
+  const ix = buildRegisterEndpoint({
+    authority: base.authority.publicKey,
+    pcPda: base.pcPda,
+    treasuryPda: base.treasuryPda,
+    endpointPda,
+    poolPda,
+    poolVault,
+    mint: base.mint,
+    svm: base.svm,
+    slug,
+    flatPremium: 500n,
+    percentBps: 0,
+    slaMs: 5000,
+    imputedCost: 1000n,
+    exposureCap: 5_000_000n,
+    recipientsOverride: [
+      { kind: FEE_KIND_TREASURY, destination: PublicKey.default, bps: 500 },
+      { kind: FEE_KIND_AFFILIATE_ATA, destination: base.treasuryVault, bps: 500 },
+    ],
+    affiliateAtas: [base.treasuryVault],
+  });
+  const tx = new Transaction();
+  tx.add(ix);
+  tx.recentBlockhash = base.svm.latestBlockhash();
+  tx.feePayer = base.authority.publicKey;
+  tx.sign(base.authority);
+  expect(base.svm.sendTransaction(tx) instanceof FailedTransactionMetadata).toBe(true);
+});
+
+test("register_endpoint rejects AffiliateAta with bare-pubkey (non-token) destination", () => {
+  // Caller passes a system-owned wallet pubkey instead of a real USDC ATA.
+  // Codex 2026-05-05 fix: validate_affiliate_atas rejects.
+  const base = setupProtocolAndTreasury(new LiteSVM());
+  const slug = slugBytes("bad-ata");
+  const [endpointPda] = deriveEndpointConfig(slug);
+  const [poolPda] = deriveCoveragePool(slug);
+  const poolVault = Keypair.generate().publicKey;
+
+  const bareWallet = generateKeypair(base.svm).publicKey; // system-owned
+  const ix = buildRegisterEndpoint({
+    authority: base.authority.publicKey,
+    pcPda: base.pcPda,
+    treasuryPda: base.treasuryPda,
+    endpointPda,
+    poolPda,
+    poolVault,
+    mint: base.mint,
+    svm: base.svm,
+    slug,
+    flatPremium: 500n,
+    percentBps: 0,
+    slaMs: 5000,
+    imputedCost: 1000n,
+    exposureCap: 5_000_000n,
+    recipientsOverride: [
+      { kind: FEE_KIND_TREASURY, destination: PublicKey.default, bps: 1000 },
+      { kind: FEE_KIND_AFFILIATE_ATA, destination: bareWallet, bps: 500 },
+    ],
+    affiliateAtas: [bareWallet],
+  });
+  const tx = new Transaction();
+  tx.add(ix);
+  tx.recentBlockhash = base.svm.latestBlockhash();
+  tx.feePayer = base.authority.publicKey;
+  tx.sign(base.authority);
+  expect(base.svm.sendTransaction(tx) instanceof FailedTransactionMetadata).toBe(true);
 });
