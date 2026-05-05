@@ -9,6 +9,7 @@ import {
   FeeRecipientKind,
   PROTOCOL_CONFIG_LEN,
   SETTLEMENT_AUTHORITY_LEN,
+  SettlementStatus,
   TREASURY_LEN,
   decodeCallRecord,
   decodeCoveragePool,
@@ -150,7 +151,11 @@ describe("state decoders — round-trip on hand-rolled byte buffers", () => {
     expect(ep.feeRecipients[0].destination).toBe(dest.toBase58());
   });
 
-  test("decodeCallRecord round-trip", () => {
+  test("CALL_RECORD_LEN is 112 bytes (codex 2026-05-05)", () => {
+    expect(CALL_RECORD_LEN).toBe(112);
+  });
+
+  test("decodeCallRecord round-trip on the 112-byte layout", () => {
     const buf = new Uint8Array(CALL_RECORD_LEN);
     const view = new DataView(buf.buffer);
     const callId = new Uint8Array(16).fill(0x42);
@@ -159,23 +164,80 @@ describe("state decoders — round-trip on hand-rolled byte buffers", () => {
 
     buf[0] = 252;
     buf[1] = 1; // breach
+    buf[2] = SettlementStatus.Settled;
     buf.set(callId, 8);
     writePubkey(buf, 24, agent);
     buf.set(slug, 56);
-    view.setBigUint64(72, 5000n, true);
-    view.setBigUint64(80, 1000n, true);
-    view.setUint32(88, 3500, true);
-    view.setBigInt64(96, 1714000000n, true);
+    view.setBigUint64(72, 5000n, true);  // premium_lamports
+    view.setBigUint64(80, 1000n, true);  // refund_lamports
+    view.setBigUint64(88, 1000n, true);  // actual_refund_lamports
+    view.setUint32(96, 3500, true);       // latency_ms (offset shifted +8)
+    view.setBigInt64(104, 1714000000n, true); // timestamp (offset shifted +8)
 
     const cr = decodeCallRecord(buf);
     expect(cr.bump).toBe(252);
     expect(cr.breach).toBe(true);
+    expect(cr.settlementStatus).toBe(SettlementStatus.Settled);
     expect(Array.from(cr.callId)).toEqual(Array.from(callId));
     expect(cr.agent).toBe(agent.toBase58());
+    expect(Array.from(cr.endpointSlug.slice(0, 6))).toEqual(Array.from(slug));
     expect(cr.premiumLamports).toBe(5000n);
     expect(cr.refundLamports).toBe(1000n);
+    expect(cr.actualRefundLamports).toBe(1000n);
     expect(cr.latencyMs).toBe(3500);
     expect(cr.timestamp).toBe(1714000000n);
+  });
+
+  test.each([
+    SettlementStatus.Settled,
+    SettlementStatus.DelegateFailed,
+    SettlementStatus.PoolDepleted,
+    SettlementStatus.ExposureCapClamped,
+  ])("decodeCallRecord round-trips SettlementStatus = %i", (status) => {
+    const buf = new Uint8Array(CALL_RECORD_LEN);
+    const view = new DataView(buf.buffer);
+    buf[0] = 1;
+    buf[1] = 0;
+    buf[2] = status;
+    view.setBigUint64(72, 1n, true);
+    view.setBigUint64(80, 0n, true);
+    view.setBigUint64(88, 0n, true);
+    view.setUint32(96, 0, true);
+    view.setBigInt64(104, 0n, true);
+
+    const cr = decodeCallRecord(buf);
+    expect(cr.settlementStatus).toBe(status);
+  });
+
+  test("decodeCallRecord rejects an unknown settlement_status byte", () => {
+    const buf = new Uint8Array(CALL_RECORD_LEN);
+    buf[2] = 7; // unknown
+    expect(() => decodeCallRecord(buf)).toThrow(
+      /unknown settlement_status/
+    );
+  });
+
+  test("decodeCallRecord surfaces actualRefundLamports independently of refundLamports (PoolDepleted)", () => {
+    const buf = new Uint8Array(CALL_RECORD_LEN);
+    const view = new DataView(buf.buffer);
+    buf[0] = 5;
+    buf[1] = 1; // breach
+    buf[2] = SettlementStatus.PoolDepleted;
+    view.setBigUint64(72, 10_000n, true); // premium
+    view.setBigUint64(80, 9_999n, true);  // intended refund (was supposed to be paid)
+    view.setBigUint64(88, 0n, true);      // actual refund — pool depleted
+    view.setUint32(96, 250, true);
+    view.setBigInt64(104, 1714000000n, true);
+
+    const cr = decodeCallRecord(buf);
+    expect(cr.settlementStatus).toBe(SettlementStatus.PoolDepleted);
+    expect(cr.refundLamports).toBe(9_999n);
+    expect(cr.actualRefundLamports).toBe(0n);
+  });
+
+  test("decodeCallRecord rejects pre-codex 104-byte buffers", () => {
+    // 104 < 112 — old layout buffers must not silently decode.
+    expect(() => decodeCallRecord(new Uint8Array(104))).toThrow();
   });
 
   test("decodeSettlementAuthority round-trip", () => {

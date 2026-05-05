@@ -24,6 +24,34 @@ export enum FeeRecipientKind {
   AffiliatePda = 2,
 }
 
+/**
+ * Mirror of `state.rs::SettlementStatus` — discriminant byte stamped on every
+ * CallRecord during `settle_batch`. Added 2026-05-05 in response to codex
+ * review feedback (per-event status + explicit pool-depleted / cap-clamped
+ * accounting). See `state.rs::SettlementStatus` for the per-variant semantics.
+ */
+export enum SettlementStatus {
+  /** Happy path — premium charged + refund (if any) paid in full. */
+  Settled = 0,
+  /**
+   * SPL Token transfer with delegate authority failed. Premium was NOT
+   * charged for this event; the rest of the batch continues.
+   */
+  DelegateFailed = 1,
+  /**
+   * Premium charged + fees fanned out, but the pool USDC vault did not have
+   * enough liquidity to pay the requested refund. `actualRefundLamports` is
+   * 0 in this case; intended refund stays in `refundLamports`.
+   */
+  PoolDepleted = 2,
+  /**
+   * Premium charged + fees fanned out, but the hourly per-endpoint exposure
+   * cap clamped the refund. `actualRefundLamports` is the partial amount
+   * actually transferred (may be 0).
+   */
+  ExposureCapClamped = 3,
+}
+
 /** 48-byte fixed-layout entry (see `state.rs::FeeRecipient`). */
 export interface FeeRecipient {
   kind: FeeRecipientKind;
@@ -38,7 +66,7 @@ export const COVERAGE_POOL_LEN = 160;
 /** Total length in bytes of an EndpointConfig account. */
 export const ENDPOINT_CONFIG_LEN = 544;
 /** Total length in bytes of a CallRecord account. */
-export const CALL_RECORD_LEN = 104;
+export const CALL_RECORD_LEN = 112;
 /** Total length in bytes of a SettlementAuthority account. */
 export const SETTLEMENT_AUTHORITY_LEN = 48;
 /** Total length in bytes of a Treasury account. */
@@ -241,11 +269,26 @@ export function decodeEndpointConfig(
 export interface CallRecord {
   bump: number;
   breach: boolean;
+  /**
+   * Per-event settlement outcome stamped during `settle_batch`. See
+   * `SettlementStatus`. Added in the codex 2026-05-05 review fix; old (104B)
+   * CallRecord buffers will fail to decode against this client.
+   */
+  settlementStatus: SettlementStatus;
   callId: Uint8Array;
   agent: Pubkey;
   endpointSlug: Uint8Array;
   premiumLamports: bigint;
+  /** Intended/requested refund (= breach amount the settler computed). */
   refundLamports: bigint;
+  /**
+   * Refund actually paid out of the pool to the agent ATA. Equal to
+   * `refundLamports` on the happy path; smaller (incl. 0) when the pool
+   * was depleted or the hourly exposure cap clamped the payout. Indexers
+   * should display both so ops can see the gap. Added in the codex
+   * 2026-05-05 review fix.
+   */
+  actualRefundLamports: bigint;
   latencyMs: number;
   timestamp: bigint;
 }
@@ -253,18 +296,20 @@ export interface CallRecord {
 /**
  * Decode a CallRecord account.
  *
- * Layout (104 bytes — see state.rs::CallRecord):
- *   0:       bump u8
- *   1:       breach u8
- *   2..8:    _padding0
- *   8..24:   call_id [u8;16]
- *   24..56:  agent Pubkey
- *   56..72:  endpoint_slug [u8;16]
- *   72..80:  premium_lamports u64
- *   80..88:  refund_lamports u64
- *   88..92:  latency_ms u32
- *   92..96:  _padding1
- *   96..104: timestamp i64
+ * Layout (112 bytes — see state.rs::CallRecord, codex 2026-05-05 update):
+ *   0:        bump u8
+ *   1:        breach u8
+ *   2:        settlement_status u8           (was reserved padding pre-codex)
+ *   3..8:     _padding0 (5 bytes)
+ *   8..24:    call_id [u8;16]
+ *   24..56:   agent Pubkey
+ *   56..72:   endpoint_slug [u8;16]
+ *   72..80:   premium_lamports u64
+ *   80..88:   refund_lamports u64
+ *   88..96:   actual_refund_lamports u64     (NEW — pushes following fields +8)
+ *   96..100:  latency_ms u32
+ *   100..104: _padding1
+ *   104..112: timestamp i64
  */
 export function decodeCallRecord(data: Buffer | Uint8Array): CallRecord {
   const { view, bytes } = toView(data);
@@ -273,16 +318,24 @@ export function decodeCallRecord(data: Buffer | Uint8Array): CallRecord {
       `decodeCallRecord: need ${CALL_RECORD_LEN} bytes, got ${bytes.length}`
     );
   }
+  const statusByte = bytes[2];
+  if (statusByte > SettlementStatus.ExposureCapClamped) {
+    throw new Error(
+      `decodeCallRecord: unknown settlement_status ${statusByte}`
+    );
+  }
   return {
     bump: bytes[0],
     breach: bytes[1] !== 0,
+    settlementStatus: statusByte as SettlementStatus,
     callId: bytes.slice(8, 24),
     agent: readPubkey(bytes, 24),
     endpointSlug: bytes.slice(56, 72),
     premiumLamports: view.getBigUint64(72, true),
     refundLamports: view.getBigUint64(80, true),
-    latencyMs: view.getUint32(88, true),
-    timestamp: view.getBigInt64(96, true),
+    actualRefundLamports: view.getBigUint64(88, true),
+    latencyMs: view.getUint32(96, true),
+    timestamp: view.getBigInt64(104, true),
   };
 }
 

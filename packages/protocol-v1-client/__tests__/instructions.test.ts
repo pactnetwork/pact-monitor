@@ -166,6 +166,116 @@ describe("instruction builders — discriminator + payload bytes", () => {
     expect(ix.data[47]).toBe(1);
     expect(ix.data[48]).toBe(1);
     expect(ix.data.length).toBe(49 + 48);
+    // No AffiliateAta entries → no extra accounts beyond the fixed 9.
+    expect(ix.keys).toHaveLength(9);
+  });
+
+  test("buildRegisterEndpointIx appends AffiliateAta accounts at indices 9+ in fee_recipients order (codex 2026-05-05)", () => {
+    const slug = slugBytes("openai");
+    const treasuryDest = newPk().toBase58();
+    const aff1Dest = newPk().toBase58();
+    const aff2Dest = newPk().toBase58();
+    const aff1Ata = newPk();
+    const aff2Ata = newPk();
+    const ix = buildRegisterEndpointIx({
+      authority: newPk(),
+      protocolConfig: newPk(),
+      treasury: newPk(),
+      endpointConfig: newPk(),
+      coveragePool: newPk(),
+      poolVault: newPk(),
+      usdcMint: newPk(),
+      slug,
+      flatPremiumLamports: 500n,
+      percentBps: 0,
+      slaLatencyMs: 5000,
+      imputedCostLamports: 1000n,
+      exposureCapPerHourLamports: 5_000_000n,
+      feeRecipients: [
+        // Default-template shape: Treasury + AffiliateAta (+ second affiliate
+        // to verify ordering is preserved across the array).
+        {
+          kind: FeeRecipientKind.Treasury,
+          destination: treasuryDest,
+          bps: 1000,
+        },
+        {
+          kind: FeeRecipientKind.AffiliateAta,
+          destination: aff1Dest,
+          bps: 500,
+        },
+        {
+          kind: FeeRecipientKind.AffiliateAta,
+          destination: aff2Dest,
+          bps: 250,
+        },
+      ],
+      feeRecipientCount: 3,
+      affiliateAtas: [aff1Ata, aff2Ata],
+    });
+    // 9 baseline + 2 AffiliateAta accounts.
+    expect(ix.keys).toHaveLength(11);
+    expect(ix.keys[9].pubkey.equals(aff1Ata)).toBe(true);
+    expect(ix.keys[9].isWritable).toBe(false);
+    expect(ix.keys[9].isSigner).toBe(false);
+    expect(ix.keys[10].pubkey.equals(aff2Ata)).toBe(true);
+    expect(ix.keys[10].isWritable).toBe(false);
+  });
+
+  test("buildRegisterEndpointIx default-template (Treasury + AffiliateAta) places AffiliateAta at index 9", () => {
+    const slug = slugBytes("openai");
+    const affAta = newPk();
+    const ix = buildRegisterEndpointIx({
+      authority: newPk(),
+      protocolConfig: newPk(),
+      treasury: newPk(),
+      endpointConfig: newPk(),
+      coveragePool: newPk(),
+      poolVault: newPk(),
+      usdcMint: newPk(),
+      slug,
+      flatPremiumLamports: 500n,
+      percentBps: 0,
+      slaLatencyMs: 5000,
+      imputedCostLamports: 1000n,
+      exposureCapPerHourLamports: 5_000_000n,
+      feeRecipients: [
+        { kind: FeeRecipientKind.Treasury, destination: newPk().toBase58(), bps: 1000 },
+        { kind: FeeRecipientKind.AffiliateAta, destination: newPk().toBase58(), bps: 500 },
+      ],
+      feeRecipientCount: 2,
+      affiliateAtas: [affAta],
+    });
+    expect(ix.keys).toHaveLength(10);
+    expect(ix.keys[9].pubkey.equals(affAta)).toBe(true);
+  });
+
+  test("buildRegisterEndpointIx throws when affiliateAtas.length !== count(AffiliateAta)", () => {
+    const slug = slugBytes("openai");
+    expect(() =>
+      buildRegisterEndpointIx({
+        authority: newPk(),
+        protocolConfig: newPk(),
+        treasury: newPk(),
+        endpointConfig: newPk(),
+        coveragePool: newPk(),
+        poolVault: newPk(),
+        usdcMint: newPk(),
+        slug,
+        flatPremiumLamports: 0n,
+        percentBps: 0,
+        slaLatencyMs: 0,
+        imputedCostLamports: 0n,
+        exposureCapPerHourLamports: 0n,
+        feeRecipients: [
+          { kind: FeeRecipientKind.Treasury, destination: newPk().toBase58(), bps: 1000 },
+          { kind: FeeRecipientKind.AffiliateAta, destination: newPk().toBase58(), bps: 500 },
+        ],
+        feeRecipientCount: 2,
+        // Empty — but feeRecipients has 1 AffiliateAta → mismatch.
+        affiliateAtas: [],
+      })
+    ).toThrow(/affiliateAtas length/);
   });
 
   test("buildRegisterEndpointIx mismatched recipientCount throws", () => {
@@ -258,8 +368,9 @@ describe("instruction builders — discriminator + payload bytes", () => {
     expect(ix.keys[4].pubkey.equals(TOKEN_PROGRAM_ID)).toBe(true);
   });
 
-  test("buildUpdateFeeRecipientsIx encodes slug + count + entries", () => {
+  test("buildUpdateFeeRecipientsIx encodes slug + count + entries and appends AffiliateAta accounts at indices 4+", () => {
     const slug = slugBytes("openai");
+    const affAta = newPk();
     const ix = buildUpdateFeeRecipientsIx({
       authority: newPk(),
       protocolConfig: newPk(),
@@ -279,11 +390,65 @@ describe("instruction builders — discriminator + payload bytes", () => {
         },
       ],
       feeRecipientCount: 2,
+      affiliateAtas: [affAta],
     });
     expect(ix.data[0]).toBe(DISC_UPDATE_FEE_RECIPIENTS);
     expect(Array.from(ix.data.subarray(1, 17))).toEqual(Array.from(slug));
     expect(ix.data[17]).toBe(2);
     expect(ix.data.length).toBe(1 + 16 + 1 + 2 * 48);
+    // 4 baseline + 1 AffiliateAta (codex 2026-05-05).
+    expect(ix.keys).toHaveLength(5);
+    expect(ix.keys[4].pubkey.equals(affAta)).toBe(true);
+    expect(ix.keys[4].isWritable).toBe(false);
+    expect(ix.keys[4].isSigner).toBe(false);
+  });
+
+  test("buildUpdateFeeRecipientsIx with no AffiliateAta entries omits trailing accounts", () => {
+    const slug = slugBytes("openai");
+    const ix = buildUpdateFeeRecipientsIx({
+      authority: newPk(),
+      protocolConfig: newPk(),
+      treasury: newPk(),
+      endpointConfig: newPk(),
+      slug,
+      feeRecipients: [
+        {
+          kind: FeeRecipientKind.Treasury,
+          destination: newPk().toBase58(),
+          bps: 1000,
+        },
+      ],
+      feeRecipientCount: 1,
+    });
+    expect(ix.keys).toHaveLength(4);
+  });
+
+  test("buildUpdateFeeRecipientsIx throws when affiliateAtas.length !== count(AffiliateAta)", () => {
+    const slug = slugBytes("openai");
+    expect(() =>
+      buildUpdateFeeRecipientsIx({
+        authority: newPk(),
+        protocolConfig: newPk(),
+        treasury: newPk(),
+        endpointConfig: newPk(),
+        slug,
+        feeRecipients: [
+          {
+            kind: FeeRecipientKind.Treasury,
+            destination: newPk().toBase58(),
+            bps: 1000,
+          },
+          {
+            kind: FeeRecipientKind.AffiliateAta,
+            destination: newPk().toBase58(),
+            bps: 500,
+          },
+        ],
+        feeRecipientCount: 2,
+        // Two AffiliateAta entries expected, only one supplied → throw.
+        affiliateAtas: [],
+      })
+    ).toThrow(/affiliateAtas length/);
   });
 
   test("buildSettleBatchIx encodes per-event payload + ordered accounts", () => {

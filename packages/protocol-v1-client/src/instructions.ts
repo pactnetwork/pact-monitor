@@ -32,7 +32,19 @@ import {
   PROGRAM_ID,
   TOKEN_PROGRAM_ID,
 } from "./constants.js";
-import { FeeRecipient, FEE_RECIPIENT_LEN } from "./state.js";
+import { FeeRecipient, FeeRecipientKind, FEE_RECIPIENT_LEN } from "./state.js";
+
+/**
+ * Count `AffiliateAta` entries in a fee_recipients array. Used by builders
+ * that need to validate the caller-supplied tail of `affiliateAtas` accounts.
+ */
+function countAffiliateAtas(recipients: FeeRecipient[]): number {
+  let n = 0;
+  for (const r of recipients) {
+    if (r.kind === FeeRecipientKind.AffiliateAta) n++;
+  }
+  return n;
+}
 
 const SLUG_LEN = 16;
 const CALL_ID_LEN = 16;
@@ -271,6 +283,20 @@ export interface RegisterEndpointParams {
    */
   feeRecipients?: FeeRecipient[];
   feeRecipientCount?: number;
+  /**
+   * One USDC ATA per `AffiliateAta` entry in `feeRecipients`, in the same
+   * order as they appear in the array. Required by the program (codex
+   * 2026-05-05 fix) — each ATA is validated to be an initialised SPL Token
+   * account on the protocol USDC mint with destination matching the
+   * recipient's destination pubkey. Length MUST equal the number of
+   * AffiliateAta entries; pass `[]` (or omit) when there are none.
+   *
+   * When `feeRecipients` is undefined the program substitutes the
+   * `ProtocolConfig.default_fee_recipients` array. The caller is responsible
+   * for inspecting that array off-chain (via `decodeProtocolConfig`) and
+   * supplying the matching ATAs here.
+   */
+  affiliateAtas?: PublicKey[];
 }
 
 /**
@@ -287,6 +313,9 @@ export interface RegisterEndpointParams {
  *   6. usdc_mint         readonly
  *   7. system_program
  *   8. token_program
+ *   9..9+M. affiliate_ata_0..affiliate_ata_M-1 — readonly, one per
+ *           AffiliateAta entry in fee_recipients, in array order
+ *           (codex 2026-05-05 review fix).
  */
 export function buildRegisterEndpointIx(
   p: RegisterEndpointParams
@@ -311,6 +340,21 @@ export function buildRegisterEndpointIx(
     );
   }
 
+  // Validate affiliateAtas length when feeRecipients is provided. When the
+  // caller defers to ProtocolConfig defaults (feeRecipients undefined) we
+  // can't verify count locally — pass through whatever the caller supplied
+  // and let the on-chain handler reject mismatches with NotEnoughAccountKeys
+  // / InvalidAffiliateAta.
+  const affiliateAtas = p.affiliateAtas ?? [];
+  if (p.feeRecipients !== undefined) {
+    const expectedAffiliateCount = countAffiliateAtas(p.feeRecipients);
+    if (affiliateAtas.length !== expectedAffiliateCount) {
+      throw new Error(
+        `affiliateAtas length (${affiliateAtas.length}) must equal the count of AffiliateAta entries in feeRecipients (${expectedAffiliateCount})`
+      );
+    }
+  }
+
   const present = p.feeRecipients ? 1 : 0;
   const count = p.feeRecipients?.length ?? 0;
   const body = p.feeRecipients
@@ -331,19 +375,24 @@ export function buildRegisterEndpointIx(
   data[1 + 47] = count;
   Buffer.from(body).copy(data, 1 + 48);
 
+  const keys: AccountMeta[] = [
+    { pubkey: p.authority, isSigner: true, isWritable: true },
+    { pubkey: p.protocolConfig, isSigner: false, isWritable: false },
+    { pubkey: p.treasury, isSigner: false, isWritable: false },
+    { pubkey: p.endpointConfig, isSigner: false, isWritable: true },
+    { pubkey: p.coveragePool, isSigner: false, isWritable: true },
+    { pubkey: p.poolVault, isSigner: false, isWritable: true },
+    { pubkey: p.usdcMint, isSigner: false, isWritable: false },
+    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+  ];
+  for (const ata of affiliateAtas) {
+    keys.push({ pubkey: ata, isSigner: false, isWritable: false });
+  }
+
   return new TransactionInstruction({
     programId,
-    keys: [
-      { pubkey: p.authority, isSigner: true, isWritable: true },
-      { pubkey: p.protocolConfig, isSigner: false, isWritable: false },
-      { pubkey: p.treasury, isSigner: false, isWritable: false },
-      { pubkey: p.endpointConfig, isSigner: false, isWritable: true },
-      { pubkey: p.coveragePool, isSigner: false, isWritable: true },
-      { pubkey: p.poolVault, isSigner: false, isWritable: true },
-      { pubkey: p.usdcMint, isSigner: false, isWritable: false },
-      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-      { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
-    ],
+    keys,
     data,
   });
 }
@@ -531,6 +580,13 @@ export interface UpdateFeeRecipientsParams {
   feeRecipients: FeeRecipient[];
   /** Must equal `feeRecipients.length` — kept explicit to mirror on-chain wire. */
   feeRecipientCount: number;
+  /**
+   * One USDC ATA per `AffiliateAta` entry in `feeRecipients`, in array order.
+   * Required by the program (codex 2026-05-05 fix). Length MUST equal the
+   * number of AffiliateAta entries in the new `feeRecipients` array; pass
+   * `[]` (or omit) when there are none.
+   */
+  affiliateAtas?: PublicKey[];
 }
 
 /**
@@ -541,6 +597,9 @@ export interface UpdateFeeRecipientsParams {
  *   1. protocol_config   readonly
  *   2. treasury          readonly
  *   3. endpoint_config   writable
+ *   4..4+M. affiliate_ata_0..affiliate_ata_M-1 — readonly, one per
+ *           AffiliateAta entry in the new fee_recipients (codex
+ *           2026-05-05 review fix).
  *
  * Data: [disc=14][slug:16][count:u8][entries...].
  */
@@ -553,6 +612,13 @@ export function buildUpdateFeeRecipientsIx(
       `feeRecipientCount (${p.feeRecipientCount}) must equal feeRecipients.length (${p.feeRecipients.length})`
     );
   }
+  const affiliateAtas = p.affiliateAtas ?? [];
+  const expectedAffiliateCount = countAffiliateAtas(p.feeRecipients);
+  if (affiliateAtas.length !== expectedAffiliateCount) {
+    throw new Error(
+      `affiliateAtas length (${affiliateAtas.length}) must equal the count of AffiliateAta entries in feeRecipients (${expectedAffiliateCount})`
+    );
+  }
   const slug = asSlug(p.slug);
   const body = encodeFeeRecipientArray(p.feeRecipients);
   const data = Buffer.alloc(1 + 16 + 1 + body.length);
@@ -561,14 +627,19 @@ export function buildUpdateFeeRecipientsIx(
   data[17] = p.feeRecipientCount;
   Buffer.from(body).copy(data, 18);
 
+  const keys: AccountMeta[] = [
+    { pubkey: p.authority, isSigner: true, isWritable: false },
+    { pubkey: p.protocolConfig, isSigner: false, isWritable: false },
+    { pubkey: p.treasury, isSigner: false, isWritable: false },
+    { pubkey: p.endpointConfig, isSigner: false, isWritable: true },
+  ];
+  for (const ata of affiliateAtas) {
+    keys.push({ pubkey: ata, isSigner: false, isWritable: false });
+  }
+
   return new TransactionInstruction({
     programId,
-    keys: [
-      { pubkey: p.authority, isSigner: true, isWritable: false },
-      { pubkey: p.protocolConfig, isSigner: false, isWritable: false },
-      { pubkey: p.treasury, isSigner: false, isWritable: false },
-      { pubkey: p.endpointConfig, isSigner: false, isWritable: true },
-    ],
+    keys,
     data,
   });
 }

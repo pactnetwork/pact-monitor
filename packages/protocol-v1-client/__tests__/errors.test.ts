@@ -10,6 +10,8 @@ import {
 const EXPECTED_CODES = [
   6000, 6001, 6002, 6005, 6006, 6007, 6008, 6010, 6011, 6012, 6013, 6014,
   6015, 6016, 6017, 6018, 6019, 6020, 6021, 6022, 6023, 6024, 6025, 6026,
+  // Codex 2026-05-05 review fixes.
+  6027, 6028, 6029, 6030, 6031,
 ];
 
 describe("error decoder", () => {
@@ -60,6 +62,14 @@ describe("error decoder", () => {
     expect(tryExtractProtocolError({ message: "boom" })).toBeUndefined();
     expect(tryExtractProtocolError(null)).toBeUndefined();
     expect(tryExtractProtocolError("string")).toBeUndefined();
+  });
+
+  test("codex 2026-05-05 fix codes (6027-6031) decode to the new names", () => {
+    expect(decodeProtocolError(6027)!.name).toBe("InvalidProtocolConfig");
+    expect(decodeProtocolError(6028)!.name).toBe("InvalidTreasury");
+    expect(decodeProtocolError(6029)!.name).toBe("MissingTreasuryEntry");
+    expect(decodeProtocolError(6030)!.name).toBe("TreasuryBpsZero");
+    expect(decodeProtocolError(6031)!.name).toBe("InvalidAffiliateAta");
   });
 
   test("tryExtractProtocolError handles unknown codes", () => {
