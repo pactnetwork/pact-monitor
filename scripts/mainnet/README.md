@@ -233,17 +233,49 @@ If you want to nuke everything and start over: deploy a NEW program (different p
 
 ## Kill switch
 
-If a critical bug surfaces post-launch:
+If a critical bug surfaces post-launch, flip the on-chain `pause_protocol`
+flag from your laptop. Sets `ProtocolConfig.paused`, which makes every
+`settle_batch` reject with `PactError::ProtocolPaused (6032)` before any
+per-event work runs. Existing SPL Token approvals on agent ATAs do NOT
+auto-revoke, but no settlement can drain them while paused.
+
+Script: [`scripts/mainnet/pause-protocol.ts`](pause-protocol.ts).
 
 ```bash
-# from laptop with upgrade-authority keypair
 cd scripts/mainnet
-bun pause-protocol --paused 1   # script TBD; may need to write inline
+bun install   # first run only
+
+# Rehearse first — reads on-chain state, prints what would happen, no tx sent.
+DRY_RUN=1 bun run pause -- --paused 1
+
+# PAUSE the protocol (settlement halted globally).
+bun run pause -- --paused 1
+
+# UNPAUSE the protocol once the incident is resolved.
+bun run pause -- --paused 0
 ```
 
-(Or use the dashboard ops UI when it ships, gated to operators.)
+What the script does:
 
-The on-chain `pause_protocol` ix at discriminator 15 sets `ProtocolConfig.paused = 1`, which causes every `settle_batch` to reject with error 6032 (`ProtocolPaused`). Existing approvals on agent ATAs do NOT auto-revoke, but no settlement can drain them while paused.
+1. Reads `pact-mainnet-upgrade-authority.json` and
+   `pact-network-v1-program-keypair.json` from `$MAINNET_KEYS_DIR`
+   (default `~/pact-mainnet-keys`). Program ID is derived from the keypair
+   file — `.mainnet-state.json` is not required.
+2. Connects to `$MAINNET_RPC_URL` (default
+   `https://api.mainnet-beta.solana.com`) and confirms the program is deployed.
+3. Fetches `ProtocolConfig`, decodes `paused` (byte 75) via
+   `decodeProtocolConfig`, prints the current state.
+4. Asserts the keypair pubkey matches `ProtocolConfig.authority` on chain —
+   any mismatch aborts before sending.
+5. **No-ops** with exit 0 if already at the requested state.
+6. Builds `pause_protocol` (discriminator 15), signs with the upgrade
+   authority, sends with `confirmed` commitment.
+7. Refetches `ProtocolConfig` and asserts the new `paused` byte matches
+   the requested target. If it doesn't, exits non-zero with the tx signature
+   so you can investigate manually.
+
+Operator-only. The dashboard ops UI will ship later for the same toggle, gated
+to the same authority via `nacl` signed-message verification.
 
 ## Hand-off to dev VM after init
 
