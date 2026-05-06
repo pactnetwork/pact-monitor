@@ -322,6 +322,65 @@ describe("SubmitterService", () => {
     // 1000 * 1000 / 10_000 = 100
     expect(outcome.perEventShares[0][0].amountLamports).toBe(100n);
     expect(buildSettleBatchIxMock).toHaveBeenCalledOnce();
+
+    // Mainnet kill switch (2026-05-06): submitter must pass the canonical
+    // ProtocolConfig PDA so the on-chain handler can read `paused` at fixed
+    // account index 4 before any per-event work.
+    const args = buildSettleBatchIxMock.mock.calls[0][0] as {
+      protocolConfig: PublicKey;
+    };
+    expect(args.protocolConfig).toBeDefined();
+    expect(args.protocolConfig.equals(service.derivedProtocolConfigPda)).toBe(true);
+  });
+
+  it("derives ProtocolConfig PDA at boot and passes it to buildSettleBatchIx (kill-switch wiring)", async () => {
+    // Verifies the settler does NOT try to fetch ProtocolConfig — the program
+    // does its own load + verify; the settler just supplies the PDA.
+    const heliusEp = fakeEndpointConfig({
+      slug: "helius",
+      feeRecipients: [
+        { kind: FeeRecipientKind.Treasury, destination: TREASURY_VAULT.toBase58(), bps: 1000 },
+      ],
+    });
+    wireChainStubs(
+      new Map([
+        ["helius", { config: heliusEp, pool: fakePool(HELIUS_POOL_VAULT), epPda: heliusEpPda, poolPda: heliusPoolPda }],
+      ]),
+      { pda: treasuryPda, treasury: fakeTreasury(TREASURY_VAULT) },
+    );
+    sendAndConfirmMock.mockResolvedValueOnce("sig_kill_switch_wired");
+    await service.onModuleInit();
+
+    // Recompute the canonical PDA the same way the service does.
+    const programId = new PublicKey(
+      "5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5",
+    );
+    const { getProtocolConfigPda } = await import(
+      "@pact-network/protocol-v1-client"
+    );
+    const [expectedPcPda] = getProtocolConfigPda(programId);
+
+    expect(service.derivedProtocolConfigPda.equals(expectedPcPda)).toBe(true);
+
+    const batch: SettleBatch = {
+      messages: [
+        makeMessage({
+          callIdHex: "00000000000000000000000000000abc",
+          agentPubkey: Keypair.generate().publicKey.toBase58(),
+          slug: "helius",
+        }),
+      ],
+    };
+    await service.submit(batch);
+
+    const args = buildSettleBatchIxMock.mock.calls[0][0] as {
+      protocolConfig: PublicKey;
+      settlementAuthority: PublicKey;
+      settler: PublicKey;
+    };
+    // ProtocolConfig PDA goes into buildSettleBatchIx, which puts it at fixed
+    // account index 4 in the resulting tx accounts list.
+    expect(args.protocolConfig.equals(expectedPcPda)).toBe(true);
   });
 
   it("builds per-event positional accounts (no cross-event dedup) for a mixed batch", async () => {

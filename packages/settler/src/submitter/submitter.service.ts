@@ -59,6 +59,7 @@ import {
   getCallRecordPda,
   getCoveragePoolPda,
   getEndpointConfigPda,
+  getProtocolConfigPda,
   getSettlementAuthorityPda,
   getTreasuryPda,
   slugBytes,
@@ -113,6 +114,17 @@ export class SubmitterService implements OnModuleInit {
   private readonly usdcMint: PublicKey;
   private readonly settlementAuthorityPda: PublicKey;
   private readonly treasuryPda: PublicKey;
+  /**
+   * Canonical [b"protocol_config"] PDA. Required as fixed account index 4 of
+   * every `settle_batch` tx — the on-chain handler reads `paused` here and
+   * rejects the entire batch with `PactError::ProtocolPaused (6032)` before
+   * any per-event work runs (mainnet kill switch, 2026-05-06).
+   *
+   * The settler does NOT need to read or decode the account — the program
+   * does its own load + verify. We just supply the PDA so the program can
+   * deref its own data buffer.
+   */
+  private readonly protocolConfigPda: PublicKey;
   private treasuryVault: PublicKey | null = null;
   private readonly endpointCache = new Map<string, EndpointSnapshot>();
 
@@ -131,6 +143,7 @@ export class SubmitterService implements OnModuleInit {
     );
     [this.settlementAuthorityPda] = getSettlementAuthorityPda(this.programId);
     [this.treasuryPda] = getTreasuryPda(this.programId);
+    [this.protocolConfigPda] = getProtocolConfigPda(this.programId);
   }
 
   async onModuleInit(): Promise<void> {
@@ -235,6 +248,11 @@ export class SubmitterService implements OnModuleInit {
       programId: this.programId,
       settler,
       settlementAuthority: this.settlementAuthorityPda,
+      // Mainnet kill switch (2026-05-06): ProtocolConfig sits at fixed
+      // account index 4. The on-chain handler reads `paused` here and
+      // rejects the entire batch (PactError::ProtocolPaused = 6032) before
+      // any per-event work runs.
+      protocolConfig: this.protocolConfigPda,
       events,
       callRecordPdas,
     });
@@ -467,6 +485,10 @@ export class SubmitterService implements OnModuleInit {
 
   get derivedTreasuryPda(): PublicKey {
     return this.treasuryPda;
+  }
+
+  get derivedProtocolConfigPda(): PublicKey {
+    return this.protocolConfigPda;
   }
 }
 

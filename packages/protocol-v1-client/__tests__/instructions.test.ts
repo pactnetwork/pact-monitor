@@ -29,7 +29,7 @@ import {
   SETTLE_EVENT_BYTES,
 } from "../src/instructions.js";
 import { FeeRecipientKind } from "../src/state.js";
-import { slugBytes } from "../src/pda.js";
+import { getProtocolConfigPda, slugBytes } from "../src/pda.js";
 
 const newPk = () => Keypair.generate().publicKey;
 
@@ -289,6 +289,7 @@ describe("instruction builders — discriminator + payload bytes", () => {
   test("buildSettleBatchIx encodes per-event payload + ordered accounts", () => {
     const settler = newPk();
     const sa = newPk();
+    const [protocolConfig] = getProtocolConfigPda(PROGRAM_ID);
     const callId = new Uint8Array(16).fill(0xab);
     const slug = slugBytes("openai");
     const agentOwner = newPk();
@@ -302,6 +303,7 @@ describe("instruction builders — discriminator + payload bytes", () => {
     const ix = buildSettleBatchIx({
       settler,
       settlementAuthority: sa,
+      protocolConfig,
       events: [
         {
           callId,
@@ -343,27 +345,33 @@ describe("instruction builders — discriminator + payload bytes", () => {
     expect(ix.data[off + 85]).toBe(1); // fee_recipient_count_hint
     expect(ix.data.readBigInt64LE(off + 92)).toBe(1714000000n);
 
-    // Account ordering: 4 fixed prefix + 5 per-event + 1 fee ATA.
-    expect(ix.keys).toHaveLength(4 + 5 + 1);
+    // Account ordering: 5 fixed prefix (incl. ProtocolConfig at idx 4) +
+    // 5 per-event + 1 fee ATA.
+    expect(ix.keys).toHaveLength(5 + 5 + 1);
     expect(ix.keys[0].pubkey.equals(settler)).toBe(true);
     expect(ix.keys[0].isSigner).toBe(true);
     expect(ix.keys[1].pubkey.equals(sa)).toBe(true);
     expect(ix.keys[1].isWritable).toBe(false);
     expect(ix.keys[2].pubkey.equals(TOKEN_PROGRAM_ID)).toBe(true);
     expect(ix.keys[3].pubkey.equals(SystemProgram.programId)).toBe(true);
-    expect(ix.keys[4].pubkey.equals(callRecordPda)).toBe(true);
-    expect(ix.keys[5].pubkey.equals(coveragePool)).toBe(true);
-    expect(ix.keys[6].pubkey.equals(poolVault)).toBe(true);
-    expect(ix.keys[7].pubkey.equals(endpointConfig)).toBe(true);
-    expect(ix.keys[8].pubkey.equals(agentAta)).toBe(true);
-    expect(ix.keys[9].pubkey.equals(treasuryAta)).toBe(true);
+    // Index 4 = ProtocolConfig PDA (mainnet kill-switch addition 2026-05-06).
+    expect(ix.keys[4].pubkey.equals(protocolConfig)).toBe(true);
+    expect(ix.keys[4].isWritable).toBe(false);
+    expect(ix.keys[5].pubkey.equals(callRecordPda)).toBe(true);
+    expect(ix.keys[6].pubkey.equals(coveragePool)).toBe(true);
+    expect(ix.keys[7].pubkey.equals(poolVault)).toBe(true);
+    expect(ix.keys[8].pubkey.equals(endpointConfig)).toBe(true);
+    expect(ix.keys[9].pubkey.equals(agentAta)).toBe(true);
+    expect(ix.keys[10].pubkey.equals(treasuryAta)).toBe(true);
   });
 
   test("buildSettleBatchIx mismatched callRecordPdas count throws", () => {
+    const [protocolConfig] = getProtocolConfigPda(PROGRAM_ID);
     expect(() =>
       buildSettleBatchIx({
         settler: newPk(),
         settlementAuthority: newPk(),
+        protocolConfig,
         events: [],
         callRecordPdas: [newPk()],
       })

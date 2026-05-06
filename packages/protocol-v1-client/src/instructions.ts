@@ -609,6 +609,17 @@ export interface SettleBatchParams {
   /** Must equal SettlementAuthority.signer. */
   settler: PublicKey;
   settlementAuthority: PublicKey;
+  /**
+   * Canonical ProtocolConfig PDA (`[b"protocol_config"]`). Sits at fixed
+   * account index 4 — the on-chain handler reads `paused` here before any
+   * per-event work runs and rejects the entire batch with
+   * `PactError::ProtocolPaused (6032)` if the kill switch is engaged. Pre-derive
+   * via `getProtocolConfigPda(programId)`; supplying any other key fails the
+   * `verify_protocol_config` PDA check. Mainnet kill-switch addition,
+   * 2026-05-06 — keep in sync with the protocol-v1-client edits on
+   * `feat/pact-market-program`.
+   */
+  protocolConfig: PublicKey;
   events: SettlementEvent[];
   /**
    * Per-event CallRecord PDAs. If omitted, the builder will require the caller
@@ -624,11 +635,15 @@ export const SETTLE_EVENT_BYTES = 104;
  * Builds the `settle_batch` instruction.
  *
  * Account layout (must match `src/instructions/settle_batch.rs`):
- *   Fixed prefix (4):
+ *   Fixed prefix (5):
  *     0. settler_signer
  *     1. settlement_authority PDA
  *     2. token_program
  *     3. system_program
+ *     4. protocol_config PDA — readonly canonical [b"protocol_config"];
+ *        on-chain handler reads `paused` here and rejects the entire batch
+ *        with `PactError::ProtocolPaused (6032)` before any per-event work.
+ *        (Mainnet kill-switch addition, 2026-05-06.)
  *   Per event (5 + N where N = endpoint.fee_recipient_count):
  *     0. call_record PDA
  *     1. coverage_pool PDA
@@ -688,6 +703,7 @@ export function buildSettleBatchIx(
     { pubkey: p.settlementAuthority, isSigner: false, isWritable: false },
     { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
     { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    { pubkey: p.protocolConfig, isSigner: false, isWritable: false },
   ];
 
   for (let i = 0; i < events.length; i++) {
