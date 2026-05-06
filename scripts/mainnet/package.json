@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "init": "tsx init-mainnet.ts",
-    "init:dry": "DRY_RUN=1 tsx init-mainnet.ts"
+    "init:dry": "DRY_RUN=1 tsx init-mainnet.ts",
+    "pause": "tsx pause-protocol.ts",
+    "pause:dry": "DRY_RUN=1 tsx pause-protocol.ts"
   },
   "dependencies": {
     "@pact-network/protocol-v1-client": "workspace:*",
