@@ -1,0 +1,30 @@
+{
+  "name": "@pact-network/smoke-tier2",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Tier-2 surfpool e2e smoke harness — see README.md",
+  "scripts": {
+    "00-setup":     "tsx 00-setup.ts",
+    "02-init":      "tsx 02-init-protocol.ts",
+    "03-fund":      "tsx 03-fund-agents.ts",
+    "04c-seed":     "tsx 04c-seed-indexer.ts",
+    "05-fire":      "tsx 05-fire-50-calls.ts",
+    "06-reconcile": "tsx 06-reconcile.ts",
+    "07-pause":     "tsx 07-pause-roundtrip.ts",
+    "stop":         "bash 04b-stop-stack.sh"
+  },
+  "dependencies": {
+    "@google-cloud/pubsub": "^4.0.0",
+    "@pact-network/protocol-v1-client": "workspace:*",
+    "@solana/web3.js": "^1.95.0",
+    "bs58": "^6.0.0",
+    "pg": "^8.13.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/pg": "^8.11.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.3"
+  }
+}
