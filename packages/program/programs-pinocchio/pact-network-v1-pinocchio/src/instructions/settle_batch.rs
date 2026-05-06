@@ -14,11 +14,14 @@
 ///   5. Refund (on breach): pool_vault → agent_ata for refund amount,
 ///      authority = CoveragePool PDA.
 ///
-/// Account layout — fixed prefix (4):
+/// Account layout — fixed prefix (5):
 ///   0. settler_signer
 ///   1. settlement_authority PDA (readonly; also acts as token delegate)
 ///   2. token_program
 ///   3. system_program
+///   4. protocol_config PDA (readonly; canonical [b"protocol_config"], used
+///      to enforce the global `paused` kill switch before any per-event work
+///      runs — mainnet launch addition)
 ///
 /// Per-event accounts (5 + N where N = endpoint.fee_recipient_count):
 ///   0. call_record PDA (writable, init)
@@ -55,17 +58,17 @@ use crate::{
     error::PactError,
     pda::{
         derive_call_record, derive_coverage_pool, derive_endpoint_config,
-        SEED_COVERAGE_POOL, SEED_CALL, SEED_SETTLEMENT_AUTHORITY,
+        verify_protocol_config, SEED_COVERAGE_POOL, SEED_CALL, SEED_SETTLEMENT_AUTHORITY,
     },
     state::{
-        CallRecord, CoveragePool, EndpointConfig, FeeRecipient, SettlementAuthority,
-        SettlementStatus,
+        CallRecord, CoveragePool, EndpointConfig, FeeRecipient, ProtocolConfig,
+        SettlementAuthority, SettlementStatus,
     },
     system::{create_account, SYSTEM_PROGRAM_ID},
     token::{transfer_pda_signed, SPL_TOKEN_PROGRAM_ID},
 };
 
-const FIXED_ACCOUNTS: usize = 4;
+const FIXED_ACCOUNTS: usize = 5;
 const FIXED_PER_EVENT: usize = 5; // call_record, pool, pool_vault, endpoint, agent_ata
 const BYTES_PER_EVENT: usize = 104;
 
@@ -81,6 +84,7 @@ pub fn process(accounts: &[AccountView], data: &[u8]) -> ProgramResult {
     let settlement_auth = &accounts[1];
     let token_program = &accounts[2];
     let system_program = &accounts[3];
+    let protocol_config = &accounts[4];
 
     if token_program.address() != &SPL_TOKEN_PROGRAM_ID {
         return Err(ProgramError::IncorrectProgramId);
@@ -90,6 +94,24 @@ pub fn process(accounts: &[AccountView], data: &[u8]) -> ProgramResult {
     }
     if !settler_signer.is_signer() {
         return Err(ProgramError::MissingRequiredSignature);
+    }
+
+    // ----- Mainnet kill switch -----
+    // Verify the supplied ProtocolConfig is the canonical [b"protocol_config"]
+    // PDA + program-owned, then check the `paused` byte BEFORE any per-event
+    // processing or token transfer. While paused, settle_batch is a no-op
+    // that fails fast with PactError::ProtocolPaused — operators can flip
+    // the flag back via `pause_protocol(0)` to resume.
+    verify_protocol_config(protocol_config)?;
+    {
+        let pc_data = protocol_config.try_borrow()?;
+        if pc_data.len() < ProtocolConfig::LEN {
+            return Err(PactError::ProtocolConfigNotInitialized.into());
+        }
+        let pc: &ProtocolConfig = bytemuck::from_bytes(&pc_data[..ProtocolConfig::LEN]);
+        if pc.paused != 0 {
+            return Err(PactError::ProtocolPaused.into());
+        }
     }
 
     // Verify settler_signer matches SettlementAuthority.signer and read bump.
