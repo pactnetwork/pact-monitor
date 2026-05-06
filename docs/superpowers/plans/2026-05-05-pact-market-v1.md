@@ -4,7 +4,7 @@
 
 **Goal:** Ship Pact Market V1 — a parametric API insurance proxy on Solana — to public devnet by Wed May 6, mainnet by Mon May 11 (Colosseum submission).
 
-**Architecture:** Five-unit system on GCP. Cloud Run services for proxy (Hono), settler (NestJS), indexer (NestJS); Pub/Sub event queue between proxy and settler; Cloud SQL Postgres for per-call history; Vercel-hosted Next.js dashboard; new `pact-market-pinocchio` Pinocchio crate on Solana. Settlement authority hot key stored in GCP Secret Manager. Refunds settle on-chain to AgentWallet PDA, dashboard auto-claims to client wallet via new `claim_refund` instruction.
+**Architecture:** Five-unit system on GCP. Cloud Run services for proxy (Hono), settler (NestJS), indexer (NestJS); Pub/Sub event queue between proxy and settler; Cloud SQL Postgres for per-call history; Vercel-hosted Next.js dashboard; new `pact-market-pinocchio` Pinocchio crate on Solana. Settlement authority hot key stored in GCP Secret Manager. Agent custody is via SPL Token approval (spec §3.1.2): the agent grants `SettlementAuthority` PDA a spending allowance on their own USDC ATA (one wallet click); `settle_batch` debits the agent ATA via SPL delegate authority and, on breach, transfers the refund directly back to the agent's USDC ATA — no `claim_refund` step, no `AgentWallet` PDA, no auto-claim flow.
 
 **Tech Stack:** Pinocchio 0.10 (Rust), TypeScript everywhere else. Hono 4 + Cloudflare-Workers-style API on Cloud Run. NestJS 10 + Prisma 5 + Postgres 16. Next.js 15 + Tailwind 4 + shadcn + `@solana/wallet-adapter-react`. `@solana/kit` 2 + Codama for client code. `@google-cloud/pubsub` + `@google-cloud/secret-manager`. pnpm workspaces, Turborepo, Vitest, LiteSVM (Bun), surfpool.
 
@@ -207,7 +207,7 @@ git commit -m "chore(deploy): gitignore deploy/gcp.env"
 
 ## Wave 1A — `pact-market-pinocchio` program [Network rails]
 
-> **Layering note:** This crate will be renamed to `pact-network-v1-pinocchio` as part of Step B in the layering refactor (see `docs/superpowers/plans/2026-05-05-network-market-layering-and-v1-v2-rename.md`). The on-chain program will absorb four substantive changes during that refactor — per-endpoint coverage pools, agent custody via SPL Token approval (instead of a custodial AgentWallet PDA), interchangeable fee recipients, and an explicit treasury account. Tasks below describe the V1 design as currently scoped; the layering plan tracks the V2 follow-ups.
+> **Layering note:** This crate will be renamed to `pact-network-v1-pinocchio` as part of Step B in the layering refactor (see `docs/superpowers/plans/2026-05-05-network-market-layering-and-v1-v2-rename.md`). The four substantive on-chain changes — per-endpoint coverage pools (§3.1.1), agent custody via SPL Token approval (§3.1.2), interchangeable fee recipients (§3.1.3), and an explicit treasury account — are **part of V1 itself**, not V2 follow-ups. The tasks below describe the V1 design with those changes baked in: no `AgentWallet` PDA, no `deposit_usdc`/`request_withdrawal`/`execute_withdrawal`/`claim_refund` instructions, no `WITHDRAWAL_COOLDOWN_SECS`/`MAX_DEPOSIT_LAMPORTS`. Per-endpoint pools, Treasury + ProtocolConfig accounts, and the channel-then-fan-out `settle_batch` are required for the Wed devnet ship.
 
 **Branch:** `feat/pact-market-program`
 **Owner:** Crew agent `program-crew`
@@ -221,35 +221,31 @@ packages/program/programs-pinocchio/pact-market-pinocchio/
 ├── Cargo.toml
 ├── src/
 │   ├── lib.rs              # entrypoint + dispatch
-│   ├── state.rs            # CoveragePool, EndpointConfig, AgentWallet, CallRecord, SettlementAuthority
-│   ├── error.rs            # PactError enum 6000..6015
-│   ├── pda.rs              # seed derivation helpers
+│   ├── state.rs            # per-endpoint CoveragePool, EndpointConfig (with fee_recipients), CallRecord, SettlementAuthority, Treasury, ProtocolConfig (NO AgentWallet — §3.1.2)
+│   ├── error.rs            # PactError enum 6000..6015 + fee-validation codes
+│   ├── pda.rs              # seed derivation helpers (per-endpoint pool seeds)
 │   ├── discriminator.rs    # 1-byte instruction discriminators
-│   ├── constants.rs        # USDC mint, MAX_BATCH_SIZE, etc.
+│   ├── constants.rs        # USDC mint, MAX_BATCH_SIZE, MAX_FEE_RECIPIENTS, MAX_TOTAL_FEE_BPS, MIN_PREMIUM_LAMPORTS
 │   ├── token.rs            # SPL Token CPI helpers (vendored if not in pinocchio-token-program)
 │   └── instructions/
 │       ├── mod.rs
-│       ├── initialize_coverage_pool.rs
 │       ├── initialize_settlement_authority.rs
-│       ├── register_endpoint.rs
+│       ├── initialize_treasury.rs            # §3.1.3
+│       ├── initialize_protocol_config.rs     # §3.1.3
+│       ├── register_endpoint.rs              # creates per-endpoint CoveragePool atomically (§3.1.1) + accepts fee_recipients (§3.1.3)
 │       ├── update_endpoint_config.rs
+│       ├── update_fee_recipients.rs          # §3.1.3
 │       ├── pause_endpoint.rs
-│       ├── initialize_agent_wallet.rs
-│       ├── deposit_usdc.rs
-│       ├── request_withdrawal.rs
-│       ├── execute_withdrawal.rs
-│       ├── top_up_coverage_pool.rs
-│       ├── settle_batch.rs
-│       └── claim_refund.rs
+│       ├── top_up_coverage_pool.rs           # scoped per-endpoint slug (§3.1.1)
+│       └── settle_batch.rs                   # pre-flight delegate check, debit agent USDC ATA via SPL delegate, channel-then-fan-out per-recipient transfers, refund direct to agent ATA on breach (§3.1.2 + §3.1.3)
 └── tests/
-    ├── 01-pool.ts
-    ├── 02-endpoint.ts
-    ├── 03-agent-wallet.ts
-    ├── 04-deposit-withdraw.ts
-    ├── 05-settle-batch.ts
+    ├── 01-pool.ts                             # per-endpoint CoveragePool init + isolation
+    ├── 02-endpoint.ts                         # register_endpoint (incl. fee_recipients validation)
+    ├── 03-approval.ts                         # SPL approval custody happy path + revoked-approval pre-flight DelegateFailed
+    ├── 04-fee-fanout.ts                       # §3.1.3 channel-then-fan-out, rounding to pool, validation rejects
+    ├── 05-settle-batch.ts                     # mixed-endpoint batch, dedup, refund direct to agent ATA
     ├── 06-pause.ts
-    ├── 07-exposure-cap.ts
-    └── 08-claim-refund.ts
+    └── 07-exposure-cap.ts
 ```
 
 ### Task 1A.0: Branch + crate scaffold
@@ -327,18 +323,19 @@ pub fn process_instruction(
 ) -> ProgramResult {
     let (disc, ix_data) = data.split_first().ok_or(pinocchio::program_error::ProgramError::InvalidInstructionData)?;
     match *disc {
-        0 => instructions::initialize_coverage_pool::process(program_id, accounts, ix_data),
-        1 => instructions::initialize_settlement_authority::process(program_id, accounts, ix_data),
-        2 => instructions::register_endpoint::process(program_id, accounts, ix_data),
-        3 => instructions::update_endpoint_config::process(program_id, accounts, ix_data),
-        4 => instructions::pause_endpoint::process(program_id, accounts, ix_data),
-        5 => instructions::initialize_agent_wallet::process(program_id, accounts, ix_data),
-        6 => instructions::deposit_usdc::process(program_id, accounts, ix_data),
-        7 => instructions::request_withdrawal::process(program_id, accounts, ix_data),
-        8 => instructions::execute_withdrawal::process(program_id, accounts, ix_data),
-        9 => instructions::top_up_coverage_pool::process(program_id, accounts, ix_data),
-        10 => instructions::settle_batch::process(program_id, accounts, ix_data),
-        11 => instructions::claim_refund::process(program_id, accounts, ix_data),
+        0 => instructions::initialize_settlement_authority::process(program_id, accounts, ix_data),
+        1 => instructions::initialize_treasury::process(program_id, accounts, ix_data),
+        2 => instructions::initialize_protocol_config::process(program_id, accounts, ix_data),
+        3 => instructions::register_endpoint::process(program_id, accounts, ix_data),
+        4 => instructions::update_endpoint_config::process(program_id, accounts, ix_data),
+        5 => instructions::update_fee_recipients::process(program_id, accounts, ix_data),
+        6 => instructions::pause_endpoint::process(program_id, accounts, ix_data),
+        7 => instructions::top_up_coverage_pool::process(program_id, accounts, ix_data),
+        8 => instructions::settle_batch::process(program_id, accounts, ix_data),
+        // NOTE: agent custody is via SPL Token Approve (§3.1.2). No
+        // initialize_agent_wallet / deposit_usdc / request_withdrawal /
+        // execute_withdrawal / claim_refund instructions exist in this program;
+        // refunds land directly in the agent's USDC ATA inside settle_batch.
         _ => Err(pinocchio::program_error::ProgramError::InvalidInstructionData),
     }
 }
@@ -348,9 +345,9 @@ pub fn process_instruction(
 
 ```bash
 mkdir -p packages/program/programs-pinocchio/pact-market-pinocchio/src/instructions
-for f in initialize_coverage_pool initialize_settlement_authority register_endpoint \
-         update_endpoint_config pause_endpoint initialize_agent_wallet deposit_usdc \
-         request_withdrawal execute_withdrawal top_up_coverage_pool settle_batch claim_refund; do
+for f in initialize_settlement_authority initialize_treasury initialize_protocol_config \
+         register_endpoint update_endpoint_config update_fee_recipients pause_endpoint \
+         top_up_coverage_pool settle_batch; do
   cat > packages/program/programs-pinocchio/pact-market-pinocchio/src/instructions/$f.rs <<EOF
 use pinocchio::{account_info::AccountInfo, ProgramResult};
 
@@ -365,21 +362,18 @@ EOF
 done
 ```
 
-- [ ] **Step 7:** Create `src/instructions/mod.rs` listing all 12 instructions:
+- [ ] **Step 7:** Create `src/instructions/mod.rs` listing all 9 instructions:
 
 ```rust
-pub mod claim_refund;
-pub mod deposit_usdc;
-pub mod execute_withdrawal;
-pub mod initialize_agent_wallet;
-pub mod initialize_coverage_pool;
+pub mod initialize_protocol_config;
 pub mod initialize_settlement_authority;
+pub mod initialize_treasury;
 pub mod pause_endpoint;
-pub mod register_endpoint;
-pub mod request_withdrawal;
+pub mod register_endpoint;          // creates per-endpoint CoveragePool atomically (§3.1.1)
 pub mod settle_batch;
-pub mod top_up_coverage_pool;
+pub mod top_up_coverage_pool;       // scoped per slug (§3.1.1)
 pub mod update_endpoint_config;
+pub mod update_fee_recipients;
 ```
 
 - [ ] **Step 8:** Create empty `state.rs`, `error.rs`, `pda.rs`, `discriminator.rs`, `constants.rs` with `// stub` comments.
@@ -415,12 +409,14 @@ pub const USDC_DEVNET: Pubkey = solana_pubkey_macro::pubkey!("4zMMC9srt5Ri5X14GA
 // Batch
 pub const MAX_BATCH_SIZE: usize = 50;
 
-// Withdrawal cooldown
-pub const WITHDRAWAL_COOLDOWN_SECS: i64 = 86_400;
-
-// Deposit caps (lamports of USDC, 6 decimals)
-pub const MAX_DEPOSIT_LAMPORTS: u64 = 25_000_000;  // $25
+// Premium / fee caps (lamports of USDC, 6 decimals)
 pub const MIN_PREMIUM_LAMPORTS: u64 = 100;          // $0.0001
+pub const MAX_FEE_RECIPIENTS: usize = 8;            // §3.1.3
+pub const MAX_TOTAL_FEE_BPS: u16 = 3_000;           // 30%, default protocol cap (§3.1.3)
+
+// NOTE: WITHDRAWAL_COOLDOWN_SECS and MAX_DEPOSIT_LAMPORTS were removed from
+// the V1 spec (§3.1.2) when agent custody moved to SPL Token approval. There
+// is no deposit step and no withdrawal cooldown — agents always hold custody.
 ```
 
 NOTE: `solana_pubkey_macro` is not standard in Pinocchio. If it's unavailable, use `Pubkey::from(<bytes>)` directly with the decoded base58. Alternative implementation:
@@ -433,9 +429,9 @@ pub const USDC_MAINNET: Pubkey = decode_32_const("EPjFWdd5AufqSSqeM2qN1xzybapC8G
 pub const USDC_DEVNET: Pubkey = decode_32_const("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU");
 
 pub const MAX_BATCH_SIZE: usize = 50;
-pub const WITHDRAWAL_COOLDOWN_SECS: i64 = 86_400;
-pub const MAX_DEPOSIT_LAMPORTS: u64 = 25_000_000;
 pub const MIN_PREMIUM_LAMPORTS: u64 = 100;
+pub const MAX_FEE_RECIPIENTS: usize = 8;
+pub const MAX_TOTAL_FEE_BPS: u16 = 3_000;
 ```
 
 Reference how the existing `pact-insurance-pinocchio` crate handles pubkey constants — use the same pattern.
@@ -447,7 +443,7 @@ Reference how the existing `pact-insurance-pinocchio` crate handles pubkey const
 
 **File:** `packages/program/programs-pinocchio/pact-market-pinocchio/src/error.rs`
 
-- [ ] **Step 1:** Write error enum (16 variants per spec §3.1):
+- [ ] **Step 1:** Write error enum per spec §3.1 (PRD codes 6000-6014 minus the deposit/withdrawal codes that are gone under §3.1.2, plus ArithmeticOverflow + the fee-validation codes from §3.1.3):
 
 ```rust
 use pinocchio::program_error::ProgramError;
@@ -458,19 +454,26 @@ pub enum PactError {
     InsufficientBalance = 6000,
     EndpointPaused = 6001,
     ExposureCapExceeded = 6002,
-    WithdrawalCooldownActive = 6003,
-    NoPendingWithdrawal = 6004,
+    // 6003 (WithdrawalCooldownActive) and 6004 (NoPendingWithdrawal) intentionally
+    // unused — withdrawal flow removed under §3.1.2 (agent custody via SPL approval).
     UnauthorizedSettler = 6005,
     UnauthorizedAuthority = 6006,
     DuplicateCallId = 6007,
     EndpointNotFound = 6008,
-    DepositCapExceeded = 6009,
+    // 6009 (DepositCapExceeded) intentionally unused — no deposit step under §3.1.2.
     PoolDepleted = 6010,
     InvalidTimestamp = 6011,
     BatchTooLarge = 6012,
     PremiumTooSmall = 6013,
     InvalidSlug = 6014,
     ArithmeticOverflow = 6015,
+    // §3.1.3 fee-validation:
+    FeeRecipientCountExceeded = 6016,
+    FeeBpsExceedsCap = 6017,
+    DuplicateFeeDestination = 6018,
+    MultipleTreasuryRecipients = 6019,
+    // §3.1.2 pre-flight delegate check:
+    SettlementDelegateRevoked = 6020,
 }
 
 impl From<PactError> for ProgramError {
@@ -493,22 +496,22 @@ impl From<PactError> for ProgramError {
 use pinocchio::pubkey::Pubkey;
 use pinocchio::pubkey::find_program_address;
 
+// CoveragePool is now per-endpoint (§3.1.1): seed = ["coverage_pool", slug].
 pub const SEED_COVERAGE_POOL: &[u8] = b"coverage_pool";
 pub const SEED_ENDPOINT: &[u8] = b"endpoint";
-pub const SEED_AGENT_WALLET: &[u8] = b"agent_wallet";
 pub const SEED_CALL: &[u8] = b"call";
 pub const SEED_SETTLEMENT_AUTHORITY: &[u8] = b"settlement_authority";
+pub const SEED_TREASURY: &[u8] = b"treasury";                 // §3.1.3
+pub const SEED_PROTOCOL_CONFIG: &[u8] = b"protocol_config";   // §3.1.3
+// NOTE: SEED_AGENT_WALLET is intentionally absent — there is no AgentWallet
+// PDA under §3.1.2; agent USDC stays in the agent's own ATA.
 
-pub fn derive_coverage_pool(program_id: &Pubkey) -> (Pubkey, u8) {
-    find_program_address(&[SEED_COVERAGE_POOL], program_id)
+pub fn derive_coverage_pool(program_id: &Pubkey, slug: &[u8; 16]) -> (Pubkey, u8) {
+    find_program_address(&[SEED_COVERAGE_POOL, slug], program_id)
 }
 
 pub fn derive_endpoint_config(program_id: &Pubkey, slug: &[u8; 16]) -> (Pubkey, u8) {
     find_program_address(&[SEED_ENDPOINT, slug], program_id)
-}
-
-pub fn derive_agent_wallet(program_id: &Pubkey, owner: &Pubkey) -> (Pubkey, u8) {
-    find_program_address(&[SEED_AGENT_WALLET, owner.as_ref()], program_id)
 }
 
 pub fn derive_call_record(program_id: &Pubkey, call_id: &[u8; 16]) -> (Pubkey, u8) {
@@ -517,6 +520,14 @@ pub fn derive_call_record(program_id: &Pubkey, call_id: &[u8; 16]) -> (Pubkey, u
 
 pub fn derive_settlement_authority(program_id: &Pubkey) -> (Pubkey, u8) {
     find_program_address(&[SEED_SETTLEMENT_AUTHORITY], program_id)
+}
+
+pub fn derive_treasury(program_id: &Pubkey) -> (Pubkey, u8) {
+    find_program_address(&[SEED_TREASURY], program_id)
+}
+
+pub fn derive_protocol_config(program_id: &Pubkey) -> (Pubkey, u8) {
+    find_program_address(&[SEED_PROTOCOL_CONFIG], program_id)
 }
 ```
 
@@ -529,12 +540,13 @@ pub fn derive_settlement_authority(program_id: &Pubkey) -> (Pubkey, u8) {
 
 Implement state structs per spec §3.1. Use `bytemuck::Pod + Zeroable` for zero-copy Pinocchio access. Reference the existing pact-insurance-pinocchio `state.rs` for the same pattern.
 
-- [ ] **Step 1:** Write `CoveragePool`:
+- [ ] **Step 1:** Write `CoveragePool` (per-endpoint, §3.1.1):
 
 ```rust
 use bytemuck::{Pod, Zeroable};
 use pinocchio::pubkey::Pubkey;
 
+// One CoveragePool per endpoint slug (§3.1.1). Vault is the pool's USDC ATA.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub struct CoveragePool {
@@ -543,28 +555,42 @@ pub struct CoveragePool {
     pub authority: Pubkey,
     pub usdc_mint: Pubkey,
     pub usdc_vault: Pubkey,
-    pub total_deposits: u64,
-    pub total_premiums: u64,
-    pub total_refunds: u64,
-    pub current_balance: u64,
+    pub endpoint_slug: [u8; 16],
+    pub total_deposits: u64,        // top-ups
+    pub total_premiums: u64,        // gross premium-in (before fee fan-out)
+    pub total_refunds: u64,         // refunds out to agents
+    pub total_fees_paid: u64,       // §3.1.3 fees out to recipients
+    pub current_balance: u64,       // residual = pool's share after fee fan-out
     pub created_at: i64,
 }
 
 impl CoveragePool {
-    pub const LEN: usize = 1 + 7 + 32 + 32 + 32 + 8 + 8 + 8 + 8 + 8;
+    pub const LEN: usize = 1 + 7 + 32 + 32 + 32 + 16 + 8 + 8 + 8 + 8 + 8 + 8;
 }
 ```
 
-- [ ] **Step 2:** Write `EndpointConfig` (with new exposure cap fields):
+- [ ] **Step 2:** Write `EndpointConfig` (with `coverage_pool: Pubkey` + interchangeable `fee_recipients`, §3.1.1, §3.1.3):
 
 ```rust
+// FeeRecipient is 48 bytes per spec §3.1.3.
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+pub struct FeeRecipient {
+    pub kind: u8,                 // FeeRecipientKind: Treasury | AffiliateAta | AffiliatePda
+    pub destination: Pubkey,      // 32 bytes
+    pub bps: u16,                 // share in basis points, off the premium
+    pub _pad: [u8; 13],           // align to 48 bytes
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub struct EndpointConfig {
     pub bump: u8,
     pub paused: u8,
-    pub _padding0: [u8; 6],
+    pub fee_recipient_count: u8,        // §3.1.3, first N entries valid
+    pub _padding0: [u8; 5],
     pub slug: [u8; 16],
+    pub coverage_pool: Pubkey,          // §3.1.1 — resolves slug → pool
     pub flat_premium_lamports: u64,
     pub percent_bps: u16,
     pub _padding1: [u8; 6],
@@ -579,49 +605,34 @@ pub struct EndpointConfig {
     pub total_premiums: u64,
     pub total_refunds: u64,
     pub last_updated: i64,
+    pub fee_recipients: [FeeRecipient; 8],   // 8 × 48 = 384 bytes (§3.1.3)
 }
 
 impl EndpointConfig {
-    pub const LEN: usize = 1+1+6+16+8+2+6+4+4+8+8+8+8+8+8+8+8+8;
+    pub const LEN: usize = 1+1+1+5+16+32+8+2+6+4+4+8+8+8+8+8+8+8+8+8+(8*48);
 }
 ```
 
-- [ ] **Step 3:** Write `AgentWallet`:
+- [ ] **Step 3:** No `AgentWallet` struct — agent custody is via SPL Token approval (§3.1.2). The agent's USDC stays in their own ATA; per-agent stats are aggregated off-chain by the indexer from `CallRecord` rows. Skip this step.
+
+- [ ] **Step 4:** Write `CallRecord` (note `agent_pubkey` not `agent_wallet`, plus `settlement_status` for the §3.1.2 pre-flight delegate check):
 
 ```rust
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-pub struct AgentWallet {
-    pub bump: u8,
-    pub _padding0: [u8; 7],
-    pub owner: Pubkey,
-    pub usdc_vault: Pubkey,
-    pub balance: u64,
-    pub total_deposits: u64,
-    pub total_premiums_paid: u64,
-    pub total_refunds_received: u64,
-    pub call_count: u64,
-    pub pending_withdrawal: u64,
-    pub withdrawal_unlock_at: i64,
-    pub created_at: i64,
+#[repr(u8)]
+pub enum SettlementStatus {
+    Settled = 0,
+    DelegateFailed = 1,   // §3.1.2 pre-flight check skipped the CPI
 }
 
-impl AgentWallet {
-    pub const LEN: usize = 1+7+32+32+8+8+8+8+8+8+8+8;
-}
-```
-
-- [ ] **Step 4:** Write `CallRecord`:
-
-```rust
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub struct CallRecord {
     pub bump: u8,
     pub breach: u8,
-    pub _padding0: [u8; 6],
+    pub settlement_status: u8,        // SettlementStatus, §3.1.2
+    pub _padding0: [u8; 5],
     pub call_id: [u8; 16],
-    pub agent_wallet: Pubkey,
+    pub agent_pubkey: Pubkey,         // agent's wallet pubkey (NOT a PDA — §3.1.2)
     pub endpoint_slug: [u8; 16],
     pub premium_lamports: u64,
     pub refund_lamports: u64,
@@ -631,7 +642,7 @@ pub struct CallRecord {
 }
 
 impl CallRecord {
-    pub const LEN: usize = 1+1+6+16+32+16+8+8+4+4+8;
+    pub const LEN: usize = 1+1+1+5+16+32+16+8+8+4+4+8;
 }
 ```
 
@@ -652,8 +663,41 @@ impl SettlementAuthority {
 }
 ```
 
-- [ ] **Step 6:** Build: `cargo build -p pact-market-pinocchio`. Expected: clean.
-- [ ] **Step 7:** Commit: `feat(pact-market): add state account layouts`
+- [ ] **Step 6:** Write `Treasury` and `ProtocolConfig` (§3.1.3):
+
+```rust
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+pub struct Treasury {
+    pub bump: u8,
+    pub _padding0: [u8; 7],
+    pub authority: Pubkey,        // pool authority V1; multisig at mainnet flip
+    pub usdc_mint: Pubkey,
+    pub usdc_vault: Pubkey,       // protocol fee vault
+    pub created_at: i64,
+}
+
+impl Treasury {
+    pub const LEN: usize = 1+7+32+32+32+8;
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+pub struct ProtocolConfig {
+    pub bump: u8,
+    pub default_fee_recipient_count: u8,
+    pub _padding0: [u8; 4],
+    pub max_total_fee_bps: u16,                          // default 3000 (30%)
+    pub default_fee_recipients: [FeeRecipient; 8],       // 8 × 48 = 384 bytes
+}
+
+impl ProtocolConfig {
+    pub const LEN: usize = 1+1+4+2+(8*48);
+}
+```
+
+- [ ] **Step 7:** Build: `cargo build -p pact-market-pinocchio`. Expected: clean.
+- [ ] **Step 8:** Commit: `feat(pact-market): add state account layouts (per-endpoint pool + Treasury + ProtocolConfig + fee_recipients; no AgentWallet)`
 
 ### Task 1A.5: TS test infrastructure (LiteSVM)
 
@@ -680,151 +724,11 @@ impl SettlementAuthority {
 - [ ] **Step 4:** Smoke test: run `cargo build-sbf -p pact-market-pinocchio` — must produce `target/sbf-solana-solana/release/pact_market.so`.
 - [ ] **Step 5:** Commit: `chore(pact-market): test infrastructure`
 
-### Task 1A.6: `initialize_coverage_pool` instruction (TDD)
+### Task 1A.6: `initialize_coverage_pool` is REMOVED — folded into `register_endpoint` (§3.1.1)
 
-**Files:**
-- Test: `tests/01-pool.ts`
-- Impl: `src/instructions/initialize_coverage_pool.rs`
+There is no standalone `initialize_coverage_pool` instruction in V1. Per §3.1.1, registering an endpoint creates its per-endpoint `CoveragePool` PDA + USDC vault atomically inside `register_endpoint`. Endpoints can no longer exist in a registered-but-unfunded state. The pool tests that used to live in `tests/01-pool.ts` (PDA derived correctly, vault owned by pool PDA, duplicate rejected) are folded into Task 1A.8's `register_endpoint` test suite, plus a new test that verifies isolation across slugs (helius and birdeye registered get distinct CoveragePool PDAs and vaults).
 
-- [ ] **Step 1:** Write failing test in `tests/01-pool.ts`:
-
-```ts
-import { test, expect } from "bun:test";
-import { LiteSVM } from "litesvm";
-import { loadProgram, PROGRAM_ID } from "./_program";
-import { buildInitializeCoveragePool } from "./helpers";
-
-test("initialize_coverage_pool creates singleton with USDC vault", () => {
-  const svm = new LiteSVM();
-  loadProgram(svm);
-  const authority = generateKeypair(svm);
-  const ix = buildInitializeCoveragePool({ authority: authority.publicKey });
-  const result = svm.sendTransaction([ix], [authority]);
-  expect(result.err).toBeNull();
-
-  const poolPda = derivePoolPda();
-  const account = svm.getAccount(poolPda);
-  expect(account).not.toBeNull();
-  // Decode CoveragePool, assert authority, balances zero, etc.
-});
-```
-
-- [ ] **Step 2:** Run test: `cd packages/program/programs-pinocchio/pact-market-pinocchio && bun test 01-pool.ts`. Expected: FAIL.
-
-- [ ] **Step 3:** Implement `src/instructions/initialize_coverage_pool.rs`:
-
-```rust
-use pinocchio::{
-    account_info::AccountInfo,
-    instruction::{Seed, Signer},
-    program_error::ProgramError,
-    pubkey::Pubkey,
-    sysvars::{rent::Rent, Sysvar},
-    ProgramResult,
-};
-use pinocchio_system::instructions::CreateAccount;
-use pinocchio_token::instructions::InitializeAccount3;
-
-use crate::{
-    constants::{USDC_DEVNET, USDC_MAINNET},
-    error::PactError,
-    pda::{derive_coverage_pool, SEED_COVERAGE_POOL},
-    state::CoveragePool,
-};
-
-/// Accounts:
-/// 0. authority (signer, writable, payer)
-/// 1. coverage_pool PDA (writable, init)
-/// 2. usdc_vault token account (writable, init)
-/// 3. usdc_mint (read)
-/// 4. system_program
-/// 5. token_program
-/// 6. rent sysvar
-pub fn process(
-    program_id: &Pubkey,
-    accounts: &[AccountInfo],
-    _data: &[u8],
-) -> ProgramResult {
-    // Parse accounts
-    let [authority, pool, vault, mint, _system_program, _token_program, _rent_sysvar, ..] =
-        accounts else {
-            return Err(ProgramError::NotEnoughAccountKeys);
-        };
-
-    // Verify signer
-    if !authority.is_signer() {
-        return Err(ProgramError::MissingRequiredSignature);
-    }
-
-    // Verify PDA
-    let (expected_pool, bump) = derive_coverage_pool(program_id);
-    if pool.key() != &expected_pool {
-        return Err(ProgramError::InvalidSeeds);
-    }
-
-    // Verify mint is one of the allowed USDC mints
-    if mint.key() != &USDC_MAINNET && mint.key() != &USDC_DEVNET {
-        return Err(PactError::EndpointNotFound.into()); // reusing error; consider InvalidMint
-    }
-
-    // Allocate pool account
-    let bump_arr = [bump];
-    let seeds = [Seed::from(SEED_COVERAGE_POOL), Seed::from(&bump_arr)];
-    let signer = Signer::from(&seeds);
-    let rent = Rent::get()?;
-    let lamports = rent.minimum_balance(CoveragePool::LEN);
-
-    CreateAccount {
-        from: authority,
-        to: pool,
-        lamports,
-        space: CoveragePool::LEN as u64,
-        owner: program_id,
-    }
-    .invoke_signed(&[signer.clone()])?;
-
-    // Initialize vault as token account owned by pool PDA
-    InitializeAccount3 {
-        account: vault,
-        mint,
-        owner: pool.key(),
-    }
-    .invoke()?;
-
-    // Write initial state
-    let mut data = pool.try_borrow_mut_data()?;
-    let pool_state: &mut CoveragePool = bytemuck::from_bytes_mut(&mut data[..CoveragePool::LEN]);
-    pool_state.bump = bump;
-    pool_state.authority = *authority.key();
-    pool_state.usdc_mint = *mint.key();
-    pool_state.usdc_vault = *vault.key();
-    pool_state.total_deposits = 0;
-    pool_state.total_premiums = 0;
-    pool_state.total_refunds = 0;
-    pool_state.current_balance = 0;
-    pool_state.created_at = pinocchio::sysvars::clock::Clock::get()?.unix_timestamp;
-
-    Ok(())
-}
-```
-
-- [ ] **Step 4:** Run test: `bun test 01-pool.ts`. Expected: PASS.
-
-- [ ] **Step 5:** Add negative test: same instruction submitted twice should fail (account already in use):
-
-```ts
-test("initialize_coverage_pool fails on duplicate", () => {
-  const svm = new LiteSVM();
-  loadProgram(svm);
-  const authority = generateKeypair(svm);
-  svm.sendTransaction([buildInitializeCoveragePool({ authority: authority.publicKey })], [authority]);
-  const second = svm.sendTransaction([buildInitializeCoveragePool({ authority: authority.publicKey })], [authority]);
-  expect(second.err).not.toBeNull();
-});
-```
-
-- [ ] **Step 6:** Run, expect PASS (CreateAccount fails on existing account).
-- [ ] **Step 7:** Commit: `feat(pact-market): initialize_coverage_pool instruction + tests`
+Skip this task. Proceed to 1A.7.
 
 ### Task 1A.7: `initialize_settlement_authority` (TDD)
 
@@ -847,17 +751,26 @@ test("initialize_coverage_pool fails on duplicate", () => {
 - [ ] **Step 4:** Run tests, expect PASS.
 - [ ] **Step 5:** Commit: `feat(pact-market): initialize_settlement_authority`
 
-### Task 1A.8: `register_endpoint` (TDD)
+### Task 1A.8: `register_endpoint` (TDD) — atomic endpoint + per-endpoint pool + fee_recipients
 
 **Files:**
-- Test: `tests/02-endpoint.ts`
+- Test: `tests/02-endpoint.ts` (also covers per-endpoint pool isolation; replaces the old `01-pool.ts`)
 - Impl: `src/instructions/register_endpoint.rs`
 
+Per §3.1.1, this instruction now atomically creates: (a) the `EndpointConfig` PDA, (b) the per-endpoint `CoveragePool` PDA seeded `["coverage_pool", slug]`, (c) the pool's USDC vault token account owned by the pool PDA. It also stamps `EndpointConfig.coverage_pool` so settler/clients can resolve the pool by slug. Per §3.1.3, it accepts an optional `fee_recipients` array (else falls back to `ProtocolConfig.default_fee_recipients`) and enforces all §3.1.3 validation invariants.
+
 - [ ] **Step 1:** Write tests:
-  - Happy: pool authority registers "helius" endpoint with all params; account written correctly
+  - Happy: pool authority registers "helius" with default `fee_recipients` (omitted in ix data → falls back to `ProtocolConfig.default_fee_recipients`); both EndpointConfig and per-endpoint CoveragePool + vault initialized; `EndpointConfig.coverage_pool` matches the derived PDA
+  - Happy: register "birdeye" with explicit `[Treasury 10%, AffiliateAta 5%]` override; EndpointConfig.fee_recipient_count=2, sum_bps=1500
+  - Per-endpoint pool isolation: helius and birdeye end up with distinct CoveragePool PDAs and distinct vaults
   - Negative: non-pool-authority rejected with `UnauthorizedAuthority`
   - Negative: invalid slug (non-ASCII) rejected with `InvalidSlug`
-  - Negative: register same slug twice rejected (account exists)
+  - Negative: register same slug twice rejected (account already in use)
+  - Negative (§3.1.3): `fee_recipient_count > MAX_FEE_RECIPIENTS` → `FeeRecipientCountExceeded`
+  - Negative: `sum(fee.bps) > MAX_TOTAL_FEE_BPS` → `FeeBpsExceedsCap`
+  - Negative: two recipients with same `destination` → `DuplicateFeeDestination`
+  - Negative: two recipients with kind=Treasury → `MultipleTreasuryRecipients`
+  - Negative: `AffiliateAta` recipient whose ATA mint != USDC mint → rejected at registration time
 
 - [ ] **Step 2:** Run, expect FAIL.
 
@@ -868,13 +781,17 @@ test("initialize_coverage_pool fails on duplicate", () => {
   - bytes 26-29: `sla_latency_ms: u32`
   - bytes 30-37: `imputed_cost_lamports: u64`
   - bytes 38-45: `exposure_cap_per_hour_lamports: u64`
+  - byte 46: `fee_recipients_present: u8` (0 = use ProtocolConfig defaults; 1 = explicit array follows)
+  - if present: byte 47: `fee_recipient_count: u8` (0..=8); then `fee_recipient_count` × 48 bytes of `FeeRecipient`
 
-  Total: 46 bytes.
+  Total: 47 bytes (defaults) or 48 + 48*N bytes (explicit).
 
   Validate slug: every byte must be ASCII printable or 0 (null pad). If any byte > 127, return `InvalidSlug`.
 
+  After parsing, allocate (a) EndpointConfig PDA and (b) CoveragePool PDA + vault atomically (CreateAccount + InitializeAccount3 CPIs). Stamp `EndpointConfig.coverage_pool = derive_coverage_pool(program_id, slug).0`. Apply §3.1.3 validation invariants before writing fee_recipients.
+
 - [ ] **Step 4:** Run tests, expect PASS.
-- [ ] **Step 5:** Commit: `feat(pact-market): register_endpoint`
+- [ ] **Step 5:** Commit: `feat(pact-market): register_endpoint (atomic per-endpoint pool + fee_recipients)`
 
 ### Task 1A.9: `update_endpoint_config` (TDD)
 
@@ -904,66 +821,81 @@ present == 0 → skip; present == 1 → read value
 - [ ] **Step 1:** Tests: pool authority can pause/unpause; non-authority rejected.
 - [ ] **Step 2-5:** TDD cycle. Commit: `feat(pact-market): pause_endpoint`
 
-### Task 1A.11: `initialize_agent_wallet` (TDD)
+### Task 1A.11: `initialize_treasury` (TDD) — §3.1.3
 
 **Files:**
-- Test: `tests/03-agent-wallet.ts`
-- Impl: `src/instructions/initialize_agent_wallet.rs`
+- Test: `tests/01-treasury-protocol-config.ts`
+- Impl: `src/instructions/initialize_treasury.rs`
+
+Singleton bootstrap for the protocol fee vault (§3.1.3). PDA seed = `["treasury"]`. Authority = pool authority V1; will rotate to multisig at mainnet flip per §11 risk register.
 
 - [ ] **Step 1:** Tests:
-  - Happy: any wallet can initialize their own AgentWallet PDA
-  - Idempotency: re-initialize fails (account already in use)
+  - Happy: pool authority signs; creates Treasury PDA + USDC vault token account; vault owner is the Treasury PDA
+  - Negative: non-pool-authority rejected with `UnauthorizedAuthority`
+  - Idempotency: re-initialize rejected (account already in use)
 
-- [ ] **Step 2-5:** TDD cycle. Owner signs, creates AgentWallet PDA + USDC ATA owned by it. Commit.
+- [ ] **Step 2-5:** TDD. Pattern matches the old initialize_coverage_pool (one PDA + one vault). Commit: `feat(pact-market): initialize_treasury`
 
-### Task 1A.12: `deposit_usdc` (TDD)
+### Task 1A.12: `initialize_protocol_config` (TDD) — §3.1.3
 
 **Files:**
-- Test: `tests/04-deposit-withdraw.ts`
-- Impl: `src/instructions/deposit_usdc.rs`
+- Test: append to `tests/01-treasury-protocol-config.ts`
+- Impl: `src/instructions/initialize_protocol_config.rs`
+
+Singleton. Stores `max_total_fee_bps` and the default fee-recipient template used when `register_endpoint` doesn't supply explicit `fee_recipients`.
 
 - [ ] **Step 1:** Tests:
-  - Happy: deposit 5 USDC, balance updates, total_deposits + current_balance updated
-  - Negative: deposit > MAX_DEPOSIT_LAMPORTS rejected with `DepositCapExceeded`
-  - Negative: non-owner can't deposit (signer must be owner)
+  - Happy: pool authority initializes ProtocolConfig with `max_total_fee_bps=3000`, defaults `[Treasury 10%, AffiliateAta(market_treasury) 5%]`
+  - Validation: same §3.1.3 invariants (count ≤ 8, sum_bps ≤ max, no duplicate destinations, ≤ 1 Treasury, AffiliateAta has correct mint)
+  - Negative: non-pool-authority rejected
+  - Idempotency: re-initialize rejected
 
-- [ ] **Step 2-5:** TDD. CPI to spl-token Transfer from owner ATA → AgentWallet vault. Commit: `feat(pact-market): deposit_usdc`
+- [ ] **Step 2-5:** TDD. Commit: `feat(pact-market): initialize_protocol_config`
 
-### Task 1A.13: `request_withdrawal` (TDD)
+### Task 1A.13: `update_fee_recipients` (TDD) — §3.1.3
 
 **Files:**
-- Test: append to `tests/04-deposit-withdraw.ts`
-- Impl: `src/instructions/request_withdrawal.rs`
+- Test: `tests/04-fee-fanout.ts` (will also cover the §3.1.3 fan-out math in 1A.16)
+- Impl: `src/instructions/update_fee_recipients.rs`
+
+Atomic replace of an endpoint's `fee_recipients` array. Same invariants enforced as `register_endpoint`.
 
 - [ ] **Step 1:** Tests:
-  - Happy: owner requests withdrawal of N; sets pending_withdrawal=N, withdrawal_unlock_at=now+86400
-  - Negative: amount > balance rejected with `InsufficientBalance`
-  - Negative: existing pending withdrawal blocks new request (or replaces? — spec says no, return WithdrawalCooldownActive)
+  - Happy: pool authority swaps "helius" recipients from `[Treasury 10%, Affiliate 5%]` to `[Treasury 8%]`; subsequent `settle_batch` only pays Treasury 8%, pool retains 92%
+  - Negative: non-pool-authority rejected
+  - Validation: all §3.1.3 invariants enforced (sum_bps ≤ MAX_TOTAL_FEE_BPS, no duplicates, ≤ 1 Treasury, AffiliateAta with correct mint)
 
-- [ ] **Step 2-5:** TDD. Commit: `feat(pact-market): request_withdrawal`
+- [ ] **Step 2-5:** TDD. Commit: `feat(pact-market): update_fee_recipients`
 
-### Task 1A.14: `execute_withdrawal` (TDD)
+### Task 1A.14: SPL Token approval setup (test infrastructure — no on-chain instruction)
 
-**File:** `src/instructions/execute_withdrawal.rs`
+There is **no on-chain instruction** for agent custody under §3.1.2. The agent grants spending allowance to the `SettlementAuthority` PDA via the standard SPL Token `Approve` instruction (a vanilla SPL Token call, no protocol-side ix). All previously planned `initialize_agent_wallet` / `deposit_usdc` / `request_withdrawal` / `execute_withdrawal` instructions are **removed from the program** per §3.1.2.
 
-- [ ] **Step 1:** Tests:
-  - Negative: before unlock_at, fails with `WithdrawalCooldownActive`
-  - Happy: after unlock_at, transfers from AgentWallet vault → owner ATA
-  - Negative: no pending withdrawal returns `NoPendingWithdrawal`
+What this task delivers is *test-side helpers* that exercise the SPL approval flow against the program's `settle_batch` (Task 1A.16):
 
-- [ ] **Step 2-5:** TDD. Use Clock sysvar. Commit.
+**Files:** append helpers to `tests/helpers.ts`; new test file `tests/03-approval.ts`.
 
-### Task 1A.15: `top_up_coverage_pool` (TDD)
+- [ ] **Step 1:** Helper `splApprove({ owner, ata, delegate, amount })` that emits a vanilla SPL Token `Approve` ix. `splRevoke({ owner, ata })` likewise.
+- [ ] **Step 2:** Helper `assertDelegate({ ata, delegate, delegated_amount })` that decodes a `spl-token` Account and asserts `state == Initialized`, `delegate == Some(delegate)`, `delegated_amount >= expected`.
+- [ ] **Step 3:** Test `tests/03-approval.ts`:
+  - Happy approval: owner ATAs hold 5 USDC; `splApprove(owner=agent, delegate=settlement_authority_pda, 5_000_000)` succeeds; `assertDelegate` passes
+  - Revoke: after Approve, `splRevoke` clears delegate; subsequent `settle_batch` pre-flight delegate check stamps `SettlementStatus::DelegateFailed` (verified in 1A.16)
+- [ ] **Step 4:** Commit: `test(pact-market): SPL approval helpers + happy-path assertions`
+
+### Task 1A.15: `top_up_coverage_pool` (TDD) — per-endpoint (§3.1.1)
 
 **Files:**
-- Test: append to `tests/01-pool.ts`
+- Test: append to `tests/02-endpoint.ts`
 - Impl: `src/instructions/top_up_coverage_pool.rs`
 
-- [ ] **Step 1:** Tests:
-  - Happy: pool authority top-up 100 USDC, current_balance += 100, total_deposits += 100
-  - Negative: non-authority rejected
+Now scoped to a specific endpoint's pool (§3.1.1) — accepts a slug and credits only that pool's vault.
 
-- [ ] **Step 2-5:** TDD. CPI from authority ATA → CoveragePool vault. Commit.
+- [ ] **Step 1:** Tests:
+  - Happy: pool authority tops up "helius" pool by 100 USDC; helius `current_balance += 100`, helius `total_deposits += 100`; "birdeye" pool unaffected
+  - Negative: non-authority rejected
+  - Negative: top-up against an unregistered slug rejected with `EndpointNotFound`
+
+- [ ] **Step 2-5:** TDD. Data layout: bytes 0-15 = slug, bytes 16-23 = amount: u64. CPI from authority ATA → endpoint's CoveragePool vault. Commit.
 
 ### Task 1A.16: `settle_batch` — the critical instruction (TDD)
 
@@ -971,13 +903,13 @@ present == 0 → skip; present == 1 → read value
 - Test: `tests/05-settle-batch.ts`
 - Impl: `src/instructions/settle_batch.rs`
 
-This is the most complex instruction. It is THE critical path for refund correctness.
+This is the most complex instruction. It is THE critical path for refund correctness. Combines four spec changes: (a) per-endpoint pool resolution (§3.1.1), (b) SPL approval-based debit with pre-flight delegate check (§3.1.2), (c) channel-then-fan-out fee distribution (§3.1.3), (d) refund directly to agent's USDC ATA on breach.
 
 **Data layout:**
 - bytes 0-1: event_count: u16 (LE)
 - repeating event_count times:
   - call_id: [u8; 16]
-  - agent_wallet: Pubkey (32)
+  - agent_pubkey: Pubkey (32) — agent's wallet pubkey, NOT a PDA
   - endpoint_slug: [u8; 16]
   - premium_lamports: u64
   - refund_lamports: u64
@@ -988,79 +920,96 @@ This is the most complex instruction. It is THE critical path for refund correct
 Total per event: 16+32+16+8+8+4+1+7(pad)+8 = 100 bytes.
 Total ix data: 2 + 100*event_count.
 
-**Account list:**
+**Account list (channel-then-fan-out, §3.1.3):**
 - 0: settlement_authority signer (signer)
-- 1: settlement_authority PDA (read)
-- 2: coverage_pool PDA (writable)
-- 3: coverage_pool USDC vault (writable)
-- 4: token_program (read)
-- 5: clock sysvar (read)
-- 6..: per event: [call_record PDA (writable, init-if-needed), agent_wallet PDA (writable), agent_wallet vault (writable), endpoint_config PDA (writable)]
+- 1: settlement_authority PDA (read; also acts as SPL Token delegate per §3.1.2)
+- 2: token_program (read)
+- 3: clock sysvar (read)
+- 4..: per unique endpoint slug in batch: [endpoint_config PDA (writable), coverage_pool PDA (writable), coverage_pool USDC vault (writable)]
+- ..: per unique fee-recipient destination across batch (deduplicated): destination token account (writable)
+- ..: per unique agent in batch: agent USDC ATA (writable; debit source AND refund destination)
+- ..: per event: call_record PDA (writable, init-if-needed)
 
-This is dense. Document the account-list contract in the instruction's header comment.
+Settler groups events by endpoint slug, derives per-endpoint pool PDAs, deduplicates fee-recipient destinations and agent ATAs across the batch. Document the account-list contract in the instruction's header comment.
 
-- [ ] **Step 1:** Test: single-event batch with no breach. Premium debited from agent vault → pool vault, agent.balance updated, pool.current_balance updated, CallRecord created.
+- [ ] **Step 1:** Test: single-event batch with no breach (Treasury 10% + Affiliate 5% template). After settle:
+  - Premium debited from agent USDC ATA → endpoint's CoveragePool vault (via SPL delegate authority — settlement_authority signs as PDA delegate)
+  - Treasury vault credited with `premium * 1000 / 10_000`
+  - Affiliate ATA credited with `premium * 500 / 10_000`
+  - CoveragePool vault retains the residual (85% of premium)
+  - CallRecord created with `settlement_status = Settled`
 - [ ] **Step 2:** Run, expect FAIL.
 - [ ] **Step 3:** Implement. Skeleton:
 
 ```rust
-// Pseudocode order:
+// Pseudocode order (per event):
 // 1. verify settler signer matches settlement_authority.signer
 // 2. parse event_count, ensure <= MAX_BATCH_SIZE (else BatchTooLarge)
 // 3. for each event:
-//    a. derive expected PDAs, verify match supplied accounts
+//    a. resolve endpoint_config + coverage_pool by slug (verify EndpointConfig.coverage_pool matches derived PDA — §3.1.1)
 //    b. validate timestamp <= clock.unix_timestamp (else InvalidTimestamp)
 //    c. validate premium >= MIN_PREMIUM_LAMPORTS (else PremiumTooSmall)
 //    d. validate endpoint not paused (else EndpointPaused)
 //    e. check call_record account is uninitialized (else DuplicateCallId)
 //    f. check exposure cap: if current_period_start + 3600 < now, reset period.
 //       if current_period_refunds + refund > exposure_cap, set refund=0 (skip refund)
-//    g. allocate CallRecord PDA via CreateAccount CPI
-//    h. write CallRecord state
-//    i. CPI Transfer premium: agent.vault → pool.vault (signed by agent_wallet PDA)
-//    j. update agent.balance, agent.total_premiums_paid, agent.call_count
-//    k. update pool.current_balance, pool.total_premiums
-//    l. update endpoint.total_calls, total_premiums, current_period_refunds (if breach)
-//    m. if refund > 0:
-//        check pool.current_balance >= refund (else PoolDepleted, skip refund)
-//        CPI Transfer refund: pool.vault → agent.vault (signed by pool PDA)
-//        update pool.total_refunds, pool.current_balance, agent.total_refunds_received
+//    g. allocate CallRecord PDA via CreateAccount CPI; default settlement_status = Settled
+//
+//    --- §3.1.2 pre-flight delegate check (CRITICAL: read-only, BEFORE the CPI) ---
+//    h. read agent_usdc_ata data; verify (1) state == Initialized,
+//       (2) delegate == Some(settlement_authority_pda),
+//       (3) delegated_amount >= premium.
+//       If any check fails: stamp call_record.settlement_status = DelegateFailed,
+//       SKIP the SPL Token CPI, continue to next event. (Other agents in the batch
+//       are unaffected — no whole-tx revert.)
+//    --- end pre-flight ---
+//
+//    i. SPL Token Transfer premium: agent_usdc_ata → coverage_pool.vault for `premium`
+//       (signed by settlement_authority PDA acting as the SPL delegate, §3.1.2)
+//    j. update endpoint.total_calls, total_premiums, current_period_refunds (if breach)
+//    k. update coverage_pool.total_premiums (gross premium-in)
+//
+//    --- §3.1.3 channel-then-fan-out: pool is the source of every fee transfer ---
+//    l. for each FeeRecipient in endpoint.fee_recipients[..fee_recipient_count]:
+//          fee = premium * recipient.bps / 10_000  (rounded down — pool absorbs remainder)
+//          SPL Token Transfer fee: coverage_pool.vault → recipient.destination
+//          (signed by coverage_pool PDA seeds ["coverage_pool", slug])
+//          update coverage_pool.total_fees_paid += fee
+//    m. coverage_pool.current_balance is implicit = total_premiums + total_deposits
+//          - total_refunds - total_fees_paid; the unallocated residual stays in the vault
+//          by virtue of not being moved.
+//    --- end fan-out ---
+//
+//    n. if breach && refund > 0:
+//        check coverage_pool vault balance >= refund (else PoolDepleted, skip refund;
+//        premium + fees still settled — pool depletion is scoped per pool, §6)
+//        SPL Token Transfer refund: coverage_pool.vault → agent_usdc_ata
+//        (signed by coverage_pool PDA; lands DIRECTLY in agent's wallet, no claim step — §3.1.2)
+//        update coverage_pool.total_refunds, endpoint.total_breaches, total_refunds
 ```
 
 - [ ] **Step 4:** Run, expect PASS.
 - [ ] **Step 5:** Add tests for:
-  - Batch of 5 events with mixed breaches (3 success, 2 breach)
+  - Batch of 5 events with mixed breaches (3 success, 2 breach); refunds land directly in agents' USDC ATAs (no claim step)
+  - Mixed-endpoint batch (helius + birdeye in one batch): each pool debited/credited correctly; per-endpoint pool isolation holds (§3.1.1)
+  - Per-recipient fee fan-out: default `[Treasury 10%, Affiliate 5%]` template, no-affiliate template `[Treasury 10%]`, multi-affiliate template; Treasury vault and AffiliateAta both credited with correct shares; rounding remainder stays in the pool
   - Duplicate call_id in same batch (second errors with DuplicateCallId)
   - Re-submission of already-settled call_id (CallRecord init fails)
   - Unauthorized settler rejected with `UnauthorizedSettler`
-  - Paused endpoint event skipped or errored with `EndpointPaused`
-  - Pool depleted: refund skipped silently, premium still settled
+  - Paused endpoint event errored with `EndpointPaused`
+  - Pool depleted (per pool, §3.1.1): refund skipped silently for THAT pool only; other endpoints' pools in the same batch unaffected
   - Batch size MAX_BATCH_SIZE+1 rejected with `BatchTooLarge`
   - Future timestamp rejected with `InvalidTimestamp`
   - Premium below MIN rejected with `PremiumTooSmall`
+  - **§3.1.2 pre-flight delegate check:** revoked approval → `settlement_status = DelegateFailed`, no CPI attempted, agent ATA untouched, OTHER events in same batch settle normally
+  - **§3.1.2 pre-flight delegate check:** insufficient `delegated_amount` → `settlement_status = DelegateFailed` (same behaviour as revoked)
 
 - [ ] **Step 6:** Run all settle_batch tests, all pass.
-- [ ] **Step 7:** Commit: `feat(pact-market): settle_batch with full coverage`
+- [ ] **Step 7:** Commit: `feat(pact-market): settle_batch (per-endpoint pool + SPL delegate debit + pre-flight check + channel-then-fan-out fees + direct refund)`
 
-### Task 1A.17: `claim_refund` (TDD)
+### Task 1A.17: `claim_refund` is REMOVED (§3.1.2)
 
-**File:** `src/instructions/claim_refund.rs`, `tests/08-claim-refund.ts`
-
-Refund-sweep instruction. Owner signs, transfers `amount` from AgentWallet vault → owner ATA. Cap: `amount <= total_refunds_received - total_swept_so_far` (we don't track total_swept... need to add it OR cap at vault balance directly).
-
-Simpler design: cap at AgentWallet vault balance — so user can sweep any portion of their vault to their own ATA, within balance. This conflates refunds with deposits, which is fine since they're in the same vault.
-
-Wait — re-reading the spec: "transfers from AgentWallet vault to owner ATA. Sweeps refunded balance to client wallet." If we cap at vault balance, the user could sweep their own deposit. That's OK for V1 — we don't really need to differentiate. But it'd defeat the purpose of `request_withdrawal/execute_withdrawal`'s 24h cooldown!
-
-Resolution: claim_refund caps at `total_refunds_received - total_refunds_claimed`. Add a new field `total_refunds_claimed: u64` to AgentWallet. Update Task 1A.4 state def. Note: the LEN value changes; verify migrations / test alignment.
-
-- [ ] **Step 1:** Update `state.rs` AgentWallet to add `total_refunds_claimed: u64` and increment `LEN` by 8.
-- [ ] **Step 2:** Tests:
-  - Happy: agent has 1 USDC refunded; calls claim_refund(0.5); 0.5 lands on owner ATA, agent.total_refunds_claimed += 0.5
-  - Negative: claim_refund(amount) where amount > (total_refunds_received - total_refunds_claimed) rejected with `InsufficientBalance`
-  - Negative: non-owner rejected with `MissingRequiredSignature`
-
-- [ ] **Step 3-5:** TDD. CPI Transfer from AgentWallet vault → owner ATA, signed by AgentWallet PDA seeds. Commit: `feat(pact-market): claim_refund`
+There is no `claim_refund` instruction in V1. Per §3.1.2, refunds land directly in the agent's USDC ATA inside `settle_batch` itself (covered in Task 1A.16 step 5). No claim step, no `total_refunds_claimed` field, no `RefundClaimer` hook. Skip this task. Proceed to 1A.18.
 
 ### Task 1A.18: Exposure cap test
 
@@ -1118,7 +1067,7 @@ export const PROGRAM_ID_MAINNET = "TBD";
 pnpm --filter @pact-network/shared codama:generate-pact-market
 ```
 
-- [ ] **Step 2:** Verify generated client exports `getInitializeCoveragePoolInstruction`, ..., `getSettleBatchInstruction`, `getClaimRefundInstruction`. 12 functions.
+- [ ] **Step 2:** Verify generated client exports the 9 instructions: `getInitializeSettlementAuthorityInstruction`, `getInitializeTreasuryInstruction`, `getInitializeProtocolConfigInstruction`, `getRegisterEndpointInstruction`, `getUpdateEndpointConfigInstruction`, `getUpdateFeeRecipientsInstruction`, `getPauseEndpointInstruction`, `getTopUpCoveragePoolInstruction`, `getSettleBatchInstruction`. NO `getInitializeCoveragePoolInstruction`, `getInitializeAgentWalletInstruction`, `getDepositUsdcInstruction`, `getRequestWithdrawalInstruction`, `getExecuteWithdrawalInstruction`, `getClaimRefundInstruction` — those are not part of V1 (§3.1.1, §3.1.2).
 - [ ] **Step 3:** Commit: `chore(pact-market): generate Codama TS client`
 
 ---
@@ -1147,7 +1096,7 @@ packages/proxy/
 │   │   └── admin.ts
 │   ├── lib/
 │   │   ├── endpoints.ts      # registry loader + cache
-│   │   ├── balance.ts        # RPC AgentWallet read + LRU
+│   │   ├── balance.ts        # RPC agent USDC ATA + SPL delegated_amount read + LRU (§3.1.2)
 │   │   ├── timing.ts
 │   │   ├── events.ts         # Pub/Sub publish
 │   │   ├── classifier.ts     # outcome computation
@@ -1329,15 +1278,17 @@ Same shape as registry: load `demo_allowlist` and `operator_allowlist` tables on
 
 - [ ] **Step 1-5:** TDD per pattern. Commit: `feat(proxy): allowlist loaders`
 
-### Task 1B.5: Balance cache (TDD)
+### Task 1B.5: Balance cache (TDD) — agent USDC ATA + SPL delegated_amount (§3.1.2)
 
 **File:** `packages/proxy/src/lib/balance.ts`
 
+Under the §3.1.2 model there is no `AgentWallet` PDA. The proxy reads the agent's regular USDC ATA balance plus the SPL Token `delegated_amount` (allowance remaining for the SettlementAuthority delegate). The eligible amount for premium-gating is `min(ataBalance, delegated_amount)`.
+
 - [ ] **Step 1:** Test with mocked RPC:
-  - Returns cached value within TTL
-  - On expiry, re-fetches via `getAccountInfo` for AgentWallet PDA
-  - Decodes `balance: u64` field correctly from raw bytes
-  - On RPC error, returns 0n and logs (don't throw — agent shouldn't be blocked)
+  - Returns cached `{ ataBalance, allowance, eligible }` value within TTL
+  - On expiry, re-fetches via `getAccountInfo` against the agent's USDC ATA (derived from the agent pubkey + USDC mint via `getAssociatedTokenAddress`); decodes the `spl-token` Account layout — `amount: u64` (offset 64) and `delegated_amount: u64` (offset 121) — plus verifies `state == Initialized` and `delegate == Some(settlement_authority_pda)`
+  - When `delegate` is None or differs → `allowance = 0n`, `eligible = 0n` (banner-prompts agent to re-approve, see §3.1.2)
+  - On RPC error, returns `{ ataBalance: 0n, allowance: 0n, eligible: 0n }` and logs (don't throw — agent shouldn't be blocked)
 
 - [ ] **Step 2-5:** Implement, run, commit.
 
@@ -1413,7 +1364,7 @@ Wire all the libs together. Order:
 2. registry.get(slug) → endpoint or 404
 3. parse `?pact_wallet=<pubkey>` → if absent, just forward (uninsured passthrough)
 4. registry endpoint paused → return 503 paused
-5. balance.get(wallet) — if < flat_premium → 402
+5. balance.get(wallet) — returns `{ ataBalance, allowance, eligible }` per §3.1.2; if `eligible < flat_premium` → 402 (covers both insufficient USDC and insufficient/missing SPL approval)
 6. handler = endpoints[slug]; isInsurable = await handler.isInsurableMethod(req); if false, forward without premium
 7. timer = new Timer
 8. force-breach: applyDemoBreach if demo_breach=1 + wallet allowlisted
@@ -1432,7 +1383,7 @@ Wire all the libs together. Order:
 
 - `health`: `{ status: "ok", version: "v1", endpoints_loaded: registry.size, cache_size: balance.size }`
 - `admin/reload-endpoints`: bearer token check vs `ENDPOINTS_RELOAD_TOKEN`, then `registry.reload()` + `allowlist.reload()`
-- `agents/:pubkey`: read AgentWallet via RPC, return JSON snapshot
+- `agents/:pubkey`: read agent's USDC ATA balance + SPL `delegated_amount` (allowance) via RPC; return JSON snapshot `{ ataBalance, allowance, eligible }` (§3.1.2 — no AgentWallet PDA exists)
 
 - [ ] **Step 1-5:** TDD each. Commit.
 
@@ -1736,22 +1687,27 @@ cloud-sql-proxy $CLOUDSQL_INSTANCE --port=5432 &
 - [ ] **Step 3:** Add `<WalletMultiButton/>` to layout header.
 - [ ] **Step 4:** Test: render Storybook or local dev, click connect, wallet adapter UI opens. Commit.
 
-### Task 1E.3: useAgentWallet hook (TDD)
+### Task 1E.3: useAgentInsurableState hook (TDD) — §3.1.2
 
-**File:** `packages/dashboard/lib/hooks/useAgentWallet.ts`
+**File:** `packages/dashboard/lib/hooks/useAgentInsurableState.ts` (replaces the old `useAgentWallet` hook)
 
-Reads AgentWallet PDA via RPC every 5s while wallet is connected. Exposes balance, pendingRefund, etc.
+Reads the agent's USDC ATA balance + SPL Token `delegated_amount` (allowance) via RPC every 5s while a wallet is connected. Exposes `{ ataBalance, allowance, eligible }`. There is no `AgentWallet` PDA and no `pendingRefund` — under §3.1.2, refunds land directly in the agent's USDC ATA, so the same `ataBalance` re-read picks them up automatically on the next poll.
 
-- [ ] **Step 1:** Test with mocked RPC client.
-- [ ] **Step 2-5:** Implement, run, commit.
+- [ ] **Step 1:** Test with mocked RPC client: ATA decode, `delegated_amount` decode, missing-ATA case (returns zeros), revoked-delegate case (`allowance = 0n`).
+- [ ] **Step 2-5:** Implement, run, commit: `feat(dashboard): useAgentInsurableState (replaces useAgentWallet)`
 
-### Task 1E.4: RefundClaimer hook (TDD)
+### Task 1E.4: Approval / Revoke buttons (no claim flow exists) — §3.1.2
 
-**File:** `packages/dashboard/lib/hooks/useRefundClaimer.ts`
+**File:** `packages/dashboard/components/ApprovalControls.tsx`
 
-When `pendingRefund > 0` for 2 consecutive polls (debounce against tx race), build `claim_refund` ix via Codama, sign via wallet adapter, submit, refresh.
+There is no `RefundClaimer` hook or `claim_refund` ix in V1 (§3.1.2). The dashboard surfaces three direct SPL Token actions instead, all built via the wallet adapter against the standard SPL Token program (no protocol-side instruction):
+1. **Approve** — emits SPL Token `Approve(agent_usdc_ata, settlement_authority_pda, allowance)` (default $25)
+2. **Top-up approval** — same as Approve but only shown when current `delegated_amount` is exhausted
+3. **Stop insurance** — emits SPL Token `Revoke(agent_usdc_ata)`
 
-- [ ] **Step 1-5:** TDD. Commit.
+- [ ] **Step 1:** Test each control builds the correct vanilla SPL Token ix (no Codama call to the Pact program).
+- [ ] **Step 2:** Test post-Approve/Revoke, `useAgentInsurableState` re-reads and the banner state updates within 5s.
+- [ ] **Step 3-5:** Implement, commit: `feat(dashboard): SPL Approve/Revoke controls (no claim flow under §3.1.2)`
 
 ### Task 1E.5: `/` Overview page
 
@@ -1769,15 +1725,15 @@ When `pendingRefund > 0` for 2 consecutive polls (debounce against tx race), bui
 - [ ] **Step 1:** Server-fetch `/api/endpoints`. Render `<EndpointTable/>` with stats.
 - [ ] **Step 2:** Commit.
 
-### Task 1E.7: `/agents/[pubkey]` page + auto-claim flow
+### Task 1E.7: `/agents/[pubkey]` page (§3.1.2 — no auto-claim, no deposit/withdraw)
 
 **File:** `packages/dashboard/app/agents/[pubkey]/page.tsx`
 
-- [ ] **Step 1:** Server-fetch `/api/agents/[pubkey]` for history.
-- [ ] **Step 2:** Client component uses `useAgentWallet` + `useRefundClaimer` for live state + auto-claim.
-- [ ] **Step 3:** Render: balance card, refunds-claimed total, call history table, deposit/withdraw buttons.
-- [ ] **Step 4:** Wire deposit button: client builds `deposit_usdc(5_000_000)` ix via Codama, wallet signs.
-- [ ] **Step 5:** "Get devnet USDC" button: `requestAirdrop(1 SOL)`, then link to https://faucet.circle.com, then poll user's USDC ATA balance.
+- [ ] **Step 1:** Server-fetch `/api/agents/[pubkey]` for history (off-chain stats aggregated from `CallRecord` rows by indexer; no AgentWallet PDA exists).
+- [ ] **Step 2:** Client component uses `useAgentInsurableState` for live `{ ataBalance, allowance, eligible }`. No `useRefundClaimer` — refunds land directly in the agent's USDC ATA inside `settle_batch` (§3.1.2), so the next poll just shows the new balance.
+- [ ] **Step 3:** Render: USDC ATA balance card, current SPL approval / `delegated_amount` allowance, lifetime premiums + refunds (from indexer aggregates), call history table, Approve / Top-up approval / Stop insurance buttons (Task 1E.4). No deposit/withdraw/claim buttons.
+- [ ] **Step 4:** Wire Approve button: client builds vanilla SPL Token `Approve(agent_usdc_ata, settlement_authority_pda, 25_000_000)` ix; wallet adapter signs (no Codama call into the Pact program — `deposit_usdc` no longer exists).
+- [ ] **Step 5:** "Get devnet USDC" button: `requestAirdrop(1 SOL)`, then link to https://faucet.circle.com, then poll user's USDC ATA balance until positive (then unlock the Approve step).
 - [ ] **Step 6:** Commit.
 
 ### Task 1E.8: Vercel deploy
@@ -1811,7 +1767,7 @@ When `pendingRefund > 0` for 2 consecutive polls (debounce against tx race), bui
 
 **Files:** `scripts/seed-endpoints.ts`, `scripts/seed-allowlists.ts`
 
-- [ ] **Step 1:** `seed-endpoints.ts`: connects to Cloud SQL, runs `register_endpoint` on-chain for helius/birdeye/jupiter, then INSERTs corresponding rows in `endpoints` table:
+- [ ] **Step 1:** `seed-endpoints.ts`: prerequisite — `initialize_treasury` and `initialize_protocol_config` (both singletons; default fee template `[Treasury 10%, AffiliateAta(market_treasury) 5%]`) must be run once before any endpoint registration. Then connects to Cloud SQL, runs `register_endpoint` on-chain for helius/birdeye/jupiter (each call atomically creates that endpoint's per-endpoint CoveragePool + USDC vault per §3.1.1, and inherits the protocol-default fee_recipients per §3.1.3), then INSERTs corresponding rows in `endpoints` table:
 
 ```
 helius:   flat=500, percent=0, sla=1200, imputed=1000, cap=10_000_000
@@ -1825,11 +1781,11 @@ jupiter:  flat=300, percent=0, sla=600,  imputed=1000, cap=10_000_000
 - [ ] **Step 5:** Reload proxy registry: `curl -X POST -H "Authorization: Bearer $ENDPOINTS_RELOAD_TOKEN" https://market.pactnetwork.io/admin/reload-endpoints`
 - [ ] **Step 6:** Commit scripts.
 
-### Task 2.4: Top up coverage pool
+### Task 2.4: Top up coverage pools (per-endpoint, §3.1.1)
 
 - [ ] **Step 1:** Use the pool authority wallet (you, Alan, on devnet) to airdrop 1000 devnet USDC to its ATA via Circle faucet.
-- [ ] **Step 2:** Run a small script `scripts/top-up-pool.ts` that calls `top_up_coverage_pool(1_000_000_000)` (1000 USDC).
-- [ ] **Step 3:** Verify CoveragePool.current_balance = 1_000_000_000.
+- [ ] **Step 2:** Run `scripts/top-up-pool.ts` once **per endpoint** — `top_up_coverage_pool(slug, amount)` is now scoped per slug (§3.1.1). For Wed scope: top up helius, birdeye, jupiter at e.g. ~330 devnet USDC each (split of the 1000 USDC pool seed).
+- [ ] **Step 3:** Verify each endpoint's CoveragePool.current_balance independently.
 
 ### Task 2.5: e2e-devnet.sh — gate test
 
@@ -1845,7 +1801,7 @@ Per spec §7.2.
 
 - [ ] **Step 1:** Connect Phantom (devnet), get 1 devnet SOL via Solana faucet.
 - [ ] **Step 2:** Load https://dashboard.pactnetwork.io. Connect wallet.
-- [ ] **Step 3:** Get devnet USDC via Circle faucet. Deposit 5 USDC to AgentWallet.
+- [ ] **Step 3:** Get devnet USDC via Circle faucet. Click "Approve $25 spending allowance" — emits standard SPL Token `Approve(agent_usdc_ata, settlement_authority_pda, 25_000_000)` (§3.1.2; vanilla SPL Token call, no `deposit_usdc` instruction exists).
 - [ ] **Step 4:** Make 3 insured calls via:
 
 ```bash
@@ -1858,7 +1814,7 @@ curl -X POST "https://market.pactnetwork.io/v1/helius/?api-key=$HELIUS_KEY&pact_
   - Within 6s, settle on devnet.
   - Within 10s, indexer Postgres has 3 rows.
 
-- [ ] **Step 5:** Force-breach: `curl ".../v1/helius/?...&pact_wallet=$WALLET&demo_breach=1" -d ...`. Refund credited; dashboard auto-claims to client wallet.
+- [ ] **Step 5:** Force-breach: `curl ".../v1/helius/?...&pact_wallet=$WALLET&demo_breach=1" -d ...`. Refund lands directly in the agent's USDC ATA inside `settle_batch` (§3.1.2) — dashboard's next 5s poll re-reads the ATA and shows the increased balance. No claim step.
 - [ ] **Step 6:** If anything is broken, fix before evening demo.
 
 ### Task 2.7: Rick walkthrough — Wed evening
@@ -1899,13 +1855,15 @@ Demo per spec §8.4.
 **Branch:** `feat/pact-cli`
 **Files:** `packages/cli/`
 
+Per spec §1.2, the CLI surface is `pact run` + `pact approve | revoke | balance | history` (SPL approval custody — no `deposit`/`claim` commands; those instructions don't exist under §3.1.2).
+
 - [ ] **Step 1:** Scaffold new package `@pact-network/cli` with commander.js or yargs.
 - [ ] **Step 2:** `pact run <script>` — wraps `node`, intercepts `fetch` to inject `?pact_wallet`.
-- [ ] **Step 3:** `pact balance` — reads AgentWallet PDA via RPC.
-- [ ] **Step 4:** `pact deposit <amount>` — builds + signs + submits deposit_usdc tx.
-- [ ] **Step 5:** `pact refunds` — lists recent refunds via `/api/agents/:pubkey/calls?breach=true`.
-- [ ] **Step 6:** `pact history` — lists last N calls.
-- [ ] **Step 7:** `pact claim` — calls claim_refund.
+- [ ] **Step 3:** `pact balance` — reads agent's USDC ATA balance + SPL `delegated_amount` via RPC; prints `{ ataBalance, allowance, eligible }`. No AgentWallet PDA exists.
+- [ ] **Step 4:** `pact approve <amount>` — builds + signs + submits a vanilla SPL Token `Approve(agent_usdc_ata, settlement_authority_pda, amount)` ix. Replaces the old `pact deposit`.
+- [ ] **Step 5:** `pact revoke` — builds + signs + submits a vanilla SPL Token `Revoke(agent_usdc_ata)` ix. Stops insurance cleanly. Replaces the old withdrawal flow.
+- [ ] **Step 6:** `pact history` — lists last N calls (premiums + breach refunds inline) via `/api/agents/:pubkey/calls?limit=N`. No separate `pact refunds` — refunds are just rows in history under §3.1.2 (no claim step).
+- [ ] **Step 7:** No `pact claim` — `claim_refund` is removed (§3.1.2). Refunds land directly in the agent's USDC ATA inside `settle_batch`; `pact balance` re-reads to confirm.
 - [ ] **Step 8:** SKILL.md repo (`solder-build/pact-market-skill`) per PRD §16.
 - [ ] **Step 9:** Test against the live devnet stack. Commit.
 
@@ -1947,9 +1905,9 @@ PRD §20 checklist applied to our stack. Each item is a task.
 
 ### Task 4.3: Initialize mainnet state
 
-- [ ] **Step 1:** Pool authority signs `initialize_coverage_pool` on mainnet with mainnet USDC mint.
-- [ ] **Step 2:** Pool authority signs `initialize_settlement_authority(<settlement_pubkey>)`.
-- [ ] **Step 3:** Pool authority signs `register_endpoint` for all 5 slugs.
+- [ ] **Step 1:** Pool authority signs `initialize_settlement_authority(<settlement_pubkey>)` on mainnet.
+- [ ] **Step 2:** Pool authority signs `initialize_treasury` and `initialize_protocol_config` on mainnet (§3.1.3 singletons; mainnet USDC mint).
+- [ ] **Step 3:** Pool authority signs `register_endpoint` for all 5 slugs — each call atomically creates that endpoint's per-endpoint CoveragePool + USDC vault per §3.1.1 (no separate `initialize_coverage_pool` step exists).
 
 ### Task 4.4: Deploy Cloud Run services with mainnet env
 
@@ -1958,10 +1916,10 @@ PRD §20 checklist applied to our stack. Each item is a task.
 - [ ] **Step 3:** Deploy dashboard with `NEXT_PUBLIC_PROGRAM_ID=<mainnet>`, `NEXT_PUBLIC_SOLANA_RPC=https://mainnet.helius-rpc.com/?api-key=...`. Remove "Get devnet USDC" button.
 - [ ] **Step 4:** Smoke test mainnet with one of Rick/Alan's wallets and $5 USDC.
 
-### Task 4.5: $200 pool seed
+### Task 4.5: $200 pool seed (split per endpoint, §3.1.1)
 
 - [ ] **Step 1:** Pool authority sends 200 mainnet USDC to its ATA.
-- [ ] **Step 2:** `top_up_coverage_pool(200_000_000)` on mainnet.
+- [ ] **Step 2:** Run `top_up_coverage_pool(slug, amount)` once per endpoint (§3.1.1 — pools are per-slug, not singleton); split the 200 USDC across the 5 launch endpoints. Suggested initial split: helius 60, birdeye 40, jupiter 40, elfa 30, fal.ai 30 (in USDC; pool authority can rebalance later via additional top-ups).
 
 ### Task 4.6: Pre-mainnet checklist gate
 
@@ -2020,8 +1978,9 @@ PRD §20 checklist:
 **Placeholder scan:** Tasks 3.2 (Elfa endpoint shape) and 4.6 checklist contain TBDs that are deferred to Rick's input. These are acceptable because they're explicitly product-blocked, not engineer-blocked. No internal placeholders.
 
 **Type consistency check:**
-- `EndpointConfig` field names consistent across 1A.4 (Rust state) and 1B.3 (TS Endpoint registry types — note camelCase vs snake_case is per-language but field semantics match).
-- `SettlementEvent` byte layout in 1A.16 matches what proxy emits in 1B.7 (both use `call_id, agent_wallet, endpoint_slug, premium_lamports, refund_lamports, latency_ms, breach, timestamp`).
-- `claim_refund` instruction signature consistent: 1A.17 (Rust) vs 1E.4 (TS Codama call) vs 3.4 step 7 (CLI command).
+- `EndpointConfig` field names consistent across 1A.4 (Rust state) and 1B.3 (TS Endpoint registry types — note camelCase vs snake_case is per-language but field semantics match). EndpointConfig now carries `coverage_pool: Pubkey` (§3.1.1) and a `fee_recipients: [FeeRecipient; 8]` array (§3.1.3) — clients resolve the per-endpoint pool by reading this field rather than re-deriving the PDA on every call.
+- `SettlementEvent` byte layout in 1A.16 matches what proxy emits in 1B.7 (both use `call_id, agent_pubkey, endpoint_slug, premium_lamports, refund_lamports, latency_ms, breach, timestamp` — agent identifier is the agent's wallet pubkey, NOT a PDA, per §3.1.2).
+- `FeeRecipient` is 48 bytes per spec §3.1.3; the on-chain `EndpointConfig.fee_recipients` array is 8 × 48 = 384 bytes; consumers use the Codama-generated TS struct decoder.
+- `SettlementStatus` enum (`Settled` / `DelegateFailed`) is consistent across 1A.4 (Rust state), the §3.1.2 pre-flight delegate check in 1A.16, and indexer-side flagging in 1D.
 
-**Note on AgentWallet LEN drift:** Task 1A.17 adds `total_refunds_claimed: u64` to AgentWallet. Update Task 1A.4 LEN comment to include this field. Consumers (1B, 1C, 1E) do not need to change since Codama regenerates from the source.
+**Note on removed-instruction surface:** Under the V1 spec (§3.1.1, §3.1.2, §3.1.3), the program no longer exposes `initialize_coverage_pool`, `initialize_agent_wallet`, `deposit_usdc`, `request_withdrawal`, `execute_withdrawal`, or `claim_refund`. The first is folded into `register_endpoint`; the rest are obsolete because agent custody is via SPL Token approval and refunds land directly in the agent's USDC ATA. Any task referencing those instructions in this plan has been rewritten or marked removed (Tasks 1A.6, 1A.11–1A.14, 1A.17). Consumers (1B, 1C, 1E, 3.4) align to the new shape.

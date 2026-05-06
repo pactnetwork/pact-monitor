@@ -19,11 +19,11 @@ Public devnet end-to-end, shareable link `dashboard.pactnetwork.io`:
 - Live `/`, `/endpoints`, `/agents/[pubkey]` views
 - Wallet adapter (Phantom/Solflare/Backpack); "Get devnet USDC" airdrop button
 - Force-breach demo mode (`?demo_breach=1`, gated to Postgres `demo_allowlist`)
-- Settler running, refunds auto-claim while wallet connected
+- Settler running; refunds land directly in the agent's USDC ATA inside `settle_batch` (no claim step — see §3.1.2, §4.2)
 
 ### 1.2 Friday May 8 deliverable
 - 4th + 5th endpoint (Elfa, fal.ai)
-- Pact CLI (`pact run` + `pact balance | deposit | refunds | history` + SKILL.md integration)
+- Pact CLI (`pact run` + `pact approve | revoke | balance | history` + SKILL.md integration; SPL approval custody — no `deposit`/`claim`, those instructions no longer exist per §3.1.2)
 - Driver.js Colosseum tour
 - Operator console (`/ops`)
 - Telegram alert webhook
@@ -175,7 +175,7 @@ The original singleton `CoveragePool` PDA `[b"coverage_pool"]` was exploitable: 
 - Agent keeps USDC in their own ATA at their own pubkey. Pact never holds it.
 - Agent grants Pact's `SettlementAuthority` PDA a spending allowance via the standard SPL Token `Approve` instruction (one wallet click).
 - Settler debits directly from the agent's USDC ATA on `settle_batch` using delegate authority. No deposit step.
-- Agent can call SPL Token `Revoke` any time. Future debits then fail at the SPL Token level; the program marks the event `settlement_failed`, the rest of the batch is unaffected, and the dashboard surfaces "Approval expired — re-approve to resume insured calls".
+- Agent can call SPL Token `Revoke` any time. On the next `settle_batch`, the program performs a **pre-flight delegate check** — it reads the agent's USDC ATA and verifies (a) `state == Initialized`, (b) `delegate == SettlementAuthority` PDA, and (c) `delegated_amount >= premium` — *before* attempting the SPL Token CPI. If any check fails, the program **skips the CPI**, stamps `SettlementStatus::DelegateFailed` on the CallRecord, and continues with the rest of the batch (other agents in the same batch are unaffected). Dashboard surfaces "Approval expired — re-approve to resume insured calls".
 - Refunds come from `CoveragePool` **directly to the agent's USDC ATA** inside `settle_batch`. No `claim_refund` step.
 
 **Removed from V1 (vs the original PRD §11 design):** `AgentWallet` PDA + USDC vault, `initialize_agent_wallet`, `deposit_usdc`, `request_withdrawal`, `execute_withdrawal`, `claim_refund`, `WITHDRAWAL_COOLDOWN_SECS`, `MAX_DEPOSIT_LAMPORTS`, dashboard `RefundClaimer`. **5 instructions and 1 PDA gone**, simpler code, simpler tests, simpler UX.
@@ -211,7 +211,7 @@ pub struct FeeRecipient {
     pub kind: u8,            // FeeRecipientKind
     pub destination: Pubkey, // 32 bytes; semantics depend on kind
     pub bps: u16,            // share in basis points, off the premium
-    pub _pad: [u8; 5],       // align to 40 bytes
+    pub _pad: [u8; 13],      // align to 48 bytes (matches implementation)
 }
 
 pub struct EndpointConfig {
@@ -238,7 +238,7 @@ pub struct ProtocolConfig {
 - For `AffiliateAta`, `destination` must be a valid USDC ATA at registration time (mint check)
 - For `Treasury`, `destination` must equal the Treasury PDA's USDC vault (resolved at runtime)
 
-Fixed-size array of 8 (not Vec) — Pinocchio has no allocator and 8 × 40 bytes = 320 bytes per endpoint is comfortable. Today's needs (Treasury + 0-N Affiliates) and near-future (+ Oracle + Referrer + Governance) leave slots free.
+Fixed-size array of 8 (not Vec) — Pinocchio has no allocator and 8 × 48 bytes = 384 bytes per endpoint is comfortable. Today's needs (Treasury + 0-N Affiliates) and near-future (+ Oracle + Referrer + Governance) leave slots free.
 
 **V1 fee parties: Treasury (always) + zero or more Affiliates (optional).** No external underwriters in V1 — Pact funds the coverage pool itself. v2 adds an Underwriter recipient kind.
 
@@ -567,7 +567,7 @@ V1 uses plain SQL views or indexer-side aggregation with 5s cache instead of mat
 | Duplicate call_id | settle_batch returns "account already in use" | Settler treats as success, acks |
 | Indexer push fails | HTTP error | 3x retry; on persistent failure, log+alert; dashboard falls back to RPC reads for headline totals |
 | Pool depleted (per-endpoint, §3.1.1) | settle_batch returns `PoolDepleted` for that endpoint's pool | Settler skips refund for that event only; other endpoints' pools unaffected; alert; pool authority tops up the depleted pool |
-| Agent SPL approval revoked / insufficient (§3.1.2) | SPL Token Transfer fails inside settle_batch | Program marks event `settlement_failed`, continues batch; settler acks Pub/Sub for the failed event; indexer flags it; dashboard surfaces "Approval expired — re-approve to resume insured calls" |
+| Agent SPL approval revoked / insufficient (§3.1.2) | Pre-flight delegate check inside settle_batch (reads agent ATA `state`, `delegate`, `delegated_amount` *before* CPI) | Program skips the CPI, stamps `SettlementStatus::DelegateFailed` on the CallRecord, continues batch; settler acks Pub/Sub for the failed event; indexer flags it; dashboard surfaces "Approval expired — re-approve to resume insured calls" |
 | Cloud SQL down | indexer reads/writes throw | Dashboard falls back to RPC for headline totals; per-call history stale until DB recovers |
 
 ---
@@ -578,7 +578,7 @@ V1 uses plain SQL views or indexer-side aggregation with 5s cache instead of mat
 
 | Unit | Framework | Coverage |
 |---|---|---|
-| pact-market-pinocchio (→ pact-network-v1-pinocchio) | LiteSVM (Bun) for unit; surfpool for integration; Codama TS client in tests | Every instruction has happy + at least one negative test. settle_batch dedicated cases: batch-size, dedup, exposure-cap, premium/refund math, paused-endpoint, unauthorized-signer. **Plus: per-endpoint pool isolation (§3.1.1) — each pool debited/credited correctly across mixed-endpoint batches; pool-depleted scoped per pool. Plus: SPL approval flow (§3.1.2) — happy delegate path, revoked-approval marks event `settlement_failed`, refund lands in agent ATA. Plus: fee fan-out (§3.1.3) — default `[Treasury 10%, Affiliate 5%]` template, no-affiliate, multi-affiliate, rounding goes to pool, validation rejects (sum > MAX_TOTAL_FEE_BPS, duplicate destination, multiple Treasury, AffiliateAta with wrong mint), pool-as-source for fee payouts.** |
+| pact-market-pinocchio (→ pact-network-v1-pinocchio) | LiteSVM (Bun) for unit; surfpool for integration; Codama TS client in tests | Every instruction has happy + at least one negative test. settle_batch dedicated cases: batch-size, dedup, exposure-cap, premium/refund math, paused-endpoint, unauthorized-signer. **Plus: per-endpoint pool isolation (§3.1.1) — each pool debited/credited correctly across mixed-endpoint batches; pool-depleted scoped per pool. Plus: SPL approval flow (§3.1.2) — happy delegate path, pre-flight delegate check stamps `SettlementStatus::DelegateFailed` on revoked approval (no CPI attempted), insufficient `delegated_amount` stamps `DelegateFailed`, refund lands in agent ATA. Plus: fee fan-out (§3.1.3) — default `[Treasury 10%, Affiliate 5%]` template, no-affiliate, multi-affiliate, rounding goes to pool, validation rejects (sum > MAX_TOTAL_FEE_BPS, duplicate destination, multiple Treasury, AffiliateAta with wrong mint), pool-as-source for fee payouts.** |
 | pact-proxy | Vitest. Mock Pub/Sub + fetch | Each route, each endpoint handler, each error path, rate limit, force-breach, balance cache hit/miss |
 | pact-settler | Vitest + @nestjs/testing. Mock Pub/Sub, RPC, indexer | Batcher splits at MAX_BATCH_SIZE. Idempotency on retry. Tx build matches Codama. Failure → no-ack |
 | pact-indexer | Vitest + @nestjs/testing + testcontainers Postgres | Idempotent /events upsert. Operator signed-message verification. Stats cache |
@@ -595,7 +595,7 @@ Built Wed PM. Script:
 6. Wait 6s, assert settler picked up, assert tx confirmed
 7. Assert indexer Postgres has 3 `calls` rows + per-endpoint `PoolState` updated + `SettlementRecipientShare` rows for Treasury and Affiliate
 8. Force-breach call — assert refund lands in test keypair's USDC ATA directly (no claim step)
-9. SPL Token `Revoke` from test keypair — next call's settle marks event `settlement_failed`, agent ATA untouched
+9. SPL Token `Revoke` from test keypair — next call's settle pre-flight delegate check stamps `SettlementStatus::DelegateFailed` (no CPI attempted), agent ATA untouched
 10. Re-run script — assert idempotent, no duplicate CallRecord
 
 Pre-Wed-demo gate: this script must pass twice in a row.
@@ -631,7 +631,7 @@ Connect Phantom (devnet), get devnet USDC, **approve $25 SPL spending allowance 
 - `/agents` leaderboard + `/endpoints/[slug]` detail (PRD §15 completeness)
 - 4th endpoint
 - Backfill admin endpoint
-- Pact CLI scaffold + `pact balance` + `pact deposit`
+- Pact CLI scaffold + `pact balance` + `pact approve` (SPL approval flow per §3.1.2; no `pact deposit` — that instruction was removed)
 
 ### 8.6 Fri May 8
 - Pact CLI complete (`pact run`, SKILL.md hooks, full feature list)
@@ -692,6 +692,6 @@ In order of authorized scope cuts:
 | Secret Manager workload identity misconfigured | MEDIUM | Test in Wed AM crew, alert captain at first deploy |
 | Indexer Prisma migration fails on Cloud SQL | LOW | Test migration locally + on staging Cloud SQL Tue night |
 | ~~Refund claim auto-fire fires too aggressively (signs every 5s)~~ | ~~LOW~~ | **Removed** — refunds now land directly in agent's USDC ATA inside `settle_batch` (§3.1.2). No auto-claim flow. |
-| Agent revokes SPL approval mid-session, breaks insured calls silently | MEDIUM | Dashboard banner on `delegated_amount == 0`; settle_batch marks event `settlement_failed` and rest of batch unaffected (§3.1.2); indexer surfaces failure rate per agent |
+| Agent revokes SPL approval mid-session, breaks insured calls silently | MEDIUM | Dashboard banner on `delegated_amount == 0`; settle_batch's pre-flight delegate check stamps `SettlementStatus::DelegateFailed` on the CallRecord and continues the rest of the batch (§3.1.2); indexer surfaces failure rate per agent |
 | Per-endpoint pool refactor adds account-list overhead in settle_batch | MEDIUM | Surfpool benchmark Wed AM at MAX_BATCH_SIZE=50 with channel-then-fan-out flow (§3.1.3); drop batch size if compute fails |
 | Treasury single-key liability | MEDIUM | V1 ships with treasury authority = pool authority (acceptable for $200 seed pool). Pre-mainnet checklist: rotate to multisig before flip |
