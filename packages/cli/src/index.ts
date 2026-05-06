@@ -6,7 +6,12 @@ import { readFileSync } from "node:fs";
 import { resolveProjectName } from "./lib/project.ts";
 import { detectMode, renderEnvelope } from "./lib/output.ts";
 import { exitCodeFor, buildInternalErrorEnvelope, type Envelope } from "./lib/envelope.ts";
-import { validateClusterStrict } from "./lib/validators.ts";
+import {
+  parsePositiveFloat,
+  parsePositiveInt,
+  parseUrlStrict,
+  validateClusterStrict,
+} from "./lib/validators.ts";
 import { runCommand } from "./cmd/run.ts";
 import { balanceCommand } from "./cmd/balance.ts";
 import { depositCommand } from "./cmd/deposit.ts";
@@ -107,12 +112,12 @@ program.configureOutput({
 
 // `pact <url>` is the default action when first arg is a URL
 program
-  .argument("[url]", "URL to call through pact gateway")
+  .argument("[url]", "URL to call through pact gateway", parseUrlStrict)
   .option("--method <m>", "HTTP method", "GET")
   .option("--header <h...>", "HTTP header (repeatable)")
   .option("-d, --data <body>", "request body")
   .option("--raw", "skip slug rewriting (uninsured)")
-  .option("--timeout <sec>", "timeout seconds", "30")
+  .option("--timeout <sec>", "timeout seconds (positive integer)", parsePositiveInt, 30)
   .action(async (url, options) => {
     if (!url) {
       program.help();
@@ -134,7 +139,7 @@ program
       project,
       cluster: program.opts().cluster,
       raw: options.raw,
-      timeoutMs: parseInt(options.timeout) * 1000,
+      timeoutMs: (options.timeout as number) * 1000,
     });
     emit(env, Boolean(program.opts().json), Boolean(program.opts().quiet));
   });
@@ -153,12 +158,13 @@ program
   });
 
 program
-  .command("deposit <usdc>")
+  .command("deposit")
   .description("Deposit USDC into this project's agent wallet")
-  .action(async (usdc: string) => {
+  .argument("<usdc>", "amount in USDC (positive number)", parsePositiveFloat)
+  .action(async (usdc: number) => {
     const project = resolveProjectOrDie(program.opts().project);
     const env = await depositCommand({
-      amountUsdc: parseFloat(usdc),
+      amountUsdc: usdc,
       configDir: configDirFor(project),
       rpcUrl: program.opts().rpc,
       cluster: program.opts().cluster,
