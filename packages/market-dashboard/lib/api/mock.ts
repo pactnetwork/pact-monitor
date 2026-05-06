@@ -224,11 +224,15 @@ export async function fetchAgent(pubkey: string): Promise<AgentHistory> {
   const totalPremiumsPaid = agentCalls.reduce((s, c) => s + c.premium, 0);
   const totalRefundsReceived = agentCalls.reduce((s, c) => s + c.refund, 0);
 
-  // Mock insurable state — in production this is replaced by
-  // `getAgentInsurableState` from @pact-network/protocol-v1-client.
-  const ataBalance = 5_000_000;
-  const allowance = 25_000_000;
-  const eligible = ataBalance >= 100 && allowance >= 100;
+  // Server-side mock: do NOT paint every wallet as eligible/active. Real
+  // insurable state is read by `useAgentInsurableState` on the client via
+  // `getAgentInsurableState` from `@pact-network/protocol-v1-client`. The SSR
+  // pass returns a "loading" snapshot so the panel renders neutral until the
+  // client poll lands the truth. (Painting eligible:true here briefly shows
+  // every wallet as active — credibility risk in a live demo.)
+  const ataBalance = 0;
+  const allowance = 0;
+  const eligible = false;
 
   return {
     agent: {
@@ -236,7 +240,7 @@ export async function fetchAgent(pubkey: string): Promise<AgentHistory> {
       ataBalance,
       allowance,
       eligible,
-      reason: eligible ? undefined : "mock: insufficient balance or allowance",
+      reason: "loading",
       totalPremiumsPaid,
       totalRefundsReceived,
       callCount: agentCalls.length,
