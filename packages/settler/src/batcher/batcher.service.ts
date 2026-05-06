@@ -34,6 +34,22 @@ export class BatcherService {
   }
 
   push(message: SettleMessage): void {
+    // Drop zero-premium events at the boundary. The wrap classifier emits
+    // `client_error → premium=0, refund=0` events for 4xx upstream failures.
+    // The on-chain program rejects events with premium < MIN_PREMIUM_LAMPORTS
+    // (=100 lamports) via PremiumTooSmall, which aborts the entire batch.
+    // If we let these into a batch, the settler nacks → Pub/Sub redelivers →
+    // infinite poison loop. Ack and drop here.
+    const data = message.data as Record<string, unknown>;
+    const premium = BigInt((data["premiumLamports"] as string) ?? "0");
+    if (premium === 0n) {
+      this.logger.debug(
+        `Skipping zero-premium event ${data["callId"]} outcome=${data["outcome"]}`,
+      );
+      message.raw.ack();
+      return;
+    }
+
     this.pending.push(message);
 
     if (this.pending.length === 1) {

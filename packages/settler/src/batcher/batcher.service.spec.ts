@@ -2,10 +2,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { BatcherService, MAX_BATCH_SIZE, SettleBatch } from "./batcher.service";
 import { SettleMessage } from "../consumer/consumer.service";
 
-function makeMessage(n: number): SettleMessage {
+function makeMessage(n: number, premiumLamports = "1000"): SettleMessage {
   return {
     id: String(n),
-    data: { n },
+    data: { n, premiumLamports, callId: `call-${n}`, outcome: "success" },
     raw: { ack: vi.fn(), nack: vi.fn() } as unknown as import("@google-cloud/pubsub").Message,
   };
 }
@@ -74,6 +74,19 @@ describe("BatcherService", () => {
 
   it("flush does nothing when queue is empty", async () => {
     await service.flush();
+    expect(flushed).toHaveLength(0);
+  });
+
+  it("drops zero-premium messages: ack()s and skips pending", async () => {
+    const msg = makeMessage(1, "0");
+    service.push(msg);
+
+    expect(service.pendingCount).toBe(0);
+    expect(msg.raw.ack).toHaveBeenCalledTimes(1);
+    expect(msg.raw.nack).not.toHaveBeenCalled();
+
+    // Confirm no flush is scheduled — advancing time produces no batch.
+    await vi.advanceTimersByTimeAsync(5000);
     expect(flushed).toHaveLength(0);
   });
 });
