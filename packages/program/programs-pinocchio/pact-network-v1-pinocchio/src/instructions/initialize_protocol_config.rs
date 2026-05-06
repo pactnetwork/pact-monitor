@@ -182,7 +182,9 @@ pub fn process(accounts: &[AccountView], data: &[u8]) -> ProgramResult {
     state.usdc_mint = *mint.address();
     state.max_total_fee_bps = max_total_fee_bps;
     state.default_fee_recipient_count = count as u8;
-    state._padding1 = [0; 5];
+    // paused defaults to 0 (unpaused) — flipped by `pause_protocol`.
+    state.paused = 0;
+    state._padding1 = [0; 4];
     state.default_fee_recipients = entries;
 
     Ok(())

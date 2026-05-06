@@ -262,7 +262,21 @@ pub struct ProtocolConfig {
     pub usdc_mint: Address,
     pub max_total_fee_bps: u16,
     pub default_fee_recipient_count: u8,
-    pub _padding1: [u8; 5],
+    /// Global kill switch — 0 = unpaused (normal), 1 = paused. When `paused`
+    /// is non-zero, `settle_batch` rejects with `PactError::ProtocolPaused`
+    /// before any per-event processing or token transfer. Mutated only by
+    /// the `pause_protocol` instruction. Initialised to 0 in
+    /// `initialize_protocol_config`.
+    ///
+    /// Byte offset: 75 (= 1 + 7 + 32 + 32 + 2 + 1). Repurposed from the
+    /// former `_padding1[0]` so total `ProtocolConfig::LEN` stays at 464
+    /// and the byte offset of `default_fee_recipients` (= 80) does not
+    /// shift — pre-existing on-chain accounts and off-chain decoders see
+    /// the same layout, except they MUST treat byte 75 as the `paused`
+    /// flag (was previously zeroed padding, so still 0 = unpaused for
+    /// any account initialised before this field was added).
+    pub paused: u8,
+    pub _padding1: [u8; 4],
     pub default_fee_recipients: [FeeRecipient; 8],
 }
 
@@ -270,8 +284,8 @@ unsafe impl Zeroable for ProtocolConfig {}
 unsafe impl Pod for ProtocolConfig {}
 
 impl ProtocolConfig {
-    // 1+7+32+32+2+1+5+8*48 = 464
-    pub const LEN: usize = 1 + 7 + 32 + 32 + 2 + 1 + 5 + 8 * FeeRecipient::LEN;
+    // 1+7+32+32+2+1+1+4+8*48 = 464 (paused byte repurposed from former _padding1[0])
+    pub const LEN: usize = 1 + 7 + 32 + 32 + 2 + 1 + 1 + 4 + 8 * FeeRecipient::LEN;
 }
 
 const _: () = assert!(ProtocolConfig::LEN == 464);
