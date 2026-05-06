@@ -20,5 +20,8 @@ test-ledger/
 packages/program/node_modules/
 .gitnexus
 
+# TypeScript incremental build artifacts
+*.tsbuildinfo
+
 # Claude Code local-only
 .claude/settings.local.json

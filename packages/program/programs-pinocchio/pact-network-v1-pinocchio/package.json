@@ -1,0 +1,15 @@
+{
+  "name": "pact-network-v1-pinocchio-tests",
+  "private": true,
+  "scripts": {
+    "test": "bun test tests/*.test.ts",
+    "build": "cargo build-sbf --manifest-path Cargo.toml --features bpf-entrypoint"
+  },
+  "devDependencies": {
+    "litesvm": "^0.3.0",
+    "@solana/kit": "^6.8.0",
+    "@solana/spl-token": "^0.4.14",
+    "bs58": "^6.0.0",
+    "typescript": "^5.7.3"
+  }
+}
