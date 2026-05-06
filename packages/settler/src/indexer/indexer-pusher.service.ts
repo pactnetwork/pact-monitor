@@ -118,9 +118,25 @@ export class IndexerPusherService {
         }
       }
     }
-    this.logger.error(
-      `indexer push failed permanently after ${maxAttempts} attempts: ${lastErr}`,
+    // THROW on permanent failure — previously this method swallowed the error
+    // and returned, which let PipelineService ack Pub/Sub for a settled-on-
+    // chain-but-not-indexed batch, permanently losing the call records from
+    // the indexer's view (Alan + codex review). Now the pipeline catches and
+    // can decide whether to nack or surface.
+    throw new IndexerPushError(
+      `indexer push failed permanently after ${maxAttempts} attempts`,
+      { cause: lastErr },
     );
+  }
+}
+
+export class IndexerPushError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message);
+    this.name = "IndexerPushError";
+    if (options?.cause !== undefined) {
+      (this as { cause?: unknown }).cause = options.cause;
+    }
   }
 }
 

@@ -259,17 +259,48 @@ export class SubmitterService implements OnModuleInit {
       microLamports: 5_000,
     });
 
-    const signature = await this.sendWithRetry(async () => {
-      const tx = new Transaction()
-        .add(computeUnitLimitIx)
-        .add(computeUnitPriceIx)
-        .add(ix);
-      return sendAndConfirmTransaction(this.connection, tx, [keypair], {
-        commitment: "confirmed",
-      });
-    }, 3);
+    const signature = await this.sendWithRetry(
+      async () => {
+        const tx = new Transaction()
+          .add(computeUnitLimitIx)
+          .add(computeUnitPriceIx)
+          .add(ix);
+        return sendAndConfirmTransaction(this.connection, tx, [keypair], {
+          commitment: "confirmed",
+        });
+      },
+      3,
+      callRecordPdas,
+    );
 
     return { signature, perEventShares };
+  }
+
+  /**
+   * Invalidate cached EndpointConfig snapshots for every slug present in a
+   * batch, plus reset the Treasury vault cache. Called after a permanent
+   * submit failure — the failure may have been driven by stale on-chain state
+   * (e.g. update_fee_recipients ran since cache load and the recipient ATAs
+   * don't match what the program now expects). Forces the next batch to
+   * re-fetch.
+   */
+  invalidateCacheForBatch(batch: SettleBatch): void {
+    const slugs = new Set<string>();
+    for (const m of batch.messages) {
+      try {
+        slugs.add(this.extractSlug(m.data));
+      } catch {
+        // malformed message — already filtered upstream; safe to skip here
+      }
+    }
+    for (const slug of slugs) {
+      this.endpointCache.delete(slug);
+    }
+    // Treasury vault is singleton; invalidating it forces a fresh fetch.
+    this.treasuryVault = null;
+    this.logger.warn(
+      `Invalidated cache for ${slugs.size} slug(s) + Treasury vault after submit failure`,
+    );
   }
 
   // --------------------------------------------------------------------------
@@ -341,13 +372,40 @@ export class SubmitterService implements OnModuleInit {
     return slug;
   }
 
+  /**
+   * Submit a tx with retry. **Idempotency-aware**: between retry attempts,
+   * preflight `getAccountInfo(callRecordPdas[0])` — if the CallRecord PDA
+   * already exists, the previous attempt's tx must have landed even though
+   * the RPC ack was lost. Look up the prior signature via
+   * `getSignaturesForAddress(callRecordPdas[0])` and return it instead of
+   * resubmitting (which would fail with `account already in use` and poison-
+   * loop the batch on Pub/Sub redelivery).
+   *
+   * The check uses `callRecordPdas[0]` because settle_batch initialises ALL
+   * CallRecord PDAs in a single tx — if one exists, all of them do, and the
+   * tx-id is the same for all.
+   */
   private async sendWithRetry(
     fn: () => Promise<string>,
     maxAttempts: number,
+    callRecordPdas?: PublicKey[],
   ): Promise<string> {
     let lastErr: unknown;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
+        // On retry only (attempt > 1), check if the prior attempt actually
+        // landed despite returning an error.
+        if (attempt > 1 && callRecordPdas && callRecordPdas.length > 0) {
+          const priorSig = await this.findExistingCallRecordSignature(
+            callRecordPdas[0],
+          );
+          if (priorSig) {
+            this.logger.log(
+              `Idempotency: callRecord ${callRecordPdas[0].toBase58()} already on-chain from sig ${priorSig} — short-circuiting retry`,
+            );
+            return priorSig;
+          }
+        }
         return await fn();
       } catch (err) {
         lastErr = err;
@@ -359,9 +417,47 @@ export class SubmitterService implements OnModuleInit {
         }
       }
     }
+    // Final idempotency check before declaring permanent failure: maybe the
+    // last attempt landed too.
+    if (callRecordPdas && callRecordPdas.length > 0) {
+      try {
+        const priorSig = await this.findExistingCallRecordSignature(
+          callRecordPdas[0],
+        );
+        if (priorSig) {
+          this.logger.log(
+            `Idempotency: callRecord on-chain after all attempts; returning sig ${priorSig}`,
+          );
+          return priorSig;
+        }
+      } catch (idemErr) {
+        this.logger.warn(
+          `Idempotency post-flight check failed: ${idemErr}`,
+        );
+      }
+    }
     throw new BatchSubmitError(
       `All ${maxAttempts} submit attempts failed: ${lastErr}`,
     );
+  }
+
+  /**
+   * Returns the most recent transaction signature that touched the given
+   * CallRecord PDA, or null if the account doesn't exist on-chain yet.
+   *
+   * Uses `getSignaturesForAddress` with limit=1 — the PDA is created exactly
+   * once (settle_batch's CallRecord init) so the most recent signature is
+   * the canonical one. If the account doesn't exist, the API returns empty.
+   */
+  private async findExistingCallRecordSignature(
+    callRecordPda: PublicKey,
+  ): Promise<string | null> {
+    const acct = await this.connection.getAccountInfo(callRecordPda, "confirmed");
+    if (!acct) return null;
+    const sigs = await this.connection.getSignaturesForAddress(callRecordPda, {
+      limit: 1,
+    });
+    return sigs[0]?.signature ?? null;
   }
 
   // For consumers that want direct access to derived constants (used by tests).

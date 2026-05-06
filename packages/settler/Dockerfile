@@ -7,11 +7,11 @@ FROM base AS builder
 WORKDIR /app
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
 COPY packages/settler/package.json ./packages/settler/
-COPY packages/market-client/package.json ./packages/market-client/
-RUN pnpm install --frozen-lockfile --filter @pact-network/settler --filter @pact-network/market-client
+COPY packages/protocol-v1-client/package.json ./packages/protocol-v1-client/
+RUN pnpm install --frozen-lockfile --filter @pact-network/settler --filter @pact-network/protocol-v1-client
 
-COPY packages/market-client ./packages/market-client
-RUN pnpm --filter @pact-network/market-client build
+COPY packages/protocol-v1-client ./packages/protocol-v1-client
+RUN pnpm --filter @pact-network/protocol-v1-client build
 
 COPY packages/settler ./packages/settler
 RUN pnpm --filter @pact-network/settler build

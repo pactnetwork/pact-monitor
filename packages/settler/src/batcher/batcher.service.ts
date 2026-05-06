@@ -58,6 +58,15 @@ export class BatcherService {
     }
   }
 
+  /**
+   * Force a final flush during shutdown. Cancels any pending timer and
+   * synchronously awaits the flush callback. Caller is responsible for
+   * waiting on any in-flight processBatch this triggers.
+   */
+  async flushNow(): Promise<void> {
+    return this.flush();
+  }
+
   private cancelTimer() {
     if (this.flushTimer !== null) {
       clearTimeout(this.flushTimer);

@@ -101,12 +101,12 @@ describe("IndexerPusherService", () => {
     expect(mockedPost).toHaveBeenCalledTimes(2);
   });
 
-  it("logs failure but does not throw after 3 failed attempts", async () => {
+  it("throws IndexerPushError after 3 failed attempts (so PipelineService can nack)", async () => {
     mockedPost.mockRejectedValue(new Error("network down"));
     const batch = makeBatch();
     await expect(
       service.push(makeOutcome("sig_fail", batch), batch),
-    ).resolves.toBeUndefined();
+    ).rejects.toThrow(/indexer push failed permanently/);
     expect(mockedPost).toHaveBeenCalledTimes(3);
   });
 
