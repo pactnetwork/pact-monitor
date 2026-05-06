@@ -41,7 +41,19 @@ export interface DefaultBalanceCheckOptions {
    * this up so the same wrap instance can serve mainnet/devnet/USDC/USDT.
    */
   resolveAta: (walletPubkey: string) => string | Promise<string>;
-  /** TTL for the in-memory result cache, in milliseconds. Default 30_000. */
+  /**
+   * TTL for the in-memory result cache, in milliseconds. Default 3_000.
+   *
+   * Short by design: a long positive cache admits stale "eligible" results
+   * to wrap calls that will fail on-chain settlement (the agent could have
+   * revoked allowance or burned balance in the cache window). Combined with
+   * decrement-on-admit (see `check()` below), 3s is a tight ceiling on how
+   * over-issued an agent can be without the on-chain settlement still
+   * matching the off-chain admission decision.
+   *
+   * Best-effort: this cache is NOT authoritative. Settlement failures from
+   * stale cache reads are the consumer's problem to retry.
+   */
   cacheTtlMs?: number;
   /** Override fetch (tests). */
   fetchImpl?: typeof fetch;
@@ -57,7 +69,7 @@ interface CacheEntry {
   noAta: boolean;
 }
 
-const DEFAULT_CACHE_TTL_MS = 30_000;
+const DEFAULT_CACHE_TTL_MS = 3_000;
 
 /**
  * Default `BalanceCheck` implementation. 30s in-memory LRU-ish cache (it's
@@ -167,6 +179,16 @@ export function createDefaultBalanceCheck(
           allowance: entry.allowance,
         };
       }
+      // Decrement-on-admit: the cached entry's view of the agent's budget
+      // is reduced by the amount we're about to admit, so a burst of calls
+      // within the (short) cache TTL is bounded by the actual budget rather
+      // than admitting unboundedly against a stale snapshot.
+      const debited: CacheEntry = {
+        ...entry,
+        ataBalance: entry.ataBalance - requiredLamports,
+        allowance: entry.allowance - requiredLamports,
+      };
+      cache.set(walletPubkey, debited);
       return {
         eligible: true,
         ataBalance: entry.ataBalance,

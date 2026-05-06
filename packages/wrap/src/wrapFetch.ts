@@ -60,9 +60,11 @@ export async function wrapFetch(opts: WrapFetchOptions): Promise<WrapFetchResult
 
   // 1. Optional balance check.
   if (opts.balanceCheck) {
-    const required =
-      opts.endpointConfig.flat_premium_lamports +
-      opts.endpointConfig.imputed_cost_lamports;
+    // The v1 program only debits the flat premium from the agent's USDC ATA;
+    // refunds (when an SLA breach fires) come from the pool, not the agent.
+    // Preflight only needs to cover the premium — including imputed_cost in
+    // the required amount would false-402 collectible agents.
+    const required = opts.endpointConfig.flat_premium_lamports;
     let balance: BalanceCheckResult;
     try {
       balance = await opts.balanceCheck.check(opts.walletPubkey, required);
