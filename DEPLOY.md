@@ -1,84 +1,76 @@
-# Indexer Deploy Guide (Wave 1D.6 / 1D.7)
+# pact-market-proxy Cloud Run Deploy
 
-Blocked on Wave 0 (Cloud SQL instance, Cloud Run service account, Secret Manager entries).
-Run these steps after Wave 0 captain confirms infra is ready.
+Public domain stays `market.pactnetwork.io`; the Cloud Run service is named
+`pact-market-proxy`.
+
+Blocked on Wave 0 (GCP project + service account provisioning). Run these steps once Wave 0 captain confirms:
+- Artifact Registry repo created
+- Service account `pact-market-proxy@<GCP_PROJECT>.iam.gserviceaccount.com` created with Pub/Sub Publisher + Cloud SQL Client roles
+- Cloud SQL Postgres instance provisioned (or Cloud SQL Auth Proxy configured)
 
 ## Prerequisites
 
-- `gcloud` authenticated with project access
-- Cloud SQL instance name in `$CLOUDSQL_INSTANCE` (e.g. `pact-network:us-central1:pact-db`)
-- `$PG_URL` = Cloud SQL connection string (via Auth Proxy)
-- `$INDEXER_PUSH_SECRET` = shared bearer secret (store in Secret Manager as `indexer-push-secret`)
-
-## 1D.7: Apply Prisma migration to Cloud SQL
-
-Start the Cloud SQL Auth Proxy locally:
-
 ```bash
-cloud-sql-proxy $CLOUDSQL_INSTANCE --port=5432 &
+# 1. Create the endpoint reload secret
+openssl rand -hex 32 | gcloud secrets create pact-endpoints-reload-token --data-file=-
+
+# 2. Grant proxy service account access to the secret
+gcloud secrets add-iam-policy-binding pact-endpoints-reload-token \
+  --member="serviceAccount:pact-market-proxy@$GCP_PROJECT.iam.gserviceaccount.com" \
+  --role="roles/secretmanager.secretAccessor"
 ```
 
-Apply the migration (uses `prisma migrate deploy`, NOT `migrate dev`):
+## Deploy script
 
 ```bash
-cd packages/db
-PG_URL="postgresql://postgres:<PASSWORD>@localhost:5432/pact_indexer" pnpm prisma migrate deploy
-```
+#!/usr/bin/env bash
+set -euo pipefail
 
-Verify 7 tables exist:
+# Required env: GCP_PROJECT, GCP_REGION, ARTIFACT_REGISTRY, CLOUDSQL_INSTANCE,
+#               PG_URL, RPC_URL, PROGRAM_ID, USDC_MINT
 
-```bash
-psql "postgresql://postgres:<PASSWORD>@localhost:5432/pact_indexer" -c "\dt"
-```
+IMAGE="$ARTIFACT_REGISTRY/market-proxy:$(git rev-parse --short HEAD)"
 
-Expected tables: `Agent`, `Call`, `DemoAllowlist`, `Endpoint`, `OperatorAllowlist`, `PoolState`, `Settlement`.
+docker build --platform=linux/amd64 -f packages/market-proxy/Dockerfile -t "$IMAGE" .
+docker push "$IMAGE"
 
-Stop the proxy:
-
-```bash
-kill %1
-```
-
-## 1D.6: Deploy to Cloud Run
-
-Build and push the image (run from repo root):
-
-```bash
-IMAGE=gcr.io/$GCP_PROJECT/pact-indexer:$(git rev-parse --short HEAD)
-
-docker build -f packages/indexer/Dockerfile -t $IMAGE .
-docker push $IMAGE
-```
-
-Deploy to Cloud Run:
-
-```bash
-gcloud run deploy pact-indexer \
-  --image=$IMAGE \
-  --region=us-central1 \
+gcloud run deploy pact-market-proxy \
+  --image="$IMAGE" \
+  --region="$GCP_REGION" \
   --platform=managed \
-  --min-instances=0 \
-  --max-instances=5 \
-  --port=3001 \
-  --service-account=pact-indexer@$GCP_PROJECT.iam.gserviceaccount.com \
-  --add-cloudsql-instances=$CLOUDSQL_INSTANCE \
-  --set-secrets="PG_URL=pact-indexer-pg-url:latest,INDEXER_PUSH_SECRET=indexer-push-secret:latest" \
-  --set-env-vars="NODE_ENV=production" \
-  --allow-unauthenticated
+  --service-account="pact-market-proxy@$GCP_PROJECT.iam.gserviceaccount.com" \
+  --add-cloudsql-instances="$CLOUDSQL_INSTANCE" \
+  --set-env-vars="PG_URL=$PG_URL,RPC_URL=$RPC_URL,PROGRAM_ID=$PROGRAM_ID,USDC_MINT=$USDC_MINT,PUBSUB_PROJECT=$GCP_PROJECT,PUBSUB_TOPIC=pact-settle-events" \
+  --set-secrets="ENDPOINTS_RELOAD_TOKEN=pact-endpoints-reload-token:latest" \
+  --allow-unauthenticated \
+  --min-instances=1 \
+  --max-instances=10 \
+  --memory=512Mi
 ```
 
-Verify:
+Save the above as `scripts/deploy-market-proxy.sh` and run:
 
 ```bash
-curl https://$(gcloud run services describe pact-indexer --region=us-central1 --format='value(status.url)')/health
-# Expected: {"status":"ok"}
+chmod +x scripts/deploy-market-proxy.sh
+bash scripts/deploy-market-proxy.sh
 ```
 
-## Environment variables
+## Smoke test
 
-| Variable | Source | Notes |
-|---|---|---|
-| `PG_URL` | Secret Manager `pact-indexer-pg-url` | Cloud SQL socket path for Cloud Run |
-| `INDEXER_PUSH_SECRET` | Secret Manager `indexer-push-secret` | Shared with settler |
-| `SOLANA_RPC_URL` | Env var | Devnet RPC (for ops tx building at Wave 2) |
-| `PROGRAM_ID` | Env var | pact-market-pinocchio program ID |
+```bash
+curl https://pact-market-proxy-<hash>.run.app/health
+# Expected: {"status":"ok","version":"v1","endpoints_loaded":<n>}
+```
+
+## Environment variables summary
+
+| Var | Description |
+|-----|-------------|
+| `PG_URL` | Postgres connection string (Cloud SQL Auth Proxy socket or TCP) |
+| `RPC_URL` | Solana RPC endpoint (Helius or QuickNode devnet/mainnet) |
+| `PROGRAM_ID` | Pact Market program address (32+ char base58) |
+| `USDC_MINT` | USDC mint pubkey for this network (mainnet/devnet differ) |
+| `PUBSUB_PROJECT` | GCP project ID |
+| `PUBSUB_TOPIC` | Pub/Sub topic name (`pact-settle-events`) |
+| `ENDPOINTS_RELOAD_TOKEN` | Bearer token for `/admin/reload-endpoints` (from Secret Manager) |
+| `PORT` | HTTP port (default 8080, Cloud Run sets this automatically) |
