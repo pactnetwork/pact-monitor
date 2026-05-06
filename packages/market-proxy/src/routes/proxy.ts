@@ -19,6 +19,7 @@ import { handlerRegistry } from "../lib/registry.js";
 import { computeDemoBreachDelayMs } from "../lib/force-breach.js";
 import { classifierRegistry } from "../lib/classifiers.js";
 import { createBufferedFetch } from "../lib/buffered-fetch.js";
+import { buildSanitisedResponse } from "../lib/response-headers.js";
 
 export async function proxyRoute(c: Context): Promise<Response> {
   const slug = c.req.param("slug") ?? "";
@@ -48,10 +49,8 @@ export async function proxyRoute(c: Context): Promise<Response> {
   if (!pactWallet) {
     const upstreamReq = await handler.buildRequest(c.req.raw, endpoint.upstreamBase);
     const upstreamResp = await fetch(upstreamReq);
-    return new Response(upstreamResp.body, {
-      status: upstreamResp.status,
-      headers: upstreamResp.headers,
-    });
+    // Alan review M2: strip Set-Cookie/Server/CORS leaks from upstream.
+    return buildSanitisedResponse(upstreamResp);
   }
 
   // -----------------------------------------------------------------------
@@ -62,10 +61,8 @@ export async function proxyRoute(c: Context): Promise<Response> {
   if (!insurable) {
     const upstreamReq = await handler.buildRequest(c.req.raw, endpoint.upstreamBase);
     const upstreamResp = await fetch(upstreamReq);
-    return new Response(upstreamResp.body, {
-      status: upstreamResp.status,
-      headers: upstreamResp.headers,
-    });
+    // Alan review M2: strip Set-Cookie/Server/CORS leaks from upstream.
+    return buildSanitisedResponse(upstreamResp);
   }
 
   // -----------------------------------------------------------------------
@@ -114,5 +111,15 @@ export async function proxyRoute(c: Context): Promise<Response> {
     pool: slug,
   });
 
-  return result.response;
+  // Alan review M2: wrap's response carries upstream headers (with
+  // X-Pact-* added on top by attachPactHeaders). Strip the upstream-leak
+  // set (Set-Cookie / Server / X-Powered-By / Access-Control-* / ...) but
+  // preserve every X-Pact-* that wrap attached.
+  const pactHeaders = new Headers();
+  for (const [name, value] of result.response.headers.entries()) {
+    if (name.toLowerCase().startsWith("x-pact-")) {
+      pactHeaders.set(name, value);
+    }
+  }
+  return buildSanitisedResponse(result.response, pactHeaders);
 }

@@ -222,6 +222,68 @@ describe("proxy route (wrap-based)", () => {
     expect(memorySink.events.length).toBe(0);
   });
 
+  // Alan review M2: upstream Set-Cookie / Server / Access-Control-* must
+  // not leak through; proxy applies its own permissive CORS and X-Pact-*
+  // headers come through.
+  test("strips upstream Set-Cookie/Server/CORS leaks; X-Pact-* still added", async () => {
+    mockUpstreamFetch.mockResolvedValue(
+      new Response(JSON.stringify({ result: { value: 100 } }), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+          "Set-Cookie": "leak=yes; HttpOnly",
+          Server: "cloudflare",
+          "X-Powered-By": "Express",
+          "Access-Control-Allow-Origin": "https://attacker.example.com",
+          "Access-Control-Allow-Credentials": "true",
+        },
+      }),
+    );
+    const app = makeApp();
+    const body = JSON.stringify({
+      jsonrpc: "2.0",
+      method: "getAccountInfo",
+      params: [],
+    });
+    const resp = await app.request("/v1/helius/?pact_wallet=walletM2", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    });
+    // Stripped:
+    expect(resp.headers.get("set-cookie")).toBeNull();
+    expect(resp.headers.get("server")).toBeNull();
+    expect(resp.headers.get("x-powered-by")).toBeNull();
+    expect(resp.headers.get("access-control-allow-credentials")).toBeNull();
+    // Proxy CORS:
+    expect(resp.headers.get("access-control-allow-origin")).toBe("*");
+    // X-Pact-* still present:
+    expect(resp.headers.get("X-Pact-Outcome")).toBe("ok");
+    expect(resp.headers.get("X-Pact-Call-Id")).toBeTruthy();
+  });
+
+  // Alan review M2: even on the uninsured passthrough (no pact_wallet),
+  // upstream Set-Cookie must not leak through.
+  test("passthrough also strips upstream Set-Cookie", async () => {
+    mockUpstreamFetch.mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+          "Set-Cookie": "leak=yes",
+          Server: "nginx",
+        },
+      }),
+    );
+    const app = makeApp();
+    const resp = await app.request("/v1/helius/", {
+      method: "POST",
+      body: JSON.stringify({ jsonrpc: "2.0", method: "getAccountInfo", params: [] }),
+    });
+    expect(resp.headers.get("set-cookie")).toBeNull();
+    expect(resp.headers.get("server")).toBeNull();
+  });
+
   test("force-breach mode forces a latency_breach classification", async () => {
     const ctx = getContext() as any;
     ctx.demoAllowlist.has.mockResolvedValue(true);
