@@ -56,3 +56,14 @@ export function exitCodeFor(status: Status): number {
 export function makeEnvelope(status: Status, body?: unknown, meta?: EnvelopeMeta): Envelope {
   return meta !== undefined ? { status, body, meta } : { status, body };
 }
+
+// TODO(friday-harden): surface stack traces behind PACT_LOG=debug or --verbose.
+// Until then, we deliberately exclude err.stack to avoid leaking internal paths
+// (B3 — see review of PR #64).
+export function buildInternalErrorEnvelope(err: unknown): Envelope {
+  const message = err instanceof Error ? err.message : String(err);
+  return {
+    status: "cli_internal_error",
+    body: { error: message },
+  };
+}

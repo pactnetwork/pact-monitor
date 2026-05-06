@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { Envelope, exitCodeFor, statuses } from "../src/lib/envelope.ts";
+import { Envelope, buildInternalErrorEnvelope, exitCodeFor, statuses } from "../src/lib/envelope.ts";
 
 describe("envelope", () => {
   test("status set is closed and exhaustive", () => {
@@ -30,6 +30,25 @@ describe("envelope", () => {
     expect(exitCodeFor("signature_rejected")).toBe(30);
     expect(exitCodeFor("needs_project_name")).toBe(40);
     expect(exitCodeFor("cli_internal_error")).toBe(99);
+  });
+
+  describe("buildInternalErrorEnvelope (B3)", () => {
+    test("body contains error message but no stack field", () => {
+      const err = new Error("boom");
+      const env = buildInternalErrorEnvelope(err);
+      expect(env.status).toBe("cli_internal_error");
+      const body = env.body as Record<string, unknown>;
+      expect(body.error).toBe("boom");
+      expect(body).not.toHaveProperty("stack");
+      expect(Object.keys(body)).toEqual(["error"]);
+    });
+
+    test("non-Error throwables are coerced to string without leaking stack", () => {
+      const env = buildInternalErrorEnvelope("plain string failure");
+      const body = env.body as Record<string, unknown>;
+      expect(body.error).toBe("plain string failure");
+      expect(body).not.toHaveProperty("stack");
+    });
   });
 
   test("Envelope type accepts a known status", () => {

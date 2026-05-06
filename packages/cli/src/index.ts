@@ -5,7 +5,7 @@ import { homedir } from "node:os";
 import { readFileSync } from "node:fs";
 import { resolveProjectName } from "./lib/project.ts";
 import { detectMode, renderEnvelope } from "./lib/output.ts";
-import { exitCodeFor, type Envelope } from "./lib/envelope.ts";
+import { exitCodeFor, buildInternalErrorEnvelope, type Envelope } from "./lib/envelope.ts";
 import { runCommand } from "./cmd/run.ts";
 import { balanceCommand } from "./cmd/balance.ts";
 import { depositCommand } from "./cmd/deposit.ts";
@@ -168,12 +168,5 @@ program
   });
 
 program.parseAsync().catch((err) => {
-  emit(
-    {
-      status: "cli_internal_error",
-      body: { error: (err as Error).message, stack: (err as Error).stack },
-    },
-    true,
-    false,
-  );
+  emit(buildInternalErrorEnvelope(err), true, false);
 });
