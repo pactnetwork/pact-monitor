@@ -1,0 +1,48 @@
+{
+  "$schema": "endpoint-config",
+  "_comment": "Endpoint configs for V1 mainnet init. Edit these values BEFORE running init-mainnet.ts. All amounts are in USDC base units (6 decimals): 1_000 = $0.001, 1_000_000 = $1.00. exposureCapPerHourLamports = max payout from this pool per rolling hour. Conservative defaults below — adjust per real cost basis.",
+  "endpoints": [
+    {
+      "slug": "helius",
+      "flatPremiumLamports": "1000",
+      "percentBps": 0,
+      "slaLatencyMs": 1500,
+      "imputedCostLamports": "5000",
+      "exposureCapPerHourLamports": "10000000"
+    },
+    {
+      "slug": "birdeye",
+      "flatPremiumLamports": "2000",
+      "percentBps": 0,
+      "slaLatencyMs": 1500,
+      "imputedCostLamports": "10000",
+      "exposureCapPerHourLamports": "10000000"
+    },
+    {
+      "slug": "jupiter",
+      "flatPremiumLamports": "1500",
+      "percentBps": 0,
+      "slaLatencyMs": 1000,
+      "imputedCostLamports": "5000",
+      "exposureCapPerHourLamports": "10000000"
+    },
+    {
+      "slug": "elfa",
+      "flatPremiumLamports": "5000",
+      "percentBps": 0,
+      "slaLatencyMs": 2000,
+      "imputedCostLamports": "25000",
+      "exposureCapPerHourLamports": "10000000"
+    },
+    {
+      "slug": "fal",
+      "flatPremiumLamports": "50000",
+      "percentBps": 0,
+      "slaLatencyMs": 5000,
+      "imputedCostLamports": "200000",
+      "exposureCapPerHourLamports": "20000000"
+    }
+  ],
+  "treasuryFeeBps": 1000,
+  "_treasuryFeeBpsComment": "10% of every premium goes to Treasury, residual stays in CoveragePool."
+}

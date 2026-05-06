@@ -1,0 +1,19 @@
+{
+  "name": "@pact-network/scripts-mainnet",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "init": "tsx init-mainnet.ts",
+    "init:dry": "DRY_RUN=1 tsx init-mainnet.ts"
+  },
+  "dependencies": {
+    "@pact-network/protocol-v1-client": "workspace:*",
+    "@solana/web3.js": "^1.95.8",
+    "tsx": "^4.19.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "typescript": "^5.7.2"
+  }
+}
