@@ -1,4 +1,5 @@
-import { Body, Controller, HttpCode, Post } from "@nestjs/common";
+import { Body, Controller, HttpCode, Post, UseGuards } from "@nestjs/common";
+import { OpsDisabledInProdGuard } from "./ops-disabled-in-prod.guard";
 import {
   FeeRecipientInput,
   OpsService,
@@ -30,6 +31,7 @@ interface UpdateFeeRecipientsRequest extends SignedOpsRequest {
   recipients: FeeRecipientInput[];
 }
 
+@UseGuards(OpsDisabledInProdGuard)
 @Controller("api/ops")
 export class OpsController {
   constructor(private readonly ops: OpsService) {}

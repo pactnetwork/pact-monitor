@@ -2,10 +2,12 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { INestApplication, UnauthorizedException } from "@nestjs/common";
 import * as request from "supertest";
 import { OpsController } from "../src/ops/ops.controller";
+import { OpsDisabledInProdGuard } from "../src/ops/ops-disabled-in-prod.guard";
 import { OpsService } from "../src/ops/ops.service";
 
 describe("OpsController", () => {
   let app: INestApplication;
+  const originalNodeEnv = process.env.NODE_ENV;
   const mockVerify = jest.fn();
   const mockPauseTx = jest.fn().mockResolvedValue("dW5zaWduZWQ=");
   const mockUpdateConfigTx = jest.fn().mockResolvedValue("dW5zaWduZWQ=");
@@ -15,9 +17,13 @@ describe("OpsController", () => {
     .mockResolvedValue("dW5zaWduZWQ=");
 
   beforeAll(async () => {
+    // OpsDisabledInProdGuard 404s when NODE_ENV=production. Force a non-prod
+    // value so these tests exercise the controller logic, not the prod gate.
+    process.env.NODE_ENV = "test";
     const module: TestingModule = await Test.createTestingModule({
       controllers: [OpsController],
       providers: [
+        OpsDisabledInProdGuard,
         {
           provide: OpsService,
           useValue: {
@@ -34,7 +40,10 @@ describe("OpsController", () => {
     await app.init();
   });
 
-  afterAll(() => app.close());
+  afterAll(async () => {
+    await app.close();
+    process.env.NODE_ENV = originalNodeEnv;
+  });
   beforeEach(() => {
     mockVerify.mockReset();
     mockPauseTx.mockClear();
