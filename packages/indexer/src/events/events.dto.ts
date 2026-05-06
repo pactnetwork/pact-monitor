@@ -23,6 +23,15 @@ export type SettlementOutcome =
   | "client_error"
   | "network_error";
 
+export interface RecipientShareDto {
+  /** FeeRecipientKind: 0=Treasury, 1=AffiliateAta, 2=AffiliatePda. */
+  kind: number;
+  /** ATA / vault pubkey credited on-chain (never a logical owner). */
+  pubkey: string;
+  /** bigint as decimal string. */
+  amountLamports: string;
+}
+
 export interface WrapCallEventDto {
   callId: string;
   agentPubkey: string;
@@ -37,14 +46,21 @@ export interface WrapCallEventDto {
   ts: string;
   settledAt: string;
   signature: string;
-}
-
-export interface RecipientShareDto {
-  /** FeeRecipientKind: 0=Treasury, 1=AffiliateAta, 2=AffiliatePda. */
-  recipientKind: number;
-  recipientPubkey: string;
-  /** bigint as decimal string. */
-  amountLamports: string;
+  /**
+   * Per-call fee fan-out. Exactly mirrors the on-chain `settle_batch` fee
+   * fan-out for THIS event: one entry per EndpointConfig.fee_recipients[i]
+   * actually credited, with the rounded-down `premium * bps / 10_000`
+   * amountLamports the program transferred.
+   *
+   * Contract with the settler: per-call shares are the source of truth; the
+   * indexer aggregates them across the batch into RecipientEarnings.
+   *
+   * REQUIRED, possibly empty array. Never absent. A no-fee call (e.g. fully
+   * refunded) MUST emit `[]`, not omit the field. The indexer 400s on missing
+   * `shares` to surface contract drift loudly rather than silently zeroing
+   * out fee attribution.
+   */
+  shares: RecipientShareDto[];
 }
 
 export interface SettlementEventDto {
@@ -52,22 +68,6 @@ export interface SettlementEventDto {
   batchSize: number;
   totalPremiumsLamports: string;
   totalRefundsLamports: string;
-  /**
-   * Top-level, batch-aggregate per-recipient fee breakdown.
-   *
-   * Contract with the settler (#62): `shares` lives at the SettlementEventDto
-   * top level, NOT nested per-call inside `WrapCallEventDto`. The settler
-   * aggregates fee outflows across the whole batch and emits one
-   * RecipientShareDto per (kind, recipientPubkey) pair. The indexer
-   * apportions those totals across endpoints proportional to gross premiums
-   * within the batch (see TODO in events.service.ts about per-call splits).
-   *
-   * Empty/missing when the batch had no fee outflows (e.g. every call
-   * refunded). Do NOT add a per-call `shares` field on WrapCallEventDto —
-   * that would duplicate the contract and silently zero-out earnings if the
-   * two emitters disagreed.
-   */
-  shares?: RecipientShareDto[];
   ts: string;
   calls: WrapCallEventDto[];
 }

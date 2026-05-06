@@ -1,8 +1,7 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { BadRequestException, Injectable, Logger } from "@nestjs/common";
 import { Prisma } from "@pact-network/db";
 import { PrismaService } from "../prisma/prisma.service";
 import {
-  RecipientShareDto,
   SettlementEventDto,
   WrapCallEventDto,
   outcomeToBreach,
@@ -40,9 +39,28 @@ export class EventsService {
    *     entire batch was a no-op duplicate.
    *   - Everything happens inside a single `prisma.$transaction(...)` so
    *     aggregate updates roll back if any insert fails.
+   *
+   * Shares contract:
+   *   - Per-call `shares` is REQUIRED on every WrapCallEventDto (possibly
+   *     empty array, never absent). Missing `shares` is a 400 — settler
+   *     contract drift would otherwise silently zero out Treasury / affiliate
+   *     fee attribution forever.
+   *   - We aggregate per-call shares across the batch into RecipientEarnings
+   *     by (kind, pubkey). Endpoint feesPaid is the exact sum of shares from
+   *     the calls that hit that endpoint — no more proportional apportioning.
    */
   async ingest(dto: SettlementEventDto): Promise<{ accepted: number }> {
-    const shares: RecipientShareDto[] = dto.shares ?? [];
+    // Validate the per-call shares contract up front. An undefined `shares`
+    // field is treated as a contract violation rather than coerced to `[]` —
+    // we want the settler to fail loudly if it ever stops emitting shares.
+    for (const call of dto.calls) {
+      if (!Array.isArray(call.shares)) {
+        throw new BadRequestException(
+          `WrapCallEventDto.shares must be an array (callId=${call.callId}); ` +
+            `emit [] for no-fee calls. See events.dto.ts.`,
+        );
+      }
+    }
 
     return this.prisma.$transaction(async (tx) => {
       // First pass: insert each Call. Duplicates (P2002 on callId PK) are
@@ -75,40 +93,12 @@ export class EventsService {
         update: {},
       });
 
-      // Per-recipient shares: insert once per signature.
-      const existingShares = await tx.settlementRecipientShare.count({
-        where: { settlementSig: dto.signature },
-      });
-      if (existingShares === 0 && shares.length > 0) {
-        await tx.settlementRecipientShare.createMany({
-          data: shares.map((s) => ({
-            settlementSig: dto.signature,
-            recipientKind: s.recipientKind,
-            recipientPubkey: s.recipientPubkey,
-            amountLamports: BigInt(s.amountLamports),
-          })),
-        });
-
-        for (const s of shares) {
-          const amt = BigInt(s.amountLamports);
-          await tx.recipientEarnings.upsert({
-            where: { recipientPubkey: s.recipientPubkey },
-            create: {
-              recipientPubkey: s.recipientPubkey,
-              recipientKind: s.recipientKind,
-              lifetimeEarnedLamports: amt,
-              lastUpdated: new Date(dto.ts),
-            },
-            update: {
-              lifetimeEarnedLamports: { increment: amt },
-              lastUpdated: new Date(dto.ts),
-            },
-          });
-        }
-      }
-
-      // Aggregate updates — only for calls that were actually inserted.
+      // Aggregate per-call shares into:
+      //   - One flat list per (kind, pubkey) for SettlementRecipientShare
+      //     batch rows + RecipientEarnings upserts.
+      //   - Per-endpoint feesPaid totals for PoolState updates.
       const perEndpoint = new Map<string, PoolDelta>();
+      const perRecipient = new Map<string, { kind: number; pubkey: string; amount: bigint }>();
 
       for (const call of insertedCalls) {
         // Bump Agent counters. Safe to do here because we know this call is
@@ -138,35 +128,57 @@ export class EventsService {
         };
         slot.premium += BigInt(call.premiumLamports);
         slot.refund += BigInt(call.refundLamports);
+
+        // Per-call shares: this call's exact fee fan-out lands on this
+        // endpoint's pool (no proportional apportioning across endpoints).
+        for (const share of call.shares) {
+          const amt = BigInt(share.amountLamports);
+          slot.feesPaid += amt;
+
+          const key = `${share.kind}:${share.pubkey}`;
+          const agg = perRecipient.get(key) ?? {
+            kind: share.kind,
+            pubkey: share.pubkey,
+            amount: 0n,
+          };
+          agg.amount += amt;
+          perRecipient.set(key, agg);
+        }
         perEndpoint.set(call.endpointSlug, slot);
       }
 
-      // TODO(settler): replace proportional fee attribution with exact
-      // per-call fee deltas once the settler emits them per-call. Today the
-      // settler only reports a batch-aggregate `shares` total, so we
-      // apportion fees across endpoints proportional to gross premiums in
-      // this batch. Last endpoint absorbs rounding remainder so totals
-      // reconcile.
-      const totalFees = shares.reduce(
-        (s, x) => s + BigInt(x.amountLamports),
-        0n,
-      );
-      const totalPremiumThisBatch = Array.from(perEndpoint.values()).reduce(
-        (s, v) => s + v.premium,
-        0n,
-      );
-      if (totalFees > 0n && totalPremiumThisBatch > 0n) {
-        let feesAssigned = 0n;
-        const slugs = Array.from(perEndpoint.keys());
-        slugs.forEach((slug, i) => {
-          const slot = perEndpoint.get(slug)!;
-          const fee =
-            i === slugs.length - 1
-              ? totalFees - feesAssigned
-              : (totalFees * slot.premium) / totalPremiumThisBatch;
-          slot.feesPaid = fee;
-          feesAssigned += fee;
+      // Per-recipient settlement shares: insert once per signature.
+      // SettlementRecipientShare is keyed at the batch level (per-batch row
+      // per recipient) — we sum each (kind, pubkey) across the batch's calls.
+      const aggregatedShares = Array.from(perRecipient.values());
+      const existingShares = await tx.settlementRecipientShare.count({
+        where: { settlementSig: dto.signature },
+      });
+      if (existingShares === 0 && aggregatedShares.length > 0) {
+        await tx.settlementRecipientShare.createMany({
+          data: aggregatedShares.map((s) => ({
+            settlementSig: dto.signature,
+            recipientKind: s.kind,
+            recipientPubkey: s.pubkey,
+            amountLamports: s.amount,
+          })),
         });
+
+        for (const s of aggregatedShares) {
+          await tx.recipientEarnings.upsert({
+            where: { recipientPubkey: s.pubkey },
+            create: {
+              recipientPubkey: s.pubkey,
+              recipientKind: s.kind,
+              lifetimeEarnedLamports: s.amount,
+              lastUpdated: new Date(dto.ts),
+            },
+            update: {
+              lifetimeEarnedLamports: { increment: s.amount },
+              lastUpdated: new Date(dto.ts),
+            },
+          });
+        }
       }
 
       // PoolState upserts. Skip endpoints that have no registered Endpoint

@@ -1,4 +1,5 @@
 import { Test, TestingModule } from "@nestjs/testing";
+import { BadRequestException } from "@nestjs/common";
 import { Prisma } from "@pact-network/db";
 import { EventsService } from "../src/events/events.service";
 import { PrismaService } from "../src/prisma/prisma.service";
@@ -155,25 +156,13 @@ describe("EventsService", () => {
     svc = mod.get(EventsService);
   });
 
-  it("decodes per-recipient shares from settler payload and stores them", async () => {
+  it("decodes per-call shares from settler payload and stores them", async () => {
     const dto: SettlementEventDto = {
       signature: "sigA",
       batchSize: 1,
       totalPremiumsLamports: "1000",
       totalRefundsLamports: "0",
       ts: new Date().toISOString(),
-      shares: [
-        {
-          recipientKind: 0,
-          recipientPubkey: "TreasuryPubkey11111111111111111111111111111",
-          amountLamports: "80",
-        },
-        {
-          recipientKind: 1,
-          recipientPubkey: "AffiliateAPubkey1111111111111111111111111111",
-          amountLamports: "20",
-        },
-      ],
       calls: [
         {
           callId: "c1",
@@ -186,6 +175,18 @@ describe("EventsService", () => {
           ts: new Date().toISOString(),
           settledAt: new Date().toISOString(),
           signature: "sigA",
+          shares: [
+            {
+              kind: 0,
+              pubkey: "TreasuryPubkey11111111111111111111111111111",
+              amountLamports: "80",
+            },
+            {
+              kind: 1,
+              pubkey: "AffiliateAPubkey1111111111111111111111111111",
+              amountLamports: "20",
+            },
+          ],
         },
       ],
     };
@@ -199,12 +200,15 @@ describe("EventsService", () => {
     );
     expect(createMany).toBeDefined();
     expect(createMany!.args.data).toHaveLength(2);
-    expect(createMany!.args.data[0]).toMatchObject({
+    const byKind = new Map<number, any>(
+      createMany!.args.data.map((d: any) => [d.recipientKind, d]),
+    );
+    expect(byKind.get(0)).toMatchObject({
       settlementSig: "sigA",
       recipientKind: 0,
       amountLamports: 80n,
     });
-    expect(createMany!.args.data[1]).toMatchObject({
+    expect(byKind.get(1)).toMatchObject({
       recipientKind: 1,
       amountLamports: 20n,
     });
@@ -222,7 +226,6 @@ describe("EventsService", () => {
       totalPremiumsLamports: "1500",
       totalRefundsLamports: "0",
       ts: new Date().toISOString(),
-      shares: [],
       calls: [
         {
           callId: "c2",
@@ -235,6 +238,7 @@ describe("EventsService", () => {
           ts: new Date().toISOString(),
           settledAt: new Date().toISOString(),
           signature: "sigB",
+          shares: [],
         },
         {
           callId: "c3",
@@ -247,6 +251,7 @@ describe("EventsService", () => {
           ts: new Date().toISOString(),
           settledAt: new Date().toISOString(),
           signature: "sigB",
+          shares: [],
         },
       ],
     };
@@ -270,7 +275,6 @@ describe("EventsService", () => {
       totalPremiumsLamports: "0",
       totalRefundsLamports: "2000",
       ts: new Date().toISOString(),
-      shares: [],
       calls: [
         {
           callId: "c-breach",
@@ -283,6 +287,7 @@ describe("EventsService", () => {
           ts: new Date().toISOString(),
           settledAt: new Date().toISOString(),
           signature: "sigC",
+          shares: [],
         },
         {
           callId: "c-server-err",
@@ -295,6 +300,7 @@ describe("EventsService", () => {
           ts: new Date().toISOString(),
           settledAt: new Date().toISOString(),
           signature: "sigC",
+          shares: [],
         },
         {
           callId: "c-client-err",
@@ -307,6 +313,7 @@ describe("EventsService", () => {
           ts: new Date().toISOString(),
           settledAt: new Date().toISOString(),
           signature: "sigC",
+          shares: [],
         },
       ],
     };
@@ -340,13 +347,6 @@ describe("EventsService", () => {
       totalPremiumsLamports: "1000",
       totalRefundsLamports: "0",
       ts: new Date().toISOString(),
-      shares: [
-        {
-          recipientKind: 0,
-          recipientPubkey: "TreasuryPubkey11111111111111111111111111111",
-          amountLamports: "100",
-        },
-      ],
       calls: [
         {
           callId: "dup-1",
@@ -359,6 +359,13 @@ describe("EventsService", () => {
           ts: new Date().toISOString(),
           settledAt: new Date().toISOString(),
           signature: "sigDup",
+          shares: [
+            {
+              kind: 0,
+              pubkey: "TreasuryPubkey11111111111111111111111111111",
+              amountLamports: "100",
+            },
+          ],
         },
       ],
     };
@@ -431,13 +438,6 @@ describe("EventsService", () => {
       totalPremiumsLamports: "1000",
       totalRefundsLamports: "0",
       ts: new Date().toISOString(),
-      shares: [
-        {
-          recipientKind: 0,
-          recipientPubkey: "TreasuryPubkey11111111111111111111111111111",
-          amountLamports: "100",
-        },
-      ],
       calls: [
         {
           callId: "fail-1",
@@ -450,6 +450,13 @@ describe("EventsService", () => {
           ts: new Date().toISOString(),
           settledAt: new Date().toISOString(),
           signature: "sigFail",
+          shares: [
+            {
+              kind: 0,
+              pubkey: "TreasuryPubkey11111111111111111111111111111",
+              amountLamports: "100",
+            },
+          ],
         },
       ],
     };
@@ -469,34 +476,17 @@ describe("EventsService", () => {
     expect(survivors).toHaveLength(0);
   });
 
-  it("payload: top-level shares array creates SettlementRecipientShare rows for batch-aggregate fees", async () => {
-    // Contract with #62 settler: `shares` lives at the TOP LEVEL of the
-    // SettlementEventDto, not nested per-call. The indexer must decode it
-    // and create one SettlementRecipientShare per recipient and one
-    // RecipientEarnings upsert per recipient.
+  it("payload: per-call shares aggregate into batch-level SettlementRecipientShare rows", async () => {
+    // Contract with #62 settler: `shares` is per-call on each
+    // WrapCallEventDto. The indexer aggregates by (kind, pubkey) across the
+    // whole batch into one SettlementRecipientShare row per recipient and
+    // one RecipientEarnings upsert per recipient.
     const dto: SettlementEventDto = {
       signature: "sigBatchFees",
       batchSize: 3,
       totalPremiumsLamports: "3000",
       totalRefundsLamports: "0",
       ts: new Date().toISOString(),
-      shares: [
-        {
-          recipientKind: 0,
-          recipientPubkey: "TreasuryPubkey11111111111111111111111111111",
-          amountLamports: "180",
-        },
-        {
-          recipientKind: 1,
-          recipientPubkey: "AffiliateAtaPubkey111111111111111111111111111",
-          amountLamports: "60",
-        },
-        {
-          recipientKind: 2,
-          recipientPubkey: "AffiliatePdaPubkey1111111111111111111111111111",
-          amountLamports: "60",
-        },
-      ],
       calls: [
         {
           callId: "bf-1",
@@ -509,6 +499,18 @@ describe("EventsService", () => {
           ts: new Date().toISOString(),
           settledAt: new Date().toISOString(),
           signature: "sigBatchFees",
+          shares: [
+            {
+              kind: 0,
+              pubkey: "TreasuryPubkey11111111111111111111111111111",
+              amountLamports: "60",
+            },
+            {
+              kind: 1,
+              pubkey: "AffiliateAtaPubkey111111111111111111111111111",
+              amountLamports: "20",
+            },
+          ],
         },
         {
           callId: "bf-2",
@@ -521,6 +523,18 @@ describe("EventsService", () => {
           ts: new Date().toISOString(),
           settledAt: new Date().toISOString(),
           signature: "sigBatchFees",
+          shares: [
+            {
+              kind: 0,
+              pubkey: "TreasuryPubkey11111111111111111111111111111",
+              amountLamports: "60",
+            },
+            {
+              kind: 1,
+              pubkey: "AffiliateAtaPubkey111111111111111111111111111",
+              amountLamports: "20",
+            },
+          ],
         },
         {
           callId: "bf-3",
@@ -533,6 +547,18 @@ describe("EventsService", () => {
           ts: new Date().toISOString(),
           settledAt: new Date().toISOString(),
           signature: "sigBatchFees",
+          shares: [
+            {
+              kind: 0,
+              pubkey: "TreasuryPubkey11111111111111111111111111111",
+              amountLamports: "60",
+            },
+            {
+              kind: 2,
+              pubkey: "AffiliatePdaPubkey1111111111111111111111111111",
+              amountLamports: "20",
+            },
+          ],
         },
       ],
     };
@@ -545,16 +571,30 @@ describe("EventsService", () => {
         c.table === "settlementRecipientShare" && c.op === "createMany",
     );
     expect(shareCreate).toBeDefined();
+    // One row per (kind, pubkey): Treasury (0), AffiliateAta (1),
+    // AffiliatePda (2) — Treasury sums across all three calls.
     expect(shareCreate!.args.data).toHaveLength(3);
-    expect(shareCreate!.args.data.map((d: any) => d.recipientKind).sort()).toEqual(
-      [0, 1, 2],
+    const byKind = new Map<number, any>(
+      shareCreate!.args.data.map((d: any) => [d.recipientKind, d]),
     );
+    expect(byKind.get(0)).toMatchObject({
+      recipientKind: 0,
+      amountLamports: 180n, // 60 + 60 + 60
+    });
+    expect(byKind.get(1)).toMatchObject({
+      recipientKind: 1,
+      amountLamports: 40n, // 20 + 20
+    });
+    expect(byKind.get(2)).toMatchObject({
+      recipientKind: 2,
+      amountLamports: 20n,
+    });
     // Total fees recorded match the sum on the wire.
     const total = shareCreate!.args.data.reduce(
       (s: bigint, d: any) => s + BigInt(d.amountLamports),
       0n,
     );
-    expect(total).toBe(300n);
+    expect(total).toBe(240n);
 
     // One RecipientEarnings upsert per recipient.
     const earningsUpserts = prisma.captured.filter(
@@ -562,18 +602,59 @@ describe("EventsService", () => {
     );
     expect(earningsUpserts).toHaveLength(3);
 
-    // Pool fees attributed across endpoints (proportional, last absorbs
-    // remainder). Total fees on wire = 300; both pool upserts together must
-    // sum to 300 lamports.
+    // Pool fees attributed exactly per-endpoint via the per-call shares
+    // (no proportional apportioning anymore). helius gets fees from bf-1
+    // and bf-2: (60+20) + (60+20) = 160. birdeye gets fees from bf-3:
+    // 60+20 = 80. Total still 240.
     const poolUpserts = prisma.captured.filter(
       (c: CapturedCall) => c.table === "poolState",
     );
+    const bySlug = new Map<string, any>(
+      poolUpserts.map((p: CapturedCall) => [p.args.where.endpointSlug, p]),
+    );
+    expect(bySlug.get("helius")!.args.create.totalFeesPaidLamports).toBe(160n);
+    expect(bySlug.get("birdeye")!.args.create.totalFeesPaidLamports).toBe(80n);
     const poolFeesSum = poolUpserts.reduce(
       (s: bigint, p: CapturedCall) =>
         s + BigInt(p.args.create.totalFeesPaidLamports),
       0n,
     );
-    expect(poolFeesSum).toBe(300n);
+    expect(poolFeesSum).toBe(240n);
+  });
+
+  it("rejects payloads where any call.shares is missing (must be []), not silently zeroed", async () => {
+    // Settler contract drift would otherwise zero out Treasury / affiliate
+    // earnings forever. The indexer 400s instead.
+    const dto = {
+      signature: "sigMissing",
+      batchSize: 1,
+      totalPremiumsLamports: "1000",
+      totalRefundsLamports: "0",
+      ts: new Date().toISOString(),
+      calls: [
+        {
+          callId: "missing-shares",
+          agentPubkey: "AgentP11111111111111111111111111111111111111",
+          endpointSlug: "helius",
+          premiumLamports: "1000",
+          refundLamports: "0",
+          latencyMs: 100,
+          outcome: "ok",
+          ts: new Date().toISOString(),
+          settledAt: new Date().toISOString(),
+          signature: "sigMissing",
+          // shares: missing on purpose
+        },
+      ],
+    } as unknown as SettlementEventDto;
+
+    await expect(svc.ingest(dto)).rejects.toBeInstanceOf(BadRequestException);
+
+    // Nothing persisted on rejection.
+    const survivors = prisma.captured.filter(
+      (c: CapturedCall) => c.table === "call" && c.op === "create",
+    );
+    expect(survivors).toHaveLength(0);
   });
 
   it("does NOT create an Agent.walletPda field (agent custody, no PDA)", async () => {
@@ -583,7 +664,6 @@ describe("EventsService", () => {
       totalPremiumsLamports: "100",
       totalRefundsLamports: "0",
       ts: new Date().toISOString(),
-      shares: [],
       calls: [
         {
           callId: "cD",
@@ -596,6 +676,7 @@ describe("EventsService", () => {
           ts: new Date().toISOString(),
           settledAt: new Date().toISOString(),
           signature: "sigD",
+          shares: [],
         },
       ],
     };
