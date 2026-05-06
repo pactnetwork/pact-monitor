@@ -9,12 +9,17 @@
 //   "ok"                 -> false   | null
 //   "latency_breach"     -> true    | "latency_breach"
 //   "server_error"       -> true    | "server_error"
-//   "client_error"       -> false   | "client_error"        (no payout owed)
-//   "network_error"      -> false   | "network_error"       (no payout owed)
+//   "network_error"      -> true    | "network_error"       (covered SLA breach)
+//   "client_error"       -> false   | "client_error"        (not covered)
 //
-// Per layering plan §4: only `latency_breach` and `server_error` produce a
-// covered refund; the others are recorded as misses but do not breach the
-// pool. They are still surfaced via `breachReason` for the analytics path.
+// On-chain semantics — `latency_breach`, `server_error`, and `network_error`
+// all produce a covered refund (wrap classifier sets premium=flat,
+// refund=imputed; the on-chain program debits the pool). The indexer must
+// record breach=true for all three so PoolState reconciles with
+// CoveragePool.current_balance. `client_error` is the only non-`ok` outcome
+// not covered: the wrap classifier sets premium=0 and the settler drops it
+// at the batcher (B2). If a `client_error` event still reaches the indexer
+// (misclassification + non-zero premium), record breach=false honestly.
 
 export type SettlementOutcome =
   | "ok"
@@ -75,7 +80,10 @@ export interface SettlementEventDto {
 /**
  * Project an outcome into the (breach, breachReason) pair stored on Call.
  * Exported for unit testing and for use by services that ingest legacy
- * shapes. Only `latency_breach` and `server_error` are pool breaches.
+ * shapes. `latency_breach`, `server_error`, and `network_error` are all
+ * covered SLA breaches that debit the on-chain pool — the indexer must
+ * record breach=true for all three so PoolState reconciles with
+ * CoveragePool.current_balance. Only `client_error` is non-covered.
  */
 export function outcomeToBreach(
   outcome: SettlementOutcome,
@@ -88,8 +96,15 @@ export function outcomeToBreach(
     case "server_error":
       return { breach: true, breachReason: "server_error" };
     case "client_error":
+      // Caller-side errors (4xx, balance check fail). Wrap classifier sets
+      // premium=0, settler drops at batcher (B2). If we see this here it
+      // means the agent was charged anyway — record as non-breach for
+      // honesty (the row tells the truth about misclassification).
       return { breach: false, breachReason: "client_error" };
     case "network_error":
-      return { breach: false, breachReason: "network_error" };
+      // Server unreachable / no response. Wrap classifier treats as covered
+      // breach (premium=flat, refund=imputed). On-chain debits the pool. We
+      // must record breach=true so PoolState reconciles with CoveragePool.
+      return { breach: true, breachReason: "network_error" };
   }
 }

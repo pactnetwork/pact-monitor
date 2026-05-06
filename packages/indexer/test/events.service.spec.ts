@@ -142,8 +142,12 @@ describe("outcomeToBreach", () => {
       breach: false,
       breachReason: "client_error",
     });
+    // B8: network_error is a covered SLA breach. Wrap classifier sets
+    // premium=flat + refund=imputed and the on-chain program debits the
+    // pool, so the indexer must record breach=true to keep PoolState in
+    // sync with CoveragePool.current_balance.
     expect(outcomeToBreach("network_error")).toEqual({
-      breach: false,
+      breach: true,
       breachReason: "network_error",
     });
   });
@@ -342,7 +346,120 @@ describe("EventsService", () => {
       breach: true,
       breachReason: "server_error",
     });
+    // B8 audit: client_error stays breach=false. The wrap classifier sets
+    // premium=0 for client_error and the settler drops it at the batcher
+    // before it ever reaches the indexer; if a misclassified one slips
+    // through with a non-zero premium we still record breach=false honestly.
     expect(byId.get("c-client-err")).toMatchObject({
+      breach: false,
+      breachReason: "client_error",
+    });
+  });
+
+  it("B8: network_error is recorded as breach=true and refund flows into PoolState", async () => {
+    // The wrap classifier (packages/wrap/src/classifier.ts:58) maps
+    // network_error → premium=flat, refund=imputed. The settler's
+    // breachFromOutcome (packages/settler/src/submitter/submitter.service.ts:506)
+    // returns true. The on-chain program debits the pool. The indexer must
+    // record breach=true on the Call row AND increment PoolState refund
+    // totals so it reconciles with CoveragePool.current_balance.
+    const dto: SettlementEventDto = {
+      signature: "sigB8",
+      batchSize: 1,
+      totalPremiumsLamports: "1000",
+      totalRefundsLamports: "5000",
+      ts: new Date().toISOString(),
+      calls: [
+        {
+          callId: "b8-net-err",
+          agentPubkey: "AgentP11111111111111111111111111111111111111",
+          endpointSlug: "helius",
+          premiumLamports: "1000",
+          refundLamports: "5000",
+          latencyMs: 0,
+          outcome: "network_error",
+          ts: new Date().toISOString(),
+          settledAt: new Date().toISOString(),
+          signature: "sigB8",
+          shares: [],
+        },
+      ],
+    };
+
+    const res = await svc.ingest(dto);
+    expect(res.accepted).toBe(1);
+
+    // Call row: breach=true, breachReason="network_error".
+    const callCreate = prisma.captured.find(
+      (c: CapturedCall) => c.table === "call" && c.op === "create",
+    );
+    expect(callCreate).toBeDefined();
+    expect(callCreate!.args.data).toMatchObject({
+      callId: "b8-net-err",
+      breach: true,
+      breachReason: "network_error",
+      refundLamports: 5000n,
+    });
+
+    // PoolState: refund total is incremented by the on-wire refund amount
+    // (the field flow is independent of breach=true; the bug was that the
+    // Call.breach flag previously disagreed with on-chain pool debits).
+    const poolUpsert = prisma.captured.find(
+      (c: CapturedCall) => c.table === "poolState",
+    );
+    expect(poolUpsert).toBeDefined();
+    expect(poolUpsert!.args.create.totalRefundsLamports).toBe(5000n);
+    expect(poolUpsert!.args.update.totalRefundsLamports).toEqual({
+      increment: 5000n,
+    });
+
+    // Agent counters reflect the refund as well.
+    const agentUpdate = prisma.captured.find(
+      (c: CapturedCall) => c.table === "agent" && c.op === "update",
+    );
+    expect(agentUpdate).toBeDefined();
+    expect(agentUpdate!.args.data.totalRefundsLamports).toEqual({
+      increment: 5000n,
+    });
+  });
+
+  it("B8 audit: client_error keeps breach=false (premium=0, batcher drops upstream)", async () => {
+    // The settler's batcher drops zero-premium events before pushing to the
+    // indexer (B2). This test guards the indexer's behavior in case a
+    // misclassified event with non-zero premium ever leaks through: the row
+    // must still record breach=false, breachReason="client_error" so the
+    // mismatch is visible in analytics rather than silently treated as a
+    // covered breach.
+    const dto: SettlementEventDto = {
+      signature: "sigClientB8",
+      batchSize: 1,
+      totalPremiumsLamports: "1000",
+      totalRefundsLamports: "0",
+      ts: new Date().toISOString(),
+      calls: [
+        {
+          callId: "b8-client-err",
+          agentPubkey: "AgentP11111111111111111111111111111111111111",
+          endpointSlug: "helius",
+          premiumLamports: "1000",
+          refundLamports: "0",
+          latencyMs: 50,
+          outcome: "client_error",
+          ts: new Date().toISOString(),
+          settledAt: new Date().toISOString(),
+          signature: "sigClientB8",
+          shares: [],
+        },
+      ],
+    };
+
+    await svc.ingest(dto);
+
+    const callCreate = prisma.captured.find(
+      (c: CapturedCall) => c.table === "call" && c.op === "create",
+    );
+    expect(callCreate).toBeDefined();
+    expect(callCreate!.args.data).toMatchObject({
       breach: false,
       breachReason: "client_error",
     });
