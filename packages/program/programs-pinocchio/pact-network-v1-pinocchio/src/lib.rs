@@ -61,5 +61,8 @@ pub fn process_instruction(
         Discriminator::UpdateFeeRecipients => {
             instructions::update_fee_recipients::process(accounts, rest)
         }
+        Discriminator::PauseProtocol => {
+            instructions::pause_protocol::process(accounts, rest)
+        }
     }
 }

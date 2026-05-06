@@ -4,12 +4,20 @@
 **Program ID:** `5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5`
 **ProgramData address:** `2YETBtKq1DnxCVEHwKRmTjmesq6pA84Q8TBquqeHEapy`
 **Upgrade authority:** `47Fg5JqMsCeuRyDsFtD7Ra7YTdzVmTr2mZ1R2dUkZyfS` (devnet hot key — rotate to multisig before mainnet)
-**Deploy signature:** `3jSoem3L9LRdsP55Ybxgnkw3PAxA3L9aUeJHAcvL8BgZpaXBrwMyd6TGUpKy6Z5Q8PcFojjEXdKJXVJGdyVQGhU3`
-**Deploy date:** 2026-05-05
-**Binary size:** 72,896 bytes (~71 KB)
-**Last deployed in slot:** 460289499
+**Latest upgrade signature:** `5bSPMvGK8Ec4E5efcw4mqXyWC32vSZZo7HeKB9KGv9PpmWKHSWUv79yL7yJeuUf6ZAY8xi3q4ifeLgcp3be5MTZX`
+**Latest upgrade date:** 2026-05-05
+**Binary size:** 86,424 bytes (~85 KB)
+**Last deployed in slot:** 460315243
 
-This is the active v1 deploy after the Step C substantive refactor (per-endpoint coverage pools, SPL Token approval-based agent custody, interchangeable fee recipients with pool-as-residual + Treasury + ProtocolConfig). All clients should target this program ID.
+This is the active v1 deploy after the Step C substantive refactor + the codex security review fixes (privileged-handler ProtocolConfig PDA verification, SettlementStatus per-event status enum replacing silent skips, fee-recipient validation tightening). All clients should target this program ID.
+
+### Upgrade history
+
+| Slot | Signature | Size | Notes |
+|---|---|---|---|
+| 460315243 | `5bSPMvGK8Ec4…` | 86,424 B | Codex feedback fixes (commits `ed3af77`, `2c27eba`, `cd2bdba`, `f4f45af`) |
+| 460289499 | `PZk6rAa7CNHas9…` | 72,896 B | `declare_id!` correction to `5jBQb7fL…` |
+| 460289499 | `3jSoem3L9LRdsP55…` | 72,896 B | Initial deploy at this address (Step C substantive refactor) |
 
 ## Previous deploys
 

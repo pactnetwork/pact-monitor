@@ -1,11 +1,16 @@
 //! Shared helpers for parsing and validating fee_recipient arrays.
 
-use pinocchio::error::ProgramError;
+use pinocchio::{account::AccountView, error::ProgramError};
+use solana_address::Address;
 
 use crate::{
     constants::{ABSOLUTE_FEE_BPS_CAP, MAX_FEE_RECIPIENTS},
     error::PactError,
     state::{FeeRecipient, FeeRecipientKind},
+    token::{
+        SPL_TOKEN_ACCOUNT_LEN, SPL_TOKEN_PROGRAM_ID, TOKEN_ACCOUNT_MINT_OFFSET,
+        TOKEN_ACCOUNT_STATE_OFFSET,
+    },
 };
 
 pub const FEE_RECIPIENT_WIRE_LEN: usize = FeeRecipient::LEN; // 48
@@ -98,4 +103,115 @@ pub fn substitute_treasury_destination(
             entries[i].destination = *treasury_usdc_vault;
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Post-substitution validation (codex 2026-05-05 review fix)
+//
+// `parse_and_validate` runs BEFORE Treasury kind gets its real destination
+// substituted in. That means a caller-supplied AffiliateAta with the same
+// pubkey as the Treasury vault would slip past the dup check. The helpers
+// below run AFTER substitution and additionally require:
+//   - exactly one Treasury entry,
+//   - Treasury bps > 0,
+//   - no duplicate destinations once Treasury has its real vault address,
+//   - each AffiliateAta destination is a real, initialised SPL Token account
+//     of the protocol USDC mint.
+// ---------------------------------------------------------------------------
+
+/// Run after `substitute_treasury_destination`. Enforces:
+/// - exactly one Treasury entry,
+/// - Treasury entry bps > 0,
+/// - no duplicate destinations across the whole array (now Treasury holds the
+///   canonical vault address, so an attacker cannot smuggle a duplicate via
+///   the unused Treasury wire-destination field).
+pub fn validate_post_substitution(
+    entries: &[FeeRecipient; MAX_FEE_RECIPIENTS],
+    count: usize,
+) -> Result<(), ProgramError> {
+    let mut treasury_count = 0usize;
+    let mut treasury_bps: u16 = 0;
+    for i in 0..count {
+        if entries[i].kind == FeeRecipientKind::Treasury as u8 {
+            treasury_count += 1;
+            treasury_bps = entries[i].bps;
+        }
+    }
+    if treasury_count == 0 {
+        return Err(PactError::MissingTreasuryEntry.into());
+    }
+    if treasury_count > 1 {
+        // parse_and_validate also guards this, but be defensive.
+        return Err(PactError::MultipleTreasuryRecipients.into());
+    }
+    if treasury_bps == 0 {
+        return Err(PactError::TreasuryBpsZero.into());
+    }
+    // Duplicate detection AFTER substitution. Treasury's destination is now
+    // the real vault, so this catches attacker-supplied AffiliateAta pointing
+    // at the Treasury vault.
+    for i in 0..count {
+        for j in 0..i {
+            if entries[i].destination.as_ref() == entries[j].destination.as_ref() {
+                return Err(PactError::FeeRecipientDuplicateDestination.into());
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Validate that every AffiliateAta entry's destination is a real SPL Token
+/// account on the protocol USDC mint. `affiliate_atas` is the slice of
+/// AccountViews supplied by the caller, in the same order as the AffiliateAta
+/// entries appear in `entries[..count]`.
+///
+/// Per-account checks:
+/// - account is owned by SPL Token program,
+/// - account data is exactly `SPL_TOKEN_ACCOUNT_LEN` (165) bytes,
+/// - state byte at offset 108 == 1 (initialised),
+/// - mint at offset 0..32 == `protocol_usdc_mint`,
+/// - account address matches the entry's stored destination (so the caller
+///   can't pass mismatched account-list ordering).
+pub fn validate_affiliate_atas(
+    entries: &[FeeRecipient; MAX_FEE_RECIPIENTS],
+    count: usize,
+    affiliate_atas: &[&AccountView],
+    protocol_usdc_mint: &Address,
+) -> Result<(), ProgramError> {
+    let mut ata_cursor = 0usize;
+    for i in 0..count {
+        if entries[i].kind != FeeRecipientKind::AffiliateAta as u8 {
+            continue;
+        }
+        if ata_cursor >= affiliate_atas.len() {
+            // Caller didn't pass enough ATA accounts to validate.
+            return Err(PactError::InvalidAffiliateAta.into());
+        }
+        let ata = affiliate_atas[ata_cursor];
+        ata_cursor += 1;
+
+        // Address must match the stored destination.
+        if ata.address() != &entries[i].destination {
+            return Err(PactError::InvalidAffiliateAta.into());
+        }
+        // Owner must be SPL Token program.
+        if !ata.owned_by(&SPL_TOKEN_PROGRAM_ID) {
+            return Err(PactError::InvalidAffiliateAta.into());
+        }
+        let data = ata.try_borrow().map_err(|_| PactError::InvalidAffiliateAta)?;
+        if data.len() < SPL_TOKEN_ACCOUNT_LEN as usize {
+            return Err(PactError::InvalidAffiliateAta.into());
+        }
+        // State byte must be Initialized (1).
+        if data[TOKEN_ACCOUNT_STATE_OFFSET] != 1 {
+            return Err(PactError::InvalidAffiliateAta.into());
+        }
+        // Mint must equal protocol USDC mint.
+        if &data[TOKEN_ACCOUNT_MINT_OFFSET..TOKEN_ACCOUNT_MINT_OFFSET + 32]
+            != protocol_usdc_mint.as_ref()
+        {
+            return Err(PactError::InvalidAffiliateAta.into());
+        }
+    }
+    Ok(())
 }

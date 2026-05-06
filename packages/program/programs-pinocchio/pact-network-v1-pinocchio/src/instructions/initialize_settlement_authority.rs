@@ -16,7 +16,7 @@ use solana_address::Address;
 
 use crate::{
     error::PactError,
-    pda::{derive_settlement_authority, SEED_SETTLEMENT_AUTHORITY},
+    pda::{derive_settlement_authority, verify_protocol_config, SEED_SETTLEMENT_AUTHORITY},
     state::{ProtocolConfig, SettlementAuthority},
     system::{create_account, SYSTEM_PROGRAM_ID},
 };
@@ -46,6 +46,10 @@ pub fn process(accounts: &[AccountView], data: &[u8]) -> ProgramResult {
     if !authority.is_writable() || !settlement_auth.is_writable() {
         return Err(ProgramError::InvalidAccountData);
     }
+
+    // SECURITY: verify ProtocolConfig is the canonical PDA + program-owned
+    // BEFORE reading any field off it. (codex 2026-05-05.)
+    verify_protocol_config(protocol_config)?;
 
     {
         let pc_data = protocol_config.try_borrow()?;

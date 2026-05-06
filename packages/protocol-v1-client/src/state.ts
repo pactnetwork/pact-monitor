@@ -38,7 +38,7 @@ export const COVERAGE_POOL_LEN = 160;
 /** Total length in bytes of an EndpointConfig account. */
 export const ENDPOINT_CONFIG_LEN = 544;
 /** Total length in bytes of a CallRecord account. */
-export const CALL_RECORD_LEN = 104;
+export const CALL_RECORD_LEN = 112;
 /** Total length in bytes of a SettlementAuthority account. */
 export const SETTLEMENT_AUTHORITY_LEN = 48;
 /** Total length in bytes of a Treasury account. */
@@ -237,15 +237,61 @@ export function decodeEndpointConfig(
   };
 }
 
+/**
+ * Mirror of `state.rs::SettlementStatus` — per-event settlement outcome stamped
+ * on every CallRecord during settle_batch. Indexers should surface this byte
+ * directly rather than infer status from `actualRefundLamports == 0`, since
+ * premium can be charged with no refund for reasons other than a non-breach
+ * call (pool depleted, exposure cap clamp).
+ *
+ * Added in the codex 2026-05-05 review fix; CallRecord grew from 104B to 112B
+ * to accommodate this discriminant + `actual_refund_lamports`.
+ */
+export enum SettlementStatus {
+  /** Happy path — premium charged + refund (if any) paid in full. */
+  Settled = 0,
+  /**
+   * SPL Token Transfer with delegate authority failed. Premium was NOT charged
+   * for this event; the rest of the batch continues.
+   */
+  DelegateFailed = 1,
+  /**
+   * Premium charged + fees fanned out, but the pool USDC vault did not have
+   * enough liquidity to pay the requested refund. `actualRefundLamports` is 0;
+   * intended refund is still in `refundLamports`.
+   */
+  PoolDepleted = 2,
+  /**
+   * Premium charged + fees fanned out, but the hourly per-endpoint exposure
+   * cap clamped the refund. `actualRefundLamports` is the partial amount
+   * actually transferred (may be 0).
+   */
+  ExposureCapClamped = 3,
+}
+
 /** Mirror of `state.rs::CallRecord`. */
 export interface CallRecord {
   bump: number;
   breach: boolean;
+  /**
+   * Per-event settlement outcome. See `SettlementStatus`. Stamped during
+   * settle_batch — `Settled` on the happy path, otherwise one of the failure
+   * variants. (codex 2026-05-05 review fix.)
+   */
+  settlementStatus: SettlementStatus;
   callId: Uint8Array;
   agent: Pubkey;
   endpointSlug: Uint8Array;
   premiumLamports: bigint;
+  /** Intended/requested refund (= breach amount the settler computed). */
   refundLamports: bigint;
+  /**
+   * Refund actually paid out of the pool to the agent ATA. Equal to
+   * `refundLamports` on the happy path; smaller (incl. 0) when the pool was
+   * depleted or the hourly exposure cap clamped the payout. Indexers should
+   * display both so ops can see the gap. (codex 2026-05-05 review fix.)
+   */
+  actualRefundLamports: bigint;
   latencyMs: number;
   timestamp: bigint;
 }
@@ -253,18 +299,20 @@ export interface CallRecord {
 /**
  * Decode a CallRecord account.
  *
- * Layout (104 bytes — see state.rs::CallRecord):
- *   0:       bump u8
- *   1:       breach u8
- *   2..8:    _padding0
- *   8..24:   call_id [u8;16]
- *   24..56:  agent Pubkey
- *   56..72:  endpoint_slug [u8;16]
- *   72..80:  premium_lamports u64
- *   80..88:  refund_lamports u64
- *   88..92:  latency_ms u32
- *   92..96:  _padding1
- *   96..104: timestamp i64
+ * Layout (112 bytes — see state.rs::CallRecord):
+ *   0:        bump u8
+ *   1:        breach u8
+ *   2:        settlement_status u8
+ *   3..8:     _padding0 (5 bytes)
+ *   8..24:    call_id [u8;16]
+ *   24..56:   agent Pubkey
+ *   56..72:   endpoint_slug [u8;16]
+ *   72..80:   premium_lamports u64
+ *   80..88:   refund_lamports u64
+ *   88..96:   actual_refund_lamports u64
+ *   96..100:  latency_ms u32
+ *   100..104: _padding1
+ *   104..112: timestamp i64
  */
 export function decodeCallRecord(data: Buffer | Uint8Array): CallRecord {
   const { view, bytes } = toView(data);
@@ -273,16 +321,22 @@ export function decodeCallRecord(data: Buffer | Uint8Array): CallRecord {
       `decodeCallRecord: need ${CALL_RECORD_LEN} bytes, got ${bytes.length}`
     );
   }
+  const statusByte = bytes[2];
+  if (statusByte > SettlementStatus.ExposureCapClamped) {
+    throw new Error(`decodeCallRecord: unknown settlement_status ${statusByte}`);
+  }
   return {
     bump: bytes[0],
     breach: bytes[1] !== 0,
+    settlementStatus: statusByte as SettlementStatus,
     callId: bytes.slice(8, 24),
     agent: readPubkey(bytes, 24),
     endpointSlug: bytes.slice(56, 72),
     premiumLamports: view.getBigUint64(72, true),
     refundLamports: view.getBigUint64(80, true),
-    latencyMs: view.getUint32(88, true),
-    timestamp: view.getBigInt64(96, true),
+    actualRefundLamports: view.getBigUint64(88, true),
+    latencyMs: view.getUint32(96, true),
+    timestamp: view.getBigInt64(104, true),
   };
 }
 
@@ -358,6 +412,18 @@ export interface ProtocolConfig {
   usdcMint: Pubkey;
   maxTotalFeeBps: number;
   defaultFeeRecipientCount: number;
+  /**
+   * Global kill switch — `0` = unpaused (normal), non-zero = paused.
+   *
+   * When paused, the on-chain `settle_batch` handler rejects every batch with
+   * `PactError::ProtocolPaused (6032)` before any per-event processing runs.
+   * Mutated by the `pause_protocol` instruction (mainnet ops kill switch).
+   *
+   * Byte offset 75 — repurposed from the former `_padding1[0]`. Pre-existing
+   * accounts initialised before this field was added read back as `0`
+   * (unpaused) since padding was zero-filled.
+   */
+  paused: number;
   defaultFeeRecipients: FeeRecipient[];
 }
 
@@ -371,7 +437,8 @@ export interface ProtocolConfig {
  *   40..72:  usdc_mint Pubkey
  *   72..74:  max_total_fee_bps u16
  *   74:      default_fee_recipient_count u8
- *   75..80:  _padding1
+ *   75:      paused u8 (was former _padding1[0]; 0 = unpaused, non-zero = paused)
+ *   76..80:  _padding1 (4 bytes)
  *   80..464: default_fee_recipients [FeeRecipient;8]
  */
 export function decodeProtocolConfig(
@@ -390,6 +457,7 @@ export function decodeProtocolConfig(
     usdcMint: readPubkey(bytes, 40),
     maxTotalFeeBps: view.getUint16(72, true),
     defaultFeeRecipientCount: count,
+    paused: bytes[75],
     defaultFeeRecipients: decodeFeeRecipientArray(bytes, 80, count),
   };
 }

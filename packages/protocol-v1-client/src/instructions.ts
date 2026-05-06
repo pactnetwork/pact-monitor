@@ -24,6 +24,7 @@ import {
   DISC_INITIALIZE_SETTLEMENT_AUTHORITY,
   DISC_INITIALIZE_TREASURY,
   DISC_PAUSE_ENDPOINT,
+  DISC_PAUSE_PROTOCOL,
   DISC_REGISTER_ENDPOINT,
   DISC_SETTLE_BATCH,
   DISC_TOP_UP_COVERAGE_POOL,
@@ -32,7 +33,25 @@ import {
   PROGRAM_ID,
   TOKEN_PROGRAM_ID,
 } from "./constants.js";
-import { FeeRecipient, FEE_RECIPIENT_LEN } from "./state.js";
+import { getProtocolConfigPda } from "./pda.js";
+import {
+  FeeRecipient,
+  FeeRecipientKind,
+  FEE_RECIPIENT_LEN,
+} from "./state.js";
+
+/**
+ * Count the number of `kind == AffiliateAta` entries in a FeeRecipient array.
+ * Used by builders to validate the caller-supplied AffiliateAta account list
+ * before the program rejects the transaction with `InvalidAffiliateAta`.
+ */
+function countAffiliateAtas(entries: FeeRecipient[]): number {
+  let n = 0;
+  for (const e of entries) {
+    if (e.kind === FeeRecipientKind.AffiliateAta) n++;
+  }
+  return n;
+}
 
 const SLUG_LEN = 16;
 const CALL_ID_LEN = 16;
@@ -271,6 +290,22 @@ export interface RegisterEndpointParams {
    */
   feeRecipients?: FeeRecipient[];
   feeRecipientCount?: number;
+  /**
+   * Per-AffiliateAta token-account addresses, in the same order they appear
+   * in `feeRecipients`. The program (codex 2026-05-05 fix) validates each is
+   * an initialised SPL Token account on the protocol USDC mint with a
+   * matching destination address. Must be provided whenever the (effective)
+   * fee_recipients array contains at least one `AffiliateAta` entry; the
+   * builder validates `affiliateAtas.length` matches the count of
+   * AffiliateAta entries in `feeRecipients`.
+   *
+   * Note: when `feeRecipients` is omitted (defaults are used), the builder
+   * cannot know how many AffiliateAtas to expect — the caller MUST supply
+   * `affiliateAtas` matching whatever AffiliateAta entries live in the
+   * on-chain `ProtocolConfig.default_fee_recipients`. The builder appends
+   * whatever is passed; the program enforces the count on-chain.
+   */
+  affiliateAtas?: PublicKey[];
 }
 
 /**
@@ -287,6 +322,9 @@ export interface RegisterEndpointParams {
  *   6. usdc_mint         readonly
  *   7. system_program
  *   8. token_program
+ *   9..9+M. affiliate_ata_0..affiliate_ata_M-1 — readonly, one per
+ *           AffiliateAta entry in the effective fee_recipients array, in the
+ *           order they appear. (codex 2026-05-05 review fix.)
  */
 export function buildRegisterEndpointIx(
   p: RegisterEndpointParams
@@ -317,6 +355,21 @@ export function buildRegisterEndpointIx(
     ? encodeFeeRecipientArray(p.feeRecipients)
     : new Uint8Array(0);
 
+  // When the caller supplies an explicit fee_recipients array, validate
+  // affiliateAtas count matches the AffiliateAta entry count. We don't have
+  // the on-chain defaults visible from the builder, so when feeRecipients
+  // is omitted we trust whatever affiliateAtas the caller passes; the
+  // program enforces the count on-chain (codex 2026-05-05 review fix).
+  const affiliateAtas = p.affiliateAtas ?? [];
+  if (p.feeRecipients !== undefined) {
+    const expected = countAffiliateAtas(p.feeRecipients);
+    if (affiliateAtas.length !== expected) {
+      throw new Error(
+        `affiliateAtas.length (${affiliateAtas.length}) must equal the number of AffiliateAta entries in feeRecipients (${expected})`
+      );
+    }
+  }
+
   // [disc:1][slug:16][flatPremium:8][percentBps:2][slaMs:4]
   // [imputedCost:8][exposureCap:8][present:1][count:1][entries...]
   const data = Buffer.alloc(1 + 46 + 1 + 1 + body.length);
@@ -331,21 +384,21 @@ export function buildRegisterEndpointIx(
   data[1 + 47] = count;
   Buffer.from(body).copy(data, 1 + 48);
 
-  return new TransactionInstruction({
-    programId,
-    keys: [
-      { pubkey: p.authority, isSigner: true, isWritable: true },
-      { pubkey: p.protocolConfig, isSigner: false, isWritable: false },
-      { pubkey: p.treasury, isSigner: false, isWritable: false },
-      { pubkey: p.endpointConfig, isSigner: false, isWritable: true },
-      { pubkey: p.coveragePool, isSigner: false, isWritable: true },
-      { pubkey: p.poolVault, isSigner: false, isWritable: true },
-      { pubkey: p.usdcMint, isSigner: false, isWritable: false },
-      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-      { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
-    ],
-    data,
-  });
+  const keys: AccountMeta[] = [
+    { pubkey: p.authority, isSigner: true, isWritable: true },
+    { pubkey: p.protocolConfig, isSigner: false, isWritable: false },
+    { pubkey: p.treasury, isSigner: false, isWritable: false },
+    { pubkey: p.endpointConfig, isSigner: false, isWritable: true },
+    { pubkey: p.coveragePool, isSigner: false, isWritable: true },
+    { pubkey: p.poolVault, isSigner: false, isWritable: true },
+    { pubkey: p.usdcMint, isSigner: false, isWritable: false },
+    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+  ];
+  for (const ata of affiliateAtas) {
+    keys.push({ pubkey: ata, isSigner: false, isWritable: false });
+  }
+  return new TransactionInstruction({ programId, keys, data });
 }
 
 // ---------------------------------------------------------------------------
@@ -467,6 +520,58 @@ export function buildPauseEndpointIx(
 }
 
 // ---------------------------------------------------------------------------
+// pause_protocol (disc 15) — global kill switch
+// ---------------------------------------------------------------------------
+
+export interface BuildPauseProtocolOpts {
+  /** Override for the V1 program ID. Defaults to `PROGRAM_ID`. */
+  programId?: PublicKey;
+  /** ProtocolConfig.authority — the only key allowed to flip the flag. */
+  authority: PublicKey;
+  /**
+   * Desired paused state. `true` / non-zero number = pause, `false` / `0` = unpause.
+   * The on-chain handler stores the byte verbatim; any non-zero value engages the
+   * kill switch. Operators should always send `0` or `1`.
+   */
+  paused: boolean | number;
+}
+
+/**
+ * Builds the `pause_protocol` instruction (mainnet kill switch).
+ *
+ * When `paused != 0`, every subsequent `settle_batch` returns
+ * `PactError::ProtocolPaused (6032)` before any per-event work — the entire
+ * settlement pipeline halts until this same instruction is called again with
+ * `paused = 0`.
+ *
+ * Accounts (per `src/instructions/pause_protocol.rs`):
+ *   0. authority         signer; must equal ProtocolConfig.authority
+ *   1. protocol_config   writable; canonical [b"protocol_config"] PDA
+ *
+ * Data: [disc=15][paused:u8] (2 bytes total).
+ */
+export function buildPauseProtocolIx(
+  opts: BuildPauseProtocolOpts
+): TransactionInstruction {
+  const programId = opts.programId ?? PROGRAM_ID;
+  const pausedByte =
+    typeof opts.paused === "boolean"
+      ? opts.paused
+        ? 1
+        : 0
+      : opts.paused & 0xff;
+  const [protocolConfig] = getProtocolConfigPda(programId);
+  return new TransactionInstruction({
+    programId,
+    keys: [
+      { pubkey: opts.authority, isSigner: true, isWritable: false },
+      { pubkey: protocolConfig, isSigner: false, isWritable: true },
+    ],
+    data: Buffer.from([DISC_PAUSE_PROTOCOL, pausedByte]),
+  });
+}
+
+// ---------------------------------------------------------------------------
 // top_up_coverage_pool (disc 9)
 // ---------------------------------------------------------------------------
 
@@ -531,16 +636,27 @@ export interface UpdateFeeRecipientsParams {
   feeRecipients: FeeRecipient[];
   /** Must equal `feeRecipients.length` — kept explicit to mirror on-chain wire. */
   feeRecipientCount: number;
+  /**
+   * Per-AffiliateAta token-account addresses, in the same order they appear
+   * in `feeRecipients`. The program (codex 2026-05-05 fix) validates each is
+   * an initialised SPL Token account on the protocol USDC mint with a
+   * matching destination. The builder validates `affiliateAtas.length`
+   * matches the number of `AffiliateAta` entries in `feeRecipients`.
+   */
+  affiliateAtas?: PublicKey[];
 }
 
 /**
  * Builds the `update_fee_recipients` instruction.
  *
- * Accounts:
+ * Accounts (per `src/instructions/update_fee_recipients.rs`):
  *   0. authority         signer
  *   1. protocol_config   readonly
  *   2. treasury          readonly
  *   3. endpoint_config   writable
+ *   4..4+M. affiliate_ata_0..affiliate_ata_M-1 — readonly, one per
+ *           AffiliateAta entry in the new fee_recipients array, in order.
+ *           (codex 2026-05-05 review fix.)
  *
  * Data: [disc=14][slug:16][count:u8][entries...].
  */
@@ -553,6 +669,13 @@ export function buildUpdateFeeRecipientsIx(
       `feeRecipientCount (${p.feeRecipientCount}) must equal feeRecipients.length (${p.feeRecipients.length})`
     );
   }
+  const affiliateAtas = p.affiliateAtas ?? [];
+  const expectedAtas = countAffiliateAtas(p.feeRecipients);
+  if (affiliateAtas.length !== expectedAtas) {
+    throw new Error(
+      `affiliateAtas.length (${affiliateAtas.length}) must equal the number of AffiliateAta entries in feeRecipients (${expectedAtas})`
+    );
+  }
   const slug = asSlug(p.slug);
   const body = encodeFeeRecipientArray(p.feeRecipients);
   const data = Buffer.alloc(1 + 16 + 1 + body.length);
@@ -561,16 +684,16 @@ export function buildUpdateFeeRecipientsIx(
   data[17] = p.feeRecipientCount;
   Buffer.from(body).copy(data, 18);
 
-  return new TransactionInstruction({
-    programId,
-    keys: [
-      { pubkey: p.authority, isSigner: true, isWritable: false },
-      { pubkey: p.protocolConfig, isSigner: false, isWritable: false },
-      { pubkey: p.treasury, isSigner: false, isWritable: false },
-      { pubkey: p.endpointConfig, isSigner: false, isWritable: true },
-    ],
-    data,
-  });
+  const keys: AccountMeta[] = [
+    { pubkey: p.authority, isSigner: true, isWritable: false },
+    { pubkey: p.protocolConfig, isSigner: false, isWritable: false },
+    { pubkey: p.treasury, isSigner: false, isWritable: false },
+    { pubkey: p.endpointConfig, isSigner: false, isWritable: true },
+  ];
+  for (const ata of affiliateAtas) {
+    keys.push({ pubkey: ata, isSigner: false, isWritable: false });
+  }
+  return new TransactionInstruction({ programId, keys, data });
 }
 
 // ---------------------------------------------------------------------------
@@ -609,6 +732,15 @@ export interface SettleBatchParams {
   /** Must equal SettlementAuthority.signer. */
   settler: PublicKey;
   settlementAuthority: PublicKey;
+  /**
+   * Canonical ProtocolConfig PDA (`[b"protocol_config"]`). Sits at fixed
+   * account index 4 — the on-chain handler reads `paused` here before any
+   * per-event work runs and rejects the entire batch with
+   * `PactError::ProtocolPaused (6032)` if the kill switch is engaged. Pre-derive
+   * via `getProtocolConfigPda(programId)`; supplying any other key fails the
+   * `verify_protocol_config` PDA check.
+   */
+  protocolConfig: PublicKey;
   events: SettlementEvent[];
   /**
    * Per-event CallRecord PDAs. If omitted, the builder will require the caller
@@ -624,11 +756,15 @@ export const SETTLE_EVENT_BYTES = 104;
  * Builds the `settle_batch` instruction.
  *
  * Account layout (must match `src/instructions/settle_batch.rs`):
- *   Fixed prefix (4):
+ *   Fixed prefix (5):
  *     0. settler_signer
  *     1. settlement_authority PDA
  *     2. token_program
  *     3. system_program
+ *     4. protocol_config PDA — readonly canonical [b"protocol_config"];
+ *        on-chain handler reads `paused` here and rejects the entire batch
+ *        with `PactError::ProtocolPaused (6032)` before any per-event work.
+ *        (Mainnet kill-switch addition, 2026-05-06.)
  *   Per event (5 + N where N = endpoint.fee_recipient_count):
  *     0. call_record PDA
  *     1. coverage_pool PDA
@@ -688,6 +824,7 @@ export function buildSettleBatchIx(
     { pubkey: p.settlementAuthority, isSigner: false, isWritable: false },
     { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
     { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    { pubkey: p.protocolConfig, isSigner: false, isWritable: false },
   ];
 
   for (let i = 0; i < events.length; i++) {

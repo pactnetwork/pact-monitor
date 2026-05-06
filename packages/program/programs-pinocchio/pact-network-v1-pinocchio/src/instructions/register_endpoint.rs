@@ -16,6 +16,11 @@
 ///   6. usdc_mint         — readonly
 ///   7. system_program
 ///   8. token_program
+///   9..9+M. affiliate_ata_0..affiliate_ata_M-1 — readonly, one per
+///           AffiliateAta entry in fee_recipients (in the order they appear
+///           in the array). Each is verified to be a 165-byte SPL Token
+///           account on the protocol USDC mint with matching destination.
+///           (codex 2026-05-05 review fix.)
 ///
 /// Data layout (variable):
 ///   0-15:    slug [u8; 16]
@@ -38,9 +43,15 @@ use pinocchio::{
 use crate::{
     constants::MAX_FEE_RECIPIENTS,
     error::PactError,
-    fee::{parse_and_validate, substitute_treasury_destination, FEE_RECIPIENT_WIRE_LEN},
-    pda::{derive_coverage_pool, derive_endpoint_config, SEED_COVERAGE_POOL, SEED_ENDPOINT},
-    state::{CoveragePool, EndpointConfig, FeeRecipient, ProtocolConfig, Treasury},
+    fee::{
+        parse_and_validate, substitute_treasury_destination, validate_affiliate_atas,
+        validate_post_substitution, FEE_RECIPIENT_WIRE_LEN,
+    },
+    pda::{
+        derive_coverage_pool, derive_endpoint_config, verify_protocol_config, verify_treasury,
+        SEED_COVERAGE_POOL, SEED_ENDPOINT,
+    },
+    state::{CoveragePool, EndpointConfig, FeeRecipient, FeeRecipientKind, ProtocolConfig, Treasury},
     system::{create_account, SYSTEM_PROGRAM_ID},
     token::{initialize_account3, SPL_TOKEN_PROGRAM_ID},
 };
@@ -83,10 +94,17 @@ pub fn process(accounts: &[AccountView], data: &[u8]) -> ProgramResult {
         return Err(ProgramError::InvalidAccountData);
     }
 
+    // SECURITY: verify ProtocolConfig + Treasury are the canonical PDAs +
+    // program-owned BEFORE reading any fields. (codex 2026-05-05 mainnet
+    // blocker.)
+    verify_protocol_config(protocol_config)?;
+    verify_treasury(treasury)?;
+
     // Verify caller is ProtocolConfig.authority and mint matches.
     let max_total_fee_bps;
     let pc_default_count;
     let pc_default_recipients;
+    let protocol_usdc_mint;
     {
         let pc_data = protocol_config.try_borrow()?;
         if pc_data.len() < ProtocolConfig::LEN {
@@ -102,6 +120,7 @@ pub fn process(accounts: &[AccountView], data: &[u8]) -> ProgramResult {
         max_total_fee_bps = pc.max_total_fee_bps;
         pc_default_count = pc.default_fee_recipient_count as usize;
         pc_default_recipients = pc.default_fee_recipients;
+        protocol_usdc_mint = pc.usdc_mint;
     }
 
     // Read Treasury vault address (used to substitute Treasury-kind entries).
@@ -153,6 +172,38 @@ pub fn process(accounts: &[AccountView], data: &[u8]) -> ProgramResult {
 
     // Substitute Treasury destinations with the canonical Treasury USDC vault.
     substitute_treasury_destination(&mut entries, count, &treasury_vault);
+
+    // codex 2026-05-05: tighten fee-recipient validation.
+    //
+    // (1) After substitution: enforce exactly-one Treasury, Treasury bps > 0,
+    //     and re-run duplicate detection (now Treasury holds the canonical
+    //     vault, so a smuggled AffiliateAta-pointing-at-Treasury is caught).
+    validate_post_substitution(&entries, count)?;
+
+    // (2) Collect AffiliateAta accounts from the tail of the account list
+    //     and validate each one is a real, initialised SPL Token account on
+    //     the protocol USDC mint with a matching destination address.
+    let mut affiliate_count = 0usize;
+    for i in 0..count {
+        if entries[i].kind == FeeRecipientKind::AffiliateAta as u8 {
+            affiliate_count += 1;
+        }
+    }
+    if accounts.len() < ACCOUNT_COUNT + affiliate_count {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
+    if affiliate_count > 0 {
+        let mut affiliate_atas: [&AccountView; MAX_FEE_RECIPIENTS] = [&accounts[0]; MAX_FEE_RECIPIENTS];
+        for k in 0..affiliate_count {
+            affiliate_atas[k] = &accounts[ACCOUNT_COUNT + k];
+        }
+        validate_affiliate_atas(
+            &entries,
+            count,
+            &affiliate_atas[..affiliate_count],
+            &protocol_usdc_mint,
+        )?;
+    }
 
     // Verify endpoint and pool PDAs.
     let (expected_ep, ep_bump) = derive_endpoint_config(&slug);

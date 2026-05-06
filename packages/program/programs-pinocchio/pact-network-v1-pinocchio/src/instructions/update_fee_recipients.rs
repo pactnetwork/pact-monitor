@@ -6,6 +6,11 @@
 ///   1. protocol_config   — readonly
 ///   2. treasury          — readonly (used to substitute Treasury kind dest)
 ///   3. endpoint_config   — writable
+///   4..4+M. affiliate_ata_0..affiliate_ata_M-1 — readonly, one per
+///           AffiliateAta entry in the new fee_recipients array, in order.
+///           Each is verified to be a real, initialised SPL Token account
+///           on the protocol USDC mint with matching destination.
+///           (codex 2026-05-05 review fix.)
 ///
 /// Data:
 ///   0-15:  endpoint_slug [u8; 16]
@@ -21,9 +26,12 @@ use pinocchio::{
 use crate::{
     constants::MAX_FEE_RECIPIENTS,
     error::PactError,
-    fee::{parse_and_validate, substitute_treasury_destination, FEE_RECIPIENT_WIRE_LEN},
-    pda::derive_endpoint_config,
-    state::{EndpointConfig, ProtocolConfig, Treasury},
+    fee::{
+        parse_and_validate, substitute_treasury_destination, validate_affiliate_atas,
+        validate_post_substitution, FEE_RECIPIENT_WIRE_LEN,
+    },
+    pda::{derive_endpoint_config, verify_protocol_config, verify_treasury},
+    state::{EndpointConfig, FeeRecipientKind, ProtocolConfig, Treasury},
 };
 
 const ACCOUNT_COUNT: usize = 4;
@@ -49,7 +57,13 @@ pub fn process(accounts: &[AccountView], data: &[u8]) -> ProgramResult {
         return Err(ProgramError::InvalidAccountData);
     }
 
+    // SECURITY: verify ProtocolConfig + Treasury are the canonical PDAs +
+    // program-owned BEFORE reading fields. (codex 2026-05-05.)
+    verify_protocol_config(protocol_config)?;
+    verify_treasury(treasury)?;
+
     let max_total_fee_bps;
+    let protocol_usdc_mint;
     {
         let pc_data = protocol_config.try_borrow()?;
         if pc_data.len() < ProtocolConfig::LEN {
@@ -60,6 +74,7 @@ pub fn process(accounts: &[AccountView], data: &[u8]) -> ProgramResult {
             return Err(PactError::UnauthorizedAuthority.into());
         }
         max_total_fee_bps = pc.max_total_fee_bps;
+        protocol_usdc_mint = pc.usdc_mint;
     }
 
     let treasury_vault = {
@@ -84,6 +99,30 @@ pub fn process(accounts: &[AccountView], data: &[u8]) -> ProgramResult {
 
     let (mut entries, _sum) = parse_and_validate(&data[body_off..], count, max_total_fee_bps)?;
     substitute_treasury_destination(&mut entries, count, &treasury_vault);
+
+    // codex 2026-05-05: post-substitution validation + AffiliateAta checks.
+    validate_post_substitution(&entries, count)?;
+    let mut affiliate_count = 0usize;
+    for i in 0..count {
+        if entries[i].kind == FeeRecipientKind::AffiliateAta as u8 {
+            affiliate_count += 1;
+        }
+    }
+    if accounts.len() < ACCOUNT_COUNT + affiliate_count {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
+    if affiliate_count > 0 {
+        let mut affiliate_atas: [&AccountView; MAX_FEE_RECIPIENTS] = [&accounts[0]; MAX_FEE_RECIPIENTS];
+        for k in 0..affiliate_count {
+            affiliate_atas[k] = &accounts[ACCOUNT_COUNT + k];
+        }
+        validate_affiliate_atas(
+            &entries,
+            count,
+            &affiliate_atas[..affiliate_count],
+            &protocol_usdc_mint,
+        )?;
+    }
 
     // Verify endpoint PDA
     let (expected_ep, _) = derive_endpoint_config(&slug);
