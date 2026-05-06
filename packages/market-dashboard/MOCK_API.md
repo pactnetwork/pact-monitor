@@ -1,10 +1,17 @@
 # Mock API
 
-`lib/api/mock.ts` supplies all data consumed by page components. The shapes
-mirror the indexer responses produced by Step D #59 (per-endpoint PoolState
-aggregates and SettlementRecipientShare records). When the indexer's HTTP
-endpoints land, swap the imports in `lib/api/index.ts` to point at real
-fetchers.
+`lib/api/mock.ts` supplies all data consumed by page components when no
+indexer is wired. The shapes mirror the indexer responses produced by Step D
+#59 (per-endpoint PoolState aggregates and SettlementRecipientShare records).
+
+`lib/api/index.ts` now switches between mock and real automatically:
+
+- `NEXT_PUBLIC_INDEXER_URL` unset → use `./mock` (local dev, Vercel preview)
+- `NEXT_PUBLIC_INDEXER_URL` set   → use `./real` (hits the indexer)
+
+`./real` maps the indexer's wire shape onto `lib/api/types.ts`. See the
+file header for current wire-shape gaps (missing per-endpoint aggregates,
+no global `/api/calls` firehose route, no per-call recipient-share breakdown).
 
 ## Endpoints mocked → real swap targets
 
