@@ -1,26 +1,16 @@
+import { Connection, PublicKey } from "@solana/web3.js";
 import {
-  Connection,
-  Keypair,
-  PublicKey,
-} from "@solana/web3.js";
-// Import directly from client sub-path to avoid pulling in legacy-anchor-client
-// which has an ESM/CJS compatibility issue with @anchor-lang/core in bun --compile.
-import { PactInsurance } from "@q3labs/pact-insurance/dist/client.js";
+  PROGRAM_ID,
+  USDC_MINT_DEVNET,
+  USDC_MINT_MAINNET,
+} from "@pact-network/protocol-v1-client";
 
-export const USDC_DEVNET_MINT = new PublicKey("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU");
-export const USDC_MAINNET_MINT = new PublicKey("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
-
-export const PACT_INSURANCE_PROGRAM_ID_DEVNET = new PublicKey(
-  "7i9zJtfXk4QZjHTdY3xyfJsa92QzM4ymCCDYZb6sDqv6",
-);
-
-export function agentWalletPda(agentPubkey: PublicKey, programId: PublicKey): PublicKey {
-  const [pda] = PublicKey.findProgramAddressSync(
-    [Buffer.from("agent_wallet"), agentPubkey.toBuffer()],
-    programId,
-  );
-  return pda;
-}
+// Re-export under names the CLI has historically used. The new SDK is the
+// single source of truth for both the program ID and the USDC mints; the
+// CLI never carries its own copy.
+export const USDC_DEVNET_MINT = USDC_MINT_DEVNET;
+export const USDC_MAINNET_MINT = USDC_MINT_MAINNET;
+export const PACT_NETWORK_V1_PROGRAM_ID = PROGRAM_ID;
 
 export async function getUsdcAtaBalanceLamports(opts: {
   connection: Connection;
@@ -41,26 +31,4 @@ function getAssociatedTokenAddress(mint: PublicKey, owner: PublicKey): PublicKey
     ATA_PROGRAM_ID,
   );
   return ata;
-}
-
-export async function depositUsdc(opts: {
-  connection: Connection;
-  keypair: Keypair;
-  programId: PublicKey;
-  providerHostname: string;
-  amountUsdc: number;
-  rpcUrl: string;
-}): Promise<{ tx_signature: string; confirmation_pending: boolean }> {
-  const insurance = new PactInsurance(
-    {
-      rpcUrl: opts.rpcUrl,
-      programId: opts.programId.toBase58(),
-    },
-    opts.keypair,
-  );
-  const sig = await insurance.topUpDelegation({
-    providerHostname: opts.providerHostname,
-    newTotalAllowanceUsdc: BigInt(Math.floor(opts.amountUsdc * 1_000_000)),
-  });
-  return { tx_signature: sig, confirmation_pending: false };
 }

@@ -1,9 +1,4 @@
-import { Connection } from "@solana/web3.js";
 import { loadOrCreateWallet } from "../lib/wallet.ts";
-import {
-  depositUsdc,
-  PACT_INSURANCE_PROGRAM_ID_DEVNET,
-} from "../lib/solana.ts";
 import {
   loadOrCreatePolicy,
   canAutoDeposit,
@@ -19,9 +14,7 @@ export async function depositCommand(opts: {
   providerHostname?: string;
   submitDeposit?: (amountUsdc: number) => Promise<{ tx_signature: string; confirmation_pending: boolean }>;
 }): Promise<Envelope> {
-  const wallet = loadOrCreateWallet({ configDir: opts.configDir });
-  const programId = PACT_INSURANCE_PROGRAM_ID_DEVNET;
-  const provider = opts.providerHostname ?? "default";
+  loadOrCreateWallet({ configDir: opts.configDir });
 
   const policy = loadOrCreatePolicy({ configDir: opts.configDir });
   const check = canAutoDeposit({ configDir: opts.configDir, policy, requestedUsdc: opts.amountUsdc });
@@ -38,21 +31,15 @@ export async function depositCommand(opts: {
     };
   }
 
+  if (!opts.submitDeposit) {
+    return {
+      status: "cli_internal_error",
+      body: { error: "submitDeposit not injected" },
+    };
+  }
+
   try {
-    let result: { tx_signature: string; confirmation_pending: boolean };
-    if (opts.submitDeposit) {
-      result = await opts.submitDeposit(opts.amountUsdc);
-    } else {
-      const _conn = new Connection(opts.rpcUrl, "confirmed");
-      result = await depositUsdc({
-        connection: _conn,
-        keypair: wallet.keypair,
-        programId,
-        providerHostname: provider,
-        amountUsdc: opts.amountUsdc,
-        rpcUrl: opts.rpcUrl,
-      });
-    }
+    const result = await opts.submitDeposit(opts.amountUsdc);
     recordAutoDeposit({ configDir: opts.configDir, amountUsdc: opts.amountUsdc });
     return {
       status: "ok",
