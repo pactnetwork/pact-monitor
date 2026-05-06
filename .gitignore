@@ -25,3 +25,9 @@ packages/program/node_modules/
 
 # Claude Code local-only
 .claude/settings.local.json
+
+# Tier-2 smoke harness — generated keypairs + run state
+scripts/smoke-tier2/.smoke-keys/
+scripts/smoke-tier2/.smoke-state/
+scripts/smoke-tier2/.surfpool-data/
+scripts/smoke-tier2/.logs/
