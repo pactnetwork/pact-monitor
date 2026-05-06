@@ -1,11 +1,12 @@
 #!/usr/bin/env bun
-import { Command } from "commander";
+import { Command, CommanderError } from "commander";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { readFileSync } from "node:fs";
 import { resolveProjectName } from "./lib/project.ts";
 import { detectMode, renderEnvelope } from "./lib/output.ts";
 import { exitCodeFor, buildInternalErrorEnvelope, type Envelope } from "./lib/envelope.ts";
+import { validateClusterStrict } from "./lib/validators.ts";
 import { runCommand } from "./cmd/run.ts";
 import { balanceCommand } from "./cmd/balance.ts";
 import { depositCommand } from "./cmd/deposit.ts";
@@ -15,7 +16,11 @@ import { initCommand } from "./cmd/init.ts";
 const VERSION = "0.1.0";
 const DEFAULT_GATEWAY = process.env.PACT_GATEWAY_URL ?? "https://market.pactnetwork.io";
 const DEFAULT_RPC = process.env.PACT_RPC_URL ?? "https://api.devnet.solana.com";
-const DEFAULT_CLUSTER = (process.env.PACT_CLUSTER ?? "devnet") as "devnet" | "mainnet";
+// v0.1.0 is devnet-only; mainnet is gated to the Friday harden pass (B2).
+// Both --cluster and PACT_CLUSTER are validated through validateClusterStrict
+// so an invalid value short-circuits to a client_error envelope before any
+// wallet/RPC side effects.
+const DEFAULT_CLUSTER = "devnet" as const;
 
 function configDirFor(projectName: string): string {
   return join(homedir(), ".config", "pact", projectName);
@@ -31,6 +36,27 @@ function emit(env: Envelope, jsonFlag: boolean, quietFlag: boolean): never {
   if (r.stdout) process.stdout.write(r.stdout + "\n");
   if (r.stderr) process.stderr.write(r.stderr + "\n");
   process.exit(exitCodeFor(env.status));
+}
+
+function emitClientError(message: string): never {
+  // We may not have parsed --json/--quiet through commander yet, so detect
+  // them directly from argv. Used for env-var rejection at module load and
+  // commander parse-time errors via exitOverride.
+  const wantsJson = process.argv.includes("--json");
+  const wantsQuiet = process.argv.includes("--quiet");
+  emit({ status: "client_error", body: { error: message } }, wantsJson, wantsQuiet);
+}
+
+// Reject unsupported PACT_CLUSTER values up front so neither the CLI option
+// default nor any downstream code path sees "mainnet" in v0.1.0 (B2).
+if (process.env.PACT_CLUSTER !== undefined && process.env.PACT_CLUSTER !== "") {
+  try {
+    validateClusterStrict(process.env.PACT_CLUSTER);
+  } catch (err) {
+    emitClientError(
+      `PACT_CLUSTER=${process.env.PACT_CLUSTER}: ${(err as Error).message}`,
+    );
+  }
 }
 
 function resolveProjectOrDie(flag?: string): string {
@@ -59,7 +85,25 @@ program
   .option("--project <name>", "explicit project name (overrides env/git)")
   .option("--gateway <url>", "override gateway URL", DEFAULT_GATEWAY)
   .option("--rpc <url>", "override Solana RPC URL", DEFAULT_RPC)
-  .option("--cluster <c>", "devnet|mainnet", DEFAULT_CLUSTER);
+  .option("--cluster <c>", "devnet only in v0.1.0", validateClusterStrict, DEFAULT_CLUSTER);
+
+// Route commander parse errors (invalid --cluster, unknown options, missing
+// args, etc.) through emit() as client_error envelopes so --json consumers
+// always see structured output instead of a stack trace on stderr (B2).
+program.exitOverride((err: CommanderError) => {
+  if (
+    err.code === "commander.helpDisplayed" ||
+    err.code === "commander.help" ||
+    err.code === "commander.version"
+  ) {
+    process.exit(err.exitCode);
+  }
+  emitClientError(err.message);
+});
+program.configureOutput({
+  // Suppress commander's default stderr writes; the envelope is the contract.
+  writeErr: () => {},
+});
 
 // `pact <url>` is the default action when first arg is a URL
 program

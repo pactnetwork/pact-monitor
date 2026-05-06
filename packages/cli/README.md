@@ -49,7 +49,7 @@ Project name is resolved from `--project`, `$PACT_PROJECT`, git repo, or cwd bas
 - `PACT_PRIVATE_KEY` — bypass disk wallet
 - `PACT_GATEWAY_URL` — override gateway (default `https://market.pactnetwork.io`)
 - `PACT_RPC_URL` — override Solana RPC
-- `PACT_CLUSTER` — `devnet` (default) or `mainnet`
+- `PACT_CLUSTER` — `devnet` only in v0.1.0; mainnet is gated to the Friday harden pass. Any other value is rejected at startup with a `client_error` envelope.
 - `PACT_AUTO_DEPOSIT_DISABLED=1` — disable auto-deposit
 
 See `docs/superpowers/specs/2026-05-05-pact-cli-design.md` for full spec.
