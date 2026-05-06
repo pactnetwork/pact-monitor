@@ -5,6 +5,16 @@ import { CallsController } from "../src/api/calls.controller";
 import { PrismaService } from "../src/prisma/prisma.service";
 
 const SIG = "sig111";
+const OTHER_SIG = "sig222";
+
+const makeShareRow = (overrides: Partial<Record<string, unknown>> = {}) => ({
+  id: "share-1",
+  settlementSig: SIG,
+  recipientKind: 0,
+  recipientPubkey: "TreasuryPubkey11111111111111111111111111111",
+  amountLamports: 50n,
+  ...overrides,
+});
 
 const makeCallRow = (overrides: Partial<Record<string, unknown>> = {}) => ({
   callId: "call-001",
@@ -44,7 +54,28 @@ const makePrisma = () => {
       ),
       findUnique: jest.fn(async ({ where: { callId } }) => {
         if (callId === "call-001") return makeCallRow();
+        if (callId === "call-other-batch")
+          return makeCallRow({
+            callId: "call-other-batch",
+            signature: OTHER_SIG,
+          });
         return null;
+      }),
+    },
+    settlementRecipientShare: {
+      findMany: jest.fn(async ({ where }: { where: { settlementSig: string } }) => {
+        if (where.settlementSig === SIG) {
+          return [
+            makeShareRow(),
+            makeShareRow({
+              id: "share-2",
+              recipientKind: 1,
+              recipientPubkey: "AffiliateA111111111111111111111111111111111",
+              amountLamports: 25n,
+            }),
+          ];
+        }
+        return [];
       }),
     },
   };
@@ -115,13 +146,39 @@ describe("CallsController", () => {
     expect(res.body[0].refundLamports).toBe("0");
   });
 
-  it("GET /api/calls/:id returns the call as wire-shaped JSON", async () => {
+  it("GET /api/calls/:id returns the call as wire-shaped JSON with recipientShares", async () => {
     const res = await request(app.getHttpServer())
       .get("/api/calls/call-001")
       .expect(200);
     expect(res.body.callId).toBe("call-001");
     expect(res.body.signature).toBe(SIG);
     expect(res.body.premiumLamports).toBe("500");
+    expect(res.body.recipientShares).toHaveLength(2);
+    expect(res.body.recipientShares[0]).toEqual({
+      kind: 0,
+      pubkey: "TreasuryPubkey11111111111111111111111111111",
+      amountLamports: "50",
+    });
+    expect(res.body.recipientShares[1]).toEqual({
+      kind: 1,
+      pubkey: "AffiliateA111111111111111111111111111111111",
+      amountLamports: "25",
+    });
+  });
+
+  it("GET /api/calls/:id returns recipientShares=[] when batch has no shares", async () => {
+    const res = await request(app.getHttpServer())
+      .get("/api/calls/call-other-batch")
+      .expect(200);
+    expect(res.body.callId).toBe("call-other-batch");
+    expect(res.body.recipientShares).toEqual([]);
+  });
+
+  it("GET /api/calls/:id queries shares by Settlement signature, not callId", async () => {
+    await request(app.getHttpServer()).get("/api/calls/call-001").expect(200);
+    const sharesArg =
+      prisma.settlementRecipientShare.findMany.mock.calls[0][0];
+    expect(sharesArg.where.settlementSig).toBe(SIG);
   });
 
   it("GET /api/calls/:id returns 404 for unknown call", async () => {

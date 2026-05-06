@@ -63,7 +63,18 @@ function serializeCall(row: CallRow): CallWire {
  *        Default limit is 50. Backs the homepage "Recent Events" firehose.
  *
  *   GET /api/calls/:id
- *     -> CallWire for a single call.
+ *     -> CallWire augmented with `recipientShares: Array<{
+ *          kind: number; pubkey: string; amountLamports: string;
+ *        }>` materialised from the parent Settlement (joined by
+ *        `Call.signature -> Settlement.signature`).
+ *
+ *        IMPORTANT — known approximation: `SettlementRecipientShare` is keyed
+ *        at the BATCH level, not per-call (per FIX-4 schema decision). All
+ *        calls in the same Settlement therefore return the SAME
+ *        `recipientShares` array — the batch's totals, not strictly THIS
+ *        call's slice. The dashboard's per-call detail panel renders this as
+ *        "Settlement breakdown for batch <sig>". A future task can refine
+ *        this once the indexer materialises per-call shares (FIX-4 follow-up).
  */
 @Controller("api/calls")
 export class CallsController {
@@ -89,9 +100,24 @@ export class CallsController {
   }
 
   @Get(":id")
-  async getCall(@Param("id") callId: string): Promise<CallWire> {
+  async getCall(@Param("id") callId: string) {
     const call = await this.prisma.call.findUnique({ where: { callId } });
     if (!call) throw new NotFoundException(`Call not found: ${callId}`);
-    return serializeCall(call);
+
+    // Settlement-level recipient shares — keyed by signature, not callId.
+    // All calls in the batch share the same `recipientShares` payload (see
+    // controller-level doc-comment for the FIX-4 schema rationale).
+    const shares = await this.prisma.settlementRecipientShare.findMany({
+      where: { settlementSig: call.signature },
+    });
+
+    return {
+      ...serializeCall(call),
+      recipientShares: shares.map((s) => ({
+        kind: s.recipientKind,
+        pubkey: s.recipientPubkey,
+        amountLamports: s.amountLamports.toString(),
+      })),
+    };
   }
 }
