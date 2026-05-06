@@ -84,6 +84,10 @@ function makePrismaMock(opts: PrismaMockOptions = {}): any {
         captured.push({ table: "agent", op: "upsert", args });
         return null;
       }),
+      update: jest.fn(async (args: any) => {
+        captured.push({ table: "agent", op: "update", args });
+        return null;
+      }),
     },
     call: {
       // findUnique kept for any legacy callers / sanity checks; the service
@@ -108,6 +112,10 @@ function makePrismaMock(opts: PrismaMockOptions = {}): any {
     },
     endpoint: {
       findUnique: jest.fn(async (args: any) => ({ slug: args.where.slug })),
+      upsert: jest.fn(async (args: any) => {
+        captured.push({ table: "endpoint", op: "upsert", args });
+        return { slug: args.where.slug };
+      }),
     },
     poolState: {
       upsert: jest.fn(async (args: any) => {
@@ -374,22 +382,37 @@ describe("EventsService", () => {
     const r1 = await svc.ingest(dto);
     expect(r1.accepted).toBe(1);
 
-    const agentUpsertsAfterFirst = prisma.captured.filter(
+    // FK-prep upsert (B11) + counter-bump update — both run on first delivery.
+    const agentOpsAfterFirst = prisma.captured.filter(
       (c: CapturedCall) => c.table === "agent",
     );
-    expect(agentUpsertsAfterFirst).toHaveLength(1);
+    expect(agentOpsAfterFirst).toHaveLength(2);
+    expect(
+      agentOpsAfterFirst.filter((c: CapturedCall) => c.op === "upsert"),
+    ).toHaveLength(1);
+    expect(
+      agentOpsAfterFirst.filter((c: CapturedCall) => c.op === "update"),
+    ).toHaveLength(1);
 
     // Second delivery (same callId): the Call row already exists, so the
-    // service must skip Agent / Settlement / SettlementRecipientShare /
-    // RecipientEarnings / PoolState entirely.
+    // service must skip Agent counter bumps / Settlement / SettlementRecipientShare /
+    // RecipientEarnings / PoolState entirely. The FK-prep Agent.upsert still
+    // fires (it's a no-op `update: {}` upsert) — that's intentional, it
+    // guarantees the FK target exists before Call.create regardless of
+    // whether the call ends up being a duplicate.
     const r2 = await svc.ingest(dto);
     expect(r2.accepted).toBe(0);
 
-    const agentUpsertsAfterSecond = prisma.captured.filter(
+    const agentOpsAfterSecond = prisma.captured.filter(
       (c: CapturedCall) => c.table === "agent",
     );
-    // Still exactly 1 — no extra agent.upsert from the duplicate.
-    expect(agentUpsertsAfterSecond).toHaveLength(1);
+    // FK-prep upsert fires again (no-op), but NO counter-bump update.
+    expect(
+      agentOpsAfterSecond.filter((c: CapturedCall) => c.op === "update"),
+    ).toHaveLength(1); // still just the one from the first delivery
+    expect(
+      agentOpsAfterSecond.filter((c: CapturedCall) => c.op === "upsert"),
+    ).toHaveLength(2); // one per delivery, both no-op `update: {}`
 
     const callCreates = prisma.captured.filter(
       (c: CapturedCall) => c.table === "call" && c.op === "create",
@@ -655,6 +678,163 @@ describe("EventsService", () => {
       (c: CapturedCall) => c.table === "call" && c.op === "create",
     );
     expect(survivors).toHaveLength(0);
+  });
+
+  it("B11: brand-new agent + endpoint are upserted BEFORE Call.create (no FK 500)", async () => {
+    // Regression for B11. On a green DB, the very first call from a
+    // brand-new agent / endpoint used to 500 with Call_agentPubkey_fkey
+    // because tryInsertCall ran before any Agent / Endpoint upsert. The
+    // fix is to upsert FK targets first inside the same tx.
+    const dto: SettlementEventDto = {
+      signature: "sigB11",
+      batchSize: 1,
+      totalPremiumsLamports: "1000",
+      totalRefundsLamports: "0",
+      ts: new Date().toISOString(),
+      calls: [
+        {
+          callId: "b11-1",
+          agentPubkey: "BrandNewAgent111111111111111111111111111111",
+          endpointSlug: "brand-new-ep",
+          premiumLamports: "1000",
+          refundLamports: "0",
+          latencyMs: 100,
+          outcome: "ok",
+          ts: new Date().toISOString(),
+          settledAt: new Date().toISOString(),
+          signature: "sigB11",
+          shares: [],
+        },
+      ],
+    };
+
+    const res = await svc.ingest(dto);
+    expect(res.accepted).toBe(1);
+
+    // Critical ordering: agent.upsert + endpoint.upsert must both come
+    // BEFORE call.create. If the order regresses, B11 is back.
+    const ops = prisma.captured.map((c: CapturedCall) => `${c.table}.${c.op}`);
+    const agentUpsertIdx = ops.indexOf("agent.upsert");
+    const endpointUpsertIdx = ops.indexOf("endpoint.upsert");
+    const callCreateIdx = ops.indexOf("call.create");
+    expect(agentUpsertIdx).toBeGreaterThanOrEqual(0);
+    expect(endpointUpsertIdx).toBeGreaterThanOrEqual(0);
+    expect(callCreateIdx).toBeGreaterThanOrEqual(0);
+    expect(agentUpsertIdx).toBeLessThan(callCreateIdx);
+    expect(endpointUpsertIdx).toBeLessThan(callCreateIdx);
+
+    // Endpoint lazy-create uses safe placeholder defaults (paused=true,
+    // zeroed business fields) — admin overwrites these via on-chain
+    // registration ingestion before the endpoint participates in real
+    // rate computation.
+    const epUpsert = prisma.captured.find(
+      (c: CapturedCall) => c.table === "endpoint" && c.op === "upsert",
+    );
+    expect(epUpsert).toBeDefined();
+    expect(epUpsert!.args.create).toMatchObject({
+      slug: "brand-new-ep",
+      paused: true,
+      flatPremiumLamports: 0n,
+      percentBps: 0,
+    });
+    // Re-delivery / pre-existing endpoint must not stomp business fields:
+    // update branch is a no-op.
+    expect(epUpsert!.args.update).toEqual({});
+  });
+
+  it("B12: dedupes + lex-sorts FK upserts so concurrent batches lock in same order", async () => {
+    // Regression for B12. With three calls sharing two agents and two
+    // endpoints in mixed order, the service must:
+    //   - Issue exactly one Agent.upsert per distinct pubkey (deduped).
+    //   - Issue exactly one Endpoint.upsert per distinct slug (deduped).
+    //   - Issue them in lexicographically sorted order — this is what
+    //     guarantees concurrent transactions take row-locks in the same
+    //     order and never deadlock.
+    const dto: SettlementEventDto = {
+      signature: "sigB12",
+      batchSize: 3,
+      totalPremiumsLamports: "3000",
+      totalRefundsLamports: "0",
+      ts: new Date().toISOString(),
+      calls: [
+        {
+          callId: "b12-1",
+          agentPubkey: "Zeta1111111111111111111111111111111111111111",
+          endpointSlug: "z-ep",
+          premiumLamports: "1000",
+          refundLamports: "0",
+          latencyMs: 100,
+          outcome: "ok",
+          ts: new Date().toISOString(),
+          settledAt: new Date().toISOString(),
+          signature: "sigB12",
+          shares: [],
+        },
+        {
+          callId: "b12-2",
+          agentPubkey: "Alpha111111111111111111111111111111111111111",
+          endpointSlug: "a-ep",
+          premiumLamports: "1000",
+          refundLamports: "0",
+          latencyMs: 100,
+          outcome: "ok",
+          ts: new Date().toISOString(),
+          settledAt: new Date().toISOString(),
+          signature: "sigB12",
+          shares: [],
+        },
+        {
+          callId: "b12-3",
+          // Same agent + endpoint as call #1 — must be deduped.
+          agentPubkey: "Zeta1111111111111111111111111111111111111111",
+          endpointSlug: "z-ep",
+          premiumLamports: "1000",
+          refundLamports: "0",
+          latencyMs: 100,
+          outcome: "ok",
+          ts: new Date().toISOString(),
+          settledAt: new Date().toISOString(),
+          signature: "sigB12",
+          shares: [],
+        },
+      ],
+    };
+
+    await svc.ingest(dto);
+
+    const agentUpserts = prisma.captured.filter(
+      (c: CapturedCall) => c.table === "agent" && c.op === "upsert",
+    );
+    expect(agentUpserts).toHaveLength(2); // deduped
+    const agentOrder = agentUpserts.map((u: CapturedCall) => u.args.where.pubkey);
+    expect(agentOrder).toEqual([...agentOrder].sort()); // lex-sorted
+
+    const endpointUpserts = prisma.captured.filter(
+      (c: CapturedCall) => c.table === "endpoint" && c.op === "upsert",
+    );
+    expect(endpointUpserts).toHaveLength(2); // deduped
+    const endpointOrder = endpointUpserts.map(
+      (u: CapturedCall) => u.args.where.slug,
+    );
+    expect(endpointOrder).toEqual([...endpointOrder].sort()); // lex-sorted
+
+    // Counter-bump updates and pool upserts must use the SAME lex order so
+    // concurrent batches lock those rows in the same order too.
+    const agentUpdates = prisma.captured.filter(
+      (c: CapturedCall) => c.table === "agent" && c.op === "update",
+    );
+    const updateOrder = agentUpdates.map(
+      (u: CapturedCall) => u.args.where.pubkey,
+    );
+    expect(updateOrder).toEqual([...updateOrder].sort());
+
+    const poolUpserts = prisma.captured.filter(
+      (c: CapturedCall) => c.table === "poolState",
+    );
+    const poolOrder = poolUpserts.map(
+      (u: CapturedCall) => u.args.where.endpointSlug,
+    );
+    expect(poolOrder).toEqual([...poolOrder].sort());
   });
 
   it("does NOT create an Agent.walletPda field (agent custody, no PDA)", async () => {

@@ -40,6 +40,21 @@ export class EventsService {
    *   - Everything happens inside a single `prisma.$transaction(...)` so
    *     aggregate updates roll back if any insert fails.
    *
+   * FK + concurrency contract (B11 / B12):
+   *   - B11: Call has FKs to Agent (pubkey) and Endpoint (slug). On a green
+   *     DB the very first call from a brand-new agent would 500 with
+   *     `Call_agentPubkey_fkey`. We now upsert all referenced Agent + Endpoint
+   *     rows BEFORE any Call.create inside the same tx, so FK targets exist.
+   *     Endpoint rows are lazy-created with paused=true and zeroed business
+   *     fields — admin must overwrite them via on-chain registration before
+   *     they participate in real rate computation. Agent rows are pure
+   *     metadata (pubkey + counters) so lazy-create is fine.
+   *   - B12: two settler instances posting concurrent batches that share an
+   *     agent or endpoint deadlocked on row-locks taken in different orders.
+   *     We now sort all (agent pubkey, endpoint slug) sets lexicographically
+   *     before upserting them. Two transactions therefore acquire the same
+   *     row-locks in the same order → they serialize, never deadlock.
+   *
    * Shares contract:
    *   - Per-call `shares` is REQUIRED on every WrapCallEventDto (possibly
    *     empty array, never absent). Missing `shares` is a 400 — settler
@@ -62,19 +77,90 @@ export class EventsService {
       }
     }
 
+    // Deduplicate + lex-sort all FK targets touched by this batch. Sorting is
+    // load-bearing: it gives concurrent ingest transactions a deterministic
+    // lock-acquisition order, so two settlers writing the same Agent / Endpoint
+    // rows at the same time cannot deadlock (B12).
+    //
+    // We pick the *earliest* observed call timestamp for each agent so the
+    // create-branch's `createdAt` is stable across redeliveries and parallel
+    // batches — different batches won't clobber it with a later ts.
+    const earliestTsByAgent = new Map<string, string>();
+    for (const call of dto.calls) {
+      const prev = earliestTsByAgent.get(call.agentPubkey);
+      if (prev === undefined || call.ts < prev) {
+        earliestTsByAgent.set(call.agentPubkey, call.ts);
+      }
+    }
+    const sortedAgentPubkeys = Array.from(earliestTsByAgent.keys()).sort();
+    const sortedEndpointSlugs = Array.from(
+      new Set(dto.calls.map((c) => c.endpointSlug)),
+    ).sort();
+
     return this.prisma.$transaction(async (tx) => {
-      // First pass: insert each Call. Duplicates (P2002 on callId PK) are
-      // skipped silently. Only successfully-inserted calls drive aggregate
-      // updates.
+      // === FK PREP (B11) ===
+      // Upsert all referenced Agent and Endpoint rows in deterministic lex
+      // order BEFORE any Call.create. This ensures:
+      //   1. Call.create's FK targets exist (no FK violation 500 on first
+      //      call from a brand-new agent).
+      //   2. Concurrent batches sharing rows take row-locks in the same
+      //      order → no PG deadlock (40P01).
+      //
+      // These upserts touch only stable identity columns. We do NOT bump
+      // counters or pool deltas here — those still happen post Call.create
+      // so a duplicate redelivery (every call P2002s) remains a clean no-op.
+
+      for (const pubkey of sortedAgentPubkeys) {
+        const ts = new Date(earliestTsByAgent.get(pubkey)!);
+        await tx.agent.upsert({
+          where: { pubkey },
+          create: {
+            pubkey,
+            createdAt: ts,
+            // counters all default to 0 in the schema; bumped post-insert
+          },
+          update: {},
+        });
+      }
+
+      for (const slug of sortedEndpointSlugs) {
+        // Lazy-create with paused=true + zeroed business fields. Admin must
+        // overwrite these via on-chain endpoint registration ingestion before
+        // the endpoint participates in rate / pool computation. We still
+        // record PoolState deltas below so the observed call activity isn't
+        // lost when registration eventually lands.
+        await tx.endpoint.upsert({
+          where: { slug },
+          create: {
+            slug,
+            flatPremiumLamports: 0n,
+            percentBps: 0,
+            slaLatencyMs: 0,
+            imputedCostLamports: 0n,
+            exposureCapPerHourLamports: 0n,
+            paused: true,
+            upstreamBase: "",
+            displayName: slug,
+            registeredAt: new Date(dto.ts),
+            lastUpdated: new Date(dto.ts),
+          },
+          update: {},
+        });
+      }
+
+      // === CALL INSERTS ===
+      // Insert each Call. Duplicates (P2002 on callId PK) are skipped
+      // silently. Only successfully-inserted calls drive aggregate updates.
       const insertedCalls: WrapCallEventDto[] = [];
       for (const call of dto.calls) {
         const inserted = await this.tryInsertCall(tx, call);
         if (inserted) insertedCalls.push(call);
       }
 
-      // If every call was a duplicate, the entire batch is a no-op. Do not
-      // touch Agent / Endpoint / Settlement / RecipientEarnings — the
-      // aggregates were already applied during the first delivery.
+      // If every call was a duplicate, the entire batch is a no-op for
+      // counters / pool / settlement aggregates. The Agent + Endpoint upserts
+      // above are also no-ops in that case (update: {}), so total work is
+      // exactly that — no double-counting.
       if (insertedCalls.length === 0) {
         return { accepted: 0 };
       }
@@ -97,29 +183,34 @@ export class EventsService {
       //   - One flat list per (kind, pubkey) for SettlementRecipientShare
       //     batch rows + RecipientEarnings upserts.
       //   - Per-endpoint feesPaid totals for PoolState updates.
+      //   - Per-agent counter deltas — applied via a SECOND pass below in
+      //     the same lex order as the FK-prep upserts to preserve the
+      //     deterministic lock order (B12).
       const perEndpoint = new Map<string, PoolDelta>();
       const perRecipient = new Map<string, { kind: number; pubkey: string; amount: bigint }>();
+      const perAgent = new Map<
+        string,
+        {
+          callCount: bigint;
+          premium: bigint;
+          refund: bigint;
+          lastCallAt: Date;
+        }
+      >();
 
       for (const call of insertedCalls) {
-        // Bump Agent counters. Safe to do here because we know this call is
-        // a brand-new row, not a redelivery.
-        await tx.agent.upsert({
-          where: { pubkey: call.agentPubkey },
-          create: {
-            pubkey: call.agentPubkey,
-            createdAt: new Date(call.ts),
-            lastCallAt: new Date(call.ts),
-            callCount: 1n,
-            totalPremiumsLamports: BigInt(call.premiumLamports),
-            totalRefundsLamports: BigInt(call.refundLamports),
-          },
-          update: {
-            lastCallAt: new Date(call.ts),
-            callCount: { increment: 1n },
-            totalPremiumsLamports: { increment: BigInt(call.premiumLamports) },
-            totalRefundsLamports: { increment: BigInt(call.refundLamports) },
-          },
-        });
+        const agentSlot = perAgent.get(call.agentPubkey) ?? {
+          callCount: 0n,
+          premium: 0n,
+          refund: 0n,
+          lastCallAt: new Date(call.ts),
+        };
+        agentSlot.callCount += 1n;
+        agentSlot.premium += BigInt(call.premiumLamports);
+        agentSlot.refund += BigInt(call.refundLamports);
+        const callTs = new Date(call.ts);
+        if (callTs > agentSlot.lastCallAt) agentSlot.lastCallAt = callTs;
+        perAgent.set(call.agentPubkey, agentSlot);
 
         const slot = perEndpoint.get(call.endpointSlug) ?? {
           premium: 0n,
@@ -147,6 +238,23 @@ export class EventsService {
         perEndpoint.set(call.endpointSlug, slot);
       }
 
+      // Apply Agent counter bumps in the SAME lex order used for the FK-prep
+      // upserts. Concurrent batches sharing an Agent will take this UPDATE
+      // lock in identical order → no deadlock.
+      for (const pubkey of sortedAgentPubkeys) {
+        const delta = perAgent.get(pubkey);
+        if (!delta) continue; // every call for this agent was a duplicate
+        await tx.agent.update({
+          where: { pubkey },
+          data: {
+            lastCallAt: delta.lastCallAt,
+            callCount: { increment: delta.callCount },
+            totalPremiumsLamports: { increment: delta.premium },
+            totalRefundsLamports: { increment: delta.refund },
+          },
+        });
+      }
+
       // Per-recipient settlement shares: insert once per signature.
       // SettlementRecipientShare is keyed at the batch level (per-batch row
       // per recipient) — we sum each (kind, pubkey) across the batch's calls.
@@ -164,7 +272,11 @@ export class EventsService {
           })),
         });
 
-        for (const s of aggregatedShares) {
+        // Lex-sort recipient pubkeys for deterministic lock order (B12).
+        const sortedRecipients = [...aggregatedShares].sort((a, b) =>
+          a.pubkey < b.pubkey ? -1 : a.pubkey > b.pubkey ? 1 : 0,
+        );
+        for (const s of sortedRecipients) {
           await tx.recipientEarnings.upsert({
             where: { recipientPubkey: s.pubkey },
             create: {
@@ -181,14 +293,11 @@ export class EventsService {
         }
       }
 
-      // PoolState upserts. Skip endpoints that have no registered Endpoint
-      // row — endpoint registration is owned elsewhere.
-      for (const [slug, delta] of perEndpoint.entries()) {
-        const endpointExists = await tx.endpoint.findUnique({
-          where: { slug },
-          select: { slug: true },
-        });
-        if (!endpointExists) continue;
+      // PoolState upserts in the SAME lex order used above (B12). Endpoint
+      // existence is now guaranteed by the FK-prep upsert pass.
+      for (const slug of sortedEndpointSlugs) {
+        const delta = perEndpoint.get(slug);
+        if (!delta) continue; // every call for this endpoint was a duplicate
 
         const balanceDelta = delta.premium - delta.refund - delta.feesPaid;
         await tx.poolState.upsert({
