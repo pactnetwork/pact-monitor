@@ -20,13 +20,12 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { Connection, PublicKey } from "@solana/web3.js";
 import {
   getAgentInsurableState,
-  USDC_MINT_DEVNET,
   PROGRAM_ID,
   getSettlementAuthorityPda,
   type AgentInsurableState,
 } from "@pact-network/protocol-v1-client";
 
-import { SOLANA_RPC } from "../solana";
+import { SOLANA_RPC, USDC_MINT } from "../solana";
 
 const POLL_INTERVAL_MS = 5_000;
 /** Minimum premium (matches MIN_PREMIUM_LAMPORTS in the program). */
@@ -54,13 +53,16 @@ export type InsurableInspector = (
   agentOwner: PublicKey
 ) => Promise<AgentInsurableState>;
 
-function defaultInspector(connection: Connection): InsurableInspector {
+function defaultInspector(
+  connection: Connection,
+  usdcMint: PublicKey
+): InsurableInspector {
   const [settlementPda] = getSettlementAuthorityPda(PROGRAM_ID);
   return (agentOwner: PublicKey) =>
     getAgentInsurableState(
       connection,
       agentOwner,
-      USDC_MINT_DEVNET,
+      usdcMint,
       settlementPda,
       MIN_PREMIUM
     );
@@ -68,7 +70,8 @@ function defaultInspector(connection: Connection): InsurableInspector {
 
 export function useAgentInsurableState(
   pubkey: string | null,
-  inspectorOverride?: InsurableInspector
+  inspectorOverride?: InsurableInspector,
+  usdcMint?: PublicKey
 ): UseAgentInsurableStateResult {
   const [state, setState] = useState<BalanceCheckResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -80,11 +83,12 @@ export function useAgentInsurableState(
     if (inspectorOverride) return inspectorOverride;
     if (!inspectorRef.current) {
       inspectorRef.current = defaultInspector(
-        new Connection(SOLANA_RPC, "confirmed")
+        new Connection(SOLANA_RPC, "confirmed"),
+        usdcMint ?? USDC_MINT
       );
     }
     return inspectorRef.current;
-  }, [inspectorOverride]);
+  }, [inspectorOverride, usdcMint]);
 
   const fetchOnce = useCallback(async () => {
     if (!pubkey) return;

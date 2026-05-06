@@ -12,6 +12,7 @@ import {
 import {
   PROGRAM_ID,
   USDC_MINT_DEVNET,
+  USDC_MINT_MAINNET,
   buildApproveIx,
   buildRevokeIx,
   getSettlementAuthorityPda,
@@ -21,8 +22,20 @@ import {
 export const SOLANA_RPC =
   process.env.NEXT_PUBLIC_SOLANA_RPC ?? "https://api.devnet.solana.com";
 
-/** USDC mint used by the deployed devnet program (hardcoded server-side). */
-export const USDC_MINT = USDC_MINT_DEVNET;
+/** Re-export of devnet USDC mint for callers that need the literal value. */
+export { USDC_MINT_DEVNET, USDC_MINT_MAINNET };
+
+/**
+ * USDC mint resolved from `NEXT_PUBLIC_USDC_MINT` at build time.
+ *
+ * Falls back to devnet for local dev. Production deploys MUST set this to the
+ * mainnet mint (`EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`) — otherwise the
+ * dashboard derives ATAs against the wrong mint and reports `no_ata` for every
+ * wallet. See `.env.example` for the values to use per environment.
+ */
+export const USDC_MINT = process.env.NEXT_PUBLIC_USDC_MINT
+  ? new PublicKey(process.env.NEXT_PUBLIC_USDC_MINT)
+  : USDC_MINT_DEVNET;
 
 /** Re-export the canonical V1 program ID so consumers don't import the SDK directly. */
 export const PACT_PROGRAM_ID = PROGRAM_ID;
