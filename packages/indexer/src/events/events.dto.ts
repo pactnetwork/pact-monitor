@@ -52,8 +52,21 @@ export interface SettlementEventDto {
   batchSize: number;
   totalPremiumsLamports: string;
   totalRefundsLamports: string;
-  /** Optional per-recipient fee breakdown. Empty/missing when the batch had
-   *  no fee outflows (e.g. all calls were refunds). */
+  /**
+   * Top-level, batch-aggregate per-recipient fee breakdown.
+   *
+   * Contract with the settler (#62): `shares` lives at the SettlementEventDto
+   * top level, NOT nested per-call inside `WrapCallEventDto`. The settler
+   * aggregates fee outflows across the whole batch and emits one
+   * RecipientShareDto per (kind, recipientPubkey) pair. The indexer
+   * apportions those totals across endpoints proportional to gross premiums
+   * within the batch (see TODO in events.service.ts about per-call splits).
+   *
+   * Empty/missing when the batch had no fee outflows (e.g. every call
+   * refunded). Do NOT add a per-call `shares` field on WrapCallEventDto —
+   * that would duplicate the contract and silently zero-out earnings if the
+   * two emitters disagreed.
+   */
   shares?: RecipientShareDto[];
   ts: string;
   calls: WrapCallEventDto[];

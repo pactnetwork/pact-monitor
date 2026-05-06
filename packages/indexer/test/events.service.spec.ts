@@ -469,6 +469,113 @@ describe("EventsService", () => {
     expect(survivors).toHaveLength(0);
   });
 
+  it("payload: top-level shares array creates SettlementRecipientShare rows for batch-aggregate fees", async () => {
+    // Contract with #62 settler: `shares` lives at the TOP LEVEL of the
+    // SettlementEventDto, not nested per-call. The indexer must decode it
+    // and create one SettlementRecipientShare per recipient and one
+    // RecipientEarnings upsert per recipient.
+    const dto: SettlementEventDto = {
+      signature: "sigBatchFees",
+      batchSize: 3,
+      totalPremiumsLamports: "3000",
+      totalRefundsLamports: "0",
+      ts: new Date().toISOString(),
+      shares: [
+        {
+          recipientKind: 0,
+          recipientPubkey: "TreasuryPubkey11111111111111111111111111111",
+          amountLamports: "180",
+        },
+        {
+          recipientKind: 1,
+          recipientPubkey: "AffiliateAtaPubkey111111111111111111111111111",
+          amountLamports: "60",
+        },
+        {
+          recipientKind: 2,
+          recipientPubkey: "AffiliatePdaPubkey1111111111111111111111111111",
+          amountLamports: "60",
+        },
+      ],
+      calls: [
+        {
+          callId: "bf-1",
+          agentPubkey: "AgentP11111111111111111111111111111111111111",
+          endpointSlug: "helius",
+          premiumLamports: "1000",
+          refundLamports: "0",
+          latencyMs: 100,
+          outcome: "ok",
+          ts: new Date().toISOString(),
+          settledAt: new Date().toISOString(),
+          signature: "sigBatchFees",
+        },
+        {
+          callId: "bf-2",
+          agentPubkey: "AgentP11111111111111111111111111111111111111",
+          endpointSlug: "helius",
+          premiumLamports: "1000",
+          refundLamports: "0",
+          latencyMs: 110,
+          outcome: "ok",
+          ts: new Date().toISOString(),
+          settledAt: new Date().toISOString(),
+          signature: "sigBatchFees",
+        },
+        {
+          callId: "bf-3",
+          agentPubkey: "AgentP22222222222222222222222222222222222222",
+          endpointSlug: "birdeye",
+          premiumLamports: "1000",
+          refundLamports: "0",
+          latencyMs: 120,
+          outcome: "ok",
+          ts: new Date().toISOString(),
+          settledAt: new Date().toISOString(),
+          signature: "sigBatchFees",
+        },
+      ],
+    };
+
+    const res = await svc.ingest(dto);
+    expect(res.accepted).toBe(3);
+
+    const shareCreate = prisma.captured.find(
+      (c: CapturedCall) =>
+        c.table === "settlementRecipientShare" && c.op === "createMany",
+    );
+    expect(shareCreate).toBeDefined();
+    expect(shareCreate!.args.data).toHaveLength(3);
+    expect(shareCreate!.args.data.map((d: any) => d.recipientKind).sort()).toEqual(
+      [0, 1, 2],
+    );
+    // Total fees recorded match the sum on the wire.
+    const total = shareCreate!.args.data.reduce(
+      (s: bigint, d: any) => s + BigInt(d.amountLamports),
+      0n,
+    );
+    expect(total).toBe(300n);
+
+    // One RecipientEarnings upsert per recipient.
+    const earningsUpserts = prisma.captured.filter(
+      (c: CapturedCall) => c.table === "recipientEarnings",
+    );
+    expect(earningsUpserts).toHaveLength(3);
+
+    // Pool fees attributed across endpoints (proportional, last absorbs
+    // remainder). Total fees on wire = 300; both pool upserts together must
+    // sum to 300 lamports.
+    const poolUpserts = prisma.captured.filter(
+      (c: CapturedCall) => c.table === "poolState",
+    );
+    const poolFeesSum = poolUpserts.reduce(
+      (s: bigint, p: CapturedCall) =>
+        s + BigInt(p.args.create.totalFeesPaidLamports),
+      0n,
+    );
+    expect(poolFeesSum).toBe(300n);
+  });
+
   it("does NOT create an Agent.walletPda field (agent custody, no PDA)", async () => {
     const dto: SettlementEventDto = {
       signature: "sigD",
