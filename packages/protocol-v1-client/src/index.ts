@@ -26,6 +26,7 @@ export {
   decodeFeeRecipient,
   decodeFeeRecipientArray,
   FeeRecipientKind,
+  SettlementStatus,
   COVERAGE_POOL_LEN,
   ENDPOINT_CONFIG_LEN,
   CALL_RECORD_LEN,

@@ -22,6 +22,7 @@ use pinocchio::{
 
 use crate::{
     error::PactError,
+    pda::verify_protocol_config,
     state::{EndpointConfig, ProtocolConfig},
 };
 
@@ -46,6 +47,10 @@ pub fn process(accounts: &[AccountView], data: &[u8]) -> ProgramResult {
     if !endpoint.is_writable() {
         return Err(ProgramError::InvalidAccountData);
     }
+
+    // SECURITY: verify ProtocolConfig is the canonical PDA + program-owned
+    // BEFORE reading authority. (codex 2026-05-05.)
+    verify_protocol_config(protocol_config)?;
 
     {
         let pc_data = protocol_config.try_borrow()?;

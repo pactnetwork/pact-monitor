@@ -17,18 +17,16 @@
       "@pact-network/shared/*": ["./packages/shared/src/*"],
       "@pact-network/db": ["./packages/db/src/index.ts"],
       "@pact-network/db/*": ["./packages/db/src/*"],
-      "@pact-network/wrap": ["./packages/wrap/src/index.ts"],
-      "@pact-network/wrap/*": ["./packages/wrap/src/*"],
-      "@pact-network/protocol-v1-client": ["./packages/protocol-v1-client/src/index.ts"],
-      "@pact-network/protocol-v1-client/*": ["./packages/protocol-v1-client/src/*"],
-      "@pact-network/market-proxy": ["./packages/market-proxy/src/index.ts"],
-      "@pact-network/market-proxy/*": ["./packages/market-proxy/src/*"],
+      "@pact-network/proxy": ["./packages/proxy/src/index.ts"],
+      "@pact-network/proxy/*": ["./packages/proxy/src/*"],
       "@pact-network/settler": ["./packages/settler/src/main.ts"],
       "@pact-network/settler/*": ["./packages/settler/src/*"],
       "@pact-network/indexer": ["./packages/indexer/src/main.ts"],
       "@pact-network/indexer/*": ["./packages/indexer/src/*"],
       "@pact-network/market-dashboard": ["./packages/market-dashboard/app/page.tsx"],
-      "@pact-network/market-dashboard/*": ["./packages/market-dashboard/*"]
+      "@pact-network/market-dashboard/*": ["./packages/market-dashboard/*"],
+      "@pact-network/protocol-v1-client": ["./packages/protocol-v1-client/src/index.ts"],
+      "@pact-network/protocol-v1-client/*": ["./packages/protocol-v1-client/src/*"]
     }
   }
 }

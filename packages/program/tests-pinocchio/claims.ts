@@ -16,7 +16,7 @@
 //   pnpm tsx tests-pinocchio/claims.ts
 //
 // Build prereq:
-//   cargo build-sbf --manifest-path programs-pinocchio/pact-insurance-pinocchio/Cargo.toml --features bpf-entrypoint
+//   cargo build-sbf --manifest-path programs-pinocchio/pact-network-v2-pinocchio/Cargo.toml --features bpf-entrypoint
 
 import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -89,7 +89,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROGRAM_ROOT = resolve(__dirname, '..');
 const PINOCCHIO_SO = resolve(
   PROGRAM_ROOT,
-  'target/deploy/pact_insurance_pinocchio.so',
+  'target/deploy/pact_network_v2_pinocchio.so',
 );
 
 const RPC_PORT = 9899 + Math.floor(Math.random() * 1000);
@@ -106,7 +106,7 @@ interface Harness {
 async function startValidator(): Promise<Harness> {
   if (!existsSync(PINOCCHIO_SO)) {
     throw new Error(
-      `Pinocchio .so not found at ${PINOCCHIO_SO}. Run:\n  cargo build-sbf --manifest-path programs-pinocchio/pact-insurance-pinocchio/Cargo.toml --features bpf-entrypoint`,
+      `Pinocchio .so not found at ${PINOCCHIO_SO}. Run:\n  cargo build-sbf --manifest-path programs-pinocchio/pact-network-v2-pinocchio/Cargo.toml --features bpf-entrypoint`,
     );
   }
   const ledger = await mkdtemp(resolve(tmpdir(), 'pact-pino-ledger-claims-'));

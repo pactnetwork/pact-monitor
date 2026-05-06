@@ -145,8 +145,26 @@ export function validateFeeRecipients(
  * call_record + endpoint + pool slots even if the slug repeats; the program
  * re-reads each).
  *
+ * Account layout (must match `src/instructions/settle_batch.rs`):
+ *   Fixed prefix (5):
+ *     0. settler_signer (signer, writable)
+ *     1. settlement_authority PDA (readonly)
+ *     2. token_program (readonly)
+ *     3. system_program (readonly)
+ *     4. protocol_config PDA (readonly) — mainnet kill-switch addition
+ *        2026-05-06; on-chain handler reads `paused` here and rejects the
+ *        entire batch before any per-event work runs. Pre-derive via
+ *        `getProtocolConfigPda(programId)`.
+ *   Per event (5 + N where N = endpoint.fee_recipient_count):
+ *     0. call_record PDA (writable)
+ *     1. coverage_pool PDA (writable)
+ *     2. coverage_pool USDC vault (writable)
+ *     3. endpoint_config PDA (writable)
+ *     4. agent USDC ATA (writable)
+ *     5..5+N. fee recipient ATAs (writable, in EndpointConfig order)
+ *
  * Use with `buildSettleBatchIx` — pass the resulting events (in the same
- * order) plus the pre-derived call_record PDAs.
+ * order) plus the pre-derived call_record PDAs and ProtocolConfig PDA.
  *
  * Note: the program deserialises strictly positionally, so this helper is a
  * convenience for assembling the `keys` array on the client side. If callers
@@ -157,7 +175,8 @@ export function accountListForBatch(
   events: SettlementEvent[],
   callRecordPdas: PublicKey[],
   settler: PublicKey,
-  settlementAuthority: PublicKey
+  settlementAuthority: PublicKey,
+  protocolConfig: PublicKey
 ): AccountMeta[] {
   if (events.length !== callRecordPdas.length) {
     throw new Error(
@@ -169,6 +188,7 @@ export function accountListForBatch(
     { pubkey: settlementAuthority, isSigner: false, isWritable: false },
     { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
     { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    { pubkey: protocolConfig, isSigner: false, isWritable: false },
   ];
   for (let i = 0; i < events.length; i++) {
     const ev = events[i];

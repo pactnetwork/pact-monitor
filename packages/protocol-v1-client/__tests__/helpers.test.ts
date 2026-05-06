@@ -153,17 +153,22 @@ describe("helpers", () => {
       };
     }
 
-    test("emits the canonical fixed prefix", () => {
+    test("emits the canonical fixed prefix including ProtocolConfig at idx 4", () => {
       const settler = newPk();
       const sa = newPk();
-      const list = accountListForBatch([], [], settler, sa);
-      expect(list).toHaveLength(4);
+      const protocolConfig = newPk();
+      const list = accountListForBatch([], [], settler, sa, protocolConfig);
+      expect(list).toHaveLength(5);
       expect(list[0].pubkey.equals(settler)).toBe(true);
       expect(list[0].isSigner).toBe(true);
       expect(list[1].pubkey.equals(sa)).toBe(true);
       expect(list[1].isWritable).toBe(false);
       expect(list[2].pubkey.equals(TOKEN_PROGRAM_ID)).toBe(true);
       expect(list[3].pubkey.equals(SystemProgram.programId)).toBe(true);
+      // Mainnet kill-switch addition (2026-05-06): ProtocolConfig at idx 4.
+      expect(list[4].pubkey.equals(protocolConfig)).toBe(true);
+      expect(list[4].isSigner).toBe(false);
+      expect(list[4].isWritable).toBe(false);
     });
 
     test("appends 5 + N slots per event (N = fee_recipient_atas length)", () => {
@@ -173,27 +178,55 @@ describe("helpers", () => {
         [ev1, ev2],
         [newPk(), newPk()],
         newPk(),
+        newPk(),
         newPk()
       );
-      // 4 prefix + 5 + 1 + 5 + 2 = 17
-      expect(list).toHaveLength(4 + 5 + 1 + 5 + 2);
+      // 5 prefix (settler, SA, token, system, ProtocolConfig) + 5 + 1 + 5 + 2 = 18
+      expect(list).toHaveLength(5 + 5 + 1 + 5 + 2);
     });
 
-    test("maintains per-event ordering: callRecord, pool, vault, endpoint, agentAta, fee_atas", () => {
+    test("maintains per-event ordering after the 5-account fixed prefix: callRecord, pool, vault, endpoint, agentAta, fee_atas", () => {
       const ev = makeEvent();
       const cr = newPk();
-      const list = accountListForBatch([ev], [cr], newPk(), newPk());
-      expect(list[4].pubkey.equals(cr)).toBe(true);
-      expect(list[5].pubkey.equals(ev.coveragePool)).toBe(true);
-      expect(list[6].pubkey.equals(ev.poolVault)).toBe(true);
-      expect(list[7].pubkey.equals(ev.endpointConfig)).toBe(true);
-      expect(list[8].pubkey.equals(ev.agentAta)).toBe(true);
-      expect(list[9].pubkey.equals(ev.feeRecipientAtas[0])).toBe(true);
+      const protocolConfig = newPk();
+      const list = accountListForBatch(
+        [ev],
+        [cr],
+        newPk(),
+        newPk(),
+        protocolConfig
+      );
+      // ProtocolConfig is at index 4; per-event slots start at index 5.
+      expect(list[4].pubkey.equals(protocolConfig)).toBe(true);
+      expect(list[5].pubkey.equals(cr)).toBe(true);
+      expect(list[6].pubkey.equals(ev.coveragePool)).toBe(true);
+      expect(list[7].pubkey.equals(ev.poolVault)).toBe(true);
+      expect(list[8].pubkey.equals(ev.endpointConfig)).toBe(true);
+      expect(list[9].pubkey.equals(ev.agentAta)).toBe(true);
+      expect(list[10].pubkey.equals(ev.feeRecipientAtas[0])).toBe(true);
+    });
+
+    test("ProtocolConfig PDA from getProtocolConfigPda lands at index 4", async () => {
+      // Realistic flow: caller derives the canonical [b"protocol_config"] PDA
+      // and passes it. The on-chain handler (verify_protocol_config) only
+      // accepts this exact derivation.
+      const { getProtocolConfigPda, PROGRAM_ID } = await import(
+        "../src/index.js"
+      );
+      const [pcPda] = getProtocolConfigPda(PROGRAM_ID);
+      const list = accountListForBatch(
+        [makeEvent()],
+        [newPk()],
+        newPk(),
+        newPk(),
+        pcPda
+      );
+      expect(list[4].pubkey.equals(pcPda)).toBe(true);
     });
 
     test("throws on event/callRecord length mismatch", () => {
       expect(() =>
-        accountListForBatch([makeEvent()], [], newPk(), newPk())
+        accountListForBatch([makeEvent()], [], newPk(), newPk(), newPk())
       ).toThrow();
     });
   });

@@ -1,1 +1,8 @@
-// TODO: batch settlement events into Solana instructions (max 50 per batch)
+import { Module } from "@nestjs/common";
+import { BatcherService } from "./batcher.service";
+
+@Module({
+  providers: [BatcherService],
+  exports: [BatcherService],
+})
+export class BatcherModule {}

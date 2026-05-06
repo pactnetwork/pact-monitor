@@ -27,6 +27,10 @@ pub enum Discriminator {
     InitializeProtocolConfig = 12,
     InitializeTreasury = 13,
     UpdateFeeRecipients = 14,
+    /// Protocol-wide kill switch. Flips `ProtocolConfig.paused` (0/1).
+    /// While paused, `settle_batch` rejects with `PactError::ProtocolPaused`
+    /// before any per-event work runs. Mainnet-launch addition.
+    PauseProtocol = 15,
 }
 
 impl TryFrom<u8> for Discriminator {
@@ -43,6 +47,7 @@ impl TryFrom<u8> for Discriminator {
             12 => Ok(Discriminator::InitializeProtocolConfig),
             13 => Ok(Discriminator::InitializeTreasury),
             14 => Ok(Discriminator::UpdateFeeRecipients),
+            15 => Ok(Discriminator::PauseProtocol),
             _ => Err(ProgramError::InvalidInstructionData),
         }
     }

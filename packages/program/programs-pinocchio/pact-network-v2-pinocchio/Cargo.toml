@@ -1,12 +1,12 @@
 [package]
-name = "pact-insurance-pinocchio"
+name = "pact-network-v2-pinocchio"
 version = "0.1.0"
 description = "Pact Network on-chain parametric insurance (Pinocchio port, scaffolding)"
 edition = "2021"
 
 [lib]
 crate-type = ["cdylib", "lib"]
-name = "pact_insurance_pinocchio"
+name = "pact_network_v2_pinocchio"
 
 [features]
 default = []
