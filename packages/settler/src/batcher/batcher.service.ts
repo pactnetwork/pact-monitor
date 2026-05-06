@@ -4,18 +4,20 @@ import { SettleMessage } from "../consumer/consumer.service";
 /**
  * Maximum events per batch.
  *
- * **Hard ceiling for v1**: 5. Each event reads ≥7 accounts (callRecord, pool,
+ * **Hard ceiling for v1**: 3. Each event reads ≥7 accounts (callRecord, pool,
  * poolVault, endpoint, agentAta + up to 8 fee-recipient ATAs) plus a 104-byte
  * SettlementEvent payload. With pubkeys serialised inline (no Address Lookup
- * Tables yet), the legacy v0 1232-byte tx limit caps a realistic 1-3 fee-
- * recipient batch at ~5 events. Pushing past this risks `Transaction too
- * large` at submit time, which nack-loops the batch on Pub/Sub.
+ * Tables yet), hand-calc of a 5-event tx ≈ 1275 bytes blows past the 1232-
+ * byte legacy v0 wire cap once ComputeBudget instructions are included. A
+ * 3-event batch fits even with 8 fee recipients per event. Pushing past
+ * this risks `Transaction too large` at submit time, which nack-loops the
+ * batch on Pub/Sub.
  *
  * Tuning lever for V2: integrate Address Lookup Tables (each pubkey shrinks
  * from 32 bytes to 1 byte) so a 50-event batch fits comfortably. Until then
  * keep this conservative.
  */
-export const MAX_BATCH_SIZE = 5;
+export const MAX_BATCH_SIZE = 3;
 export const FLUSH_INTERVAL_MS = 5000;
 
 export interface SettleBatch {

@@ -48,16 +48,18 @@ describe("BatcherService", () => {
     expect(service.pendingCount).toBe(0);
   });
 
-  it("flushes after 5s timer with fewer than 50 messages", async () => {
-    service.push(makeMessage(1));
-    service.push(makeMessage(2));
-    service.push(makeMessage(3));
+  it("flushes after 5s timer when below MAX_BATCH_SIZE", async () => {
+    // Push fewer than MAX_BATCH_SIZE so the size trigger doesn't fire — only
+    // the timer can flush.
+    for (let i = 0; i < MAX_BATCH_SIZE - 1; i++) {
+      service.push(makeMessage(i));
+    }
 
     expect(flushed).toHaveLength(0);
     await vi.advanceTimersByTimeAsync(5000);
 
     expect(flushed).toHaveLength(1);
-    expect(flushed[0].messages).toHaveLength(3);
+    expect(flushed[0].messages).toHaveLength(MAX_BATCH_SIZE - 1);
   });
 
   it("timer is cancelled after size-based flush", async () => {

@@ -193,12 +193,12 @@ describe("Pipeline e2e", () => {
     vi.useRealTimers();
   });
 
-  it("sends 5 messages, all settled in one batch and indexer pushed", async () => {
+  it("sends 3 messages, all settled in one batch and indexer pushed", async () => {
     const axios = await import("axios");
     const postSpy = vi.mocked(axios.default.post);
     const agentPubkey = Keypair.generate().publicKey.toBase58();
 
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 3; i++) {
       const data = makeEventData(i, agentPubkey);
       subEmitter.emit("message", {
         id: String(i),
@@ -215,12 +215,12 @@ describe("Pipeline e2e", () => {
 
     expect(postSpy).toHaveBeenCalledOnce();
     const [, body] = postSpy.mock.calls[0];
-    expect((body as Record<string, unknown>)["batchSize"]).toBe(5);
+    expect((body as Record<string, unknown>)["batchSize"]).toBe(3);
     expect((body as Record<string, unknown>)["signature"]).toBe("e2e-sig-001");
     const calls = (body as Record<string, unknown>)["calls"] as Array<
       Record<string, unknown>
     >;
-    expect(calls).toHaveLength(5);
+    expect(calls).toHaveLength(3);
     // Each call should carry the per-recipient share breakdown.
     for (const c of calls) {
       const shares = c["shares"] as Array<Record<string, unknown>>;

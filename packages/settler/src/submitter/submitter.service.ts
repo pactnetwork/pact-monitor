@@ -263,10 +263,10 @@ export class SubmitterService implements OnModuleInit {
     // CU/tx limit is exceeded after ~3 events with 1 fee recipient. The
     // priority-fee floor keeps txs landing during devnet/mainnet congestion.
     //
-    // Sized for the 5-event MAX_BATCH_SIZE cap with up to 8 fee recipients
-    // each: ~5 × 5 ix × ~20k CU ≈ 500k headroom; doubled to 1_000_000 for
-    // safety. Tune downward once we have measured CU per event from
-    // surfpool/devnet logs.
+    // Sized for the 3-event MAX_BATCH_SIZE cap with up to 8 fee recipients
+    // each: ~3 × 5 ix × ~20k CU ≈ 300k headroom; left at 1_000_000 for
+    // headroom against the previous 5-cap and tx-CU jitter. Tune downward
+    // once we have measured CU per event from surfpool/devnet logs.
     const computeUnitLimitIx = ComputeBudgetProgram.setComputeUnitLimit({
       units: 1_000_000,
     });
