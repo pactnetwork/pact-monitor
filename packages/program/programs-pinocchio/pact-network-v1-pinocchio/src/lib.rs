@@ -18,7 +18,12 @@ use discriminator::Discriminator;
 #[cfg(feature = "bpf-entrypoint")]
 pinocchio::entrypoint!(process_instruction);
 
-solana_address::declare_id!("5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5");
+// CANONICAL mainnet program ID. 2026-05-06 V1 launch.
+// Local devnet/surfpool dev requires sed-replacing this AND
+// `protocol-v1-client/src/constants.ts::PROGRAM_ID` to a per-environment
+// pubkey, then rebuilding the SBF binary. The smoke harness at
+// `scripts/smoke-tier2/01-deploy.sh` does this automatically with a revert trap.
+solana_address::declare_id!("5bCJcdWdKLJ7arrMVMFh3z99rQDxV785fnD9XGcr3xwc");
 
 /// Discriminator allocation policy: see `discriminator.rs`. Slots 0, 5, 6, 7,
 /// 8, 11 are intentionally left as gaps (deleted instructions reserve their
