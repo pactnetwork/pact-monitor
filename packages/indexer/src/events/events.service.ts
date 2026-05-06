@@ -1,20 +1,68 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
+import { Prisma } from "@pact-network/db";
 import { PrismaService } from "../prisma/prisma.service";
 import {
   RecipientShareDto,
   SettlementEventDto,
+  WrapCallEventDto,
   outcomeToBreach,
 } from "./events.dto";
 
+/**
+ * Per-endpoint pool deltas computed during a single batch ingest. Only filled
+ * for calls that were actually inserted (i.e. not duplicates).
+ */
+interface PoolDelta {
+  premium: bigint;
+  refund: bigint;
+  feesPaid: bigint;
+}
+
 @Injectable()
 export class EventsService {
+  private readonly logger = new Logger(EventsService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
+  /**
+   * Ingest a batch settlement event from the settler.
+   *
+   * Idempotency contract (codex review #59):
+   *   - The Call row is the source of truth. Only on a real INSERT do we
+   *     mutate Agent counters / Endpoint pool state / SettlementRecipientShare
+   *     / RecipientEarnings.
+   *   - A duplicate Pub/Sub redelivery (same `callId`) is detected via the
+   *     P2002 unique-constraint error from `prisma.call.create()`. On conflict
+   *     we skip every aggregate update for that call.
+   *   - Settlement-level rows (Settlement, SettlementRecipientShare,
+   *     RecipientEarnings) are guarded by `signature` and only inserted when
+   *     at least one new Call row was created in this batch — otherwise the
+   *     entire batch was a no-op duplicate.
+   *   - Everything happens inside a single `prisma.$transaction(...)` so
+   *     aggregate updates roll back if any insert fails.
+   */
   async ingest(dto: SettlementEventDto): Promise<{ accepted: number }> {
-    let accepted = 0;
+    const shares: RecipientShareDto[] = dto.shares ?? [];
 
-    await this.prisma.$transaction(async (tx) => {
-      // Upsert settlement record (idempotent by signature).
+    return this.prisma.$transaction(async (tx) => {
+      // First pass: insert each Call. Duplicates (P2002 on callId PK) are
+      // skipped silently. Only successfully-inserted calls drive aggregate
+      // updates.
+      const insertedCalls: WrapCallEventDto[] = [];
+      for (const call of dto.calls) {
+        const inserted = await this.tryInsertCall(tx, call);
+        if (inserted) insertedCalls.push(call);
+      }
+
+      // If every call was a duplicate, the entire batch is a no-op. Do not
+      // touch Agent / Endpoint / Settlement / RecipientEarnings — the
+      // aggregates were already applied during the first delivery.
+      if (insertedCalls.length === 0) {
+        return { accepted: 0 };
+      }
+
+      // Settlement record — idempotent by signature. Only created when the
+      // batch contains at least one new call.
       await tx.settlement.upsert({
         where: { signature: dto.signature },
         create: {
@@ -27,13 +75,10 @@ export class EventsService {
         update: {},
       });
 
-      // Insert per-recipient shares once. We treat the (signature, kind,
-      // pubkey) tuple as the unique key — but we use the `cuid` PK and
-      // skip insert if any share already exists for this signature.
+      // Per-recipient shares: insert once per signature.
       const existingShares = await tx.settlementRecipientShare.count({
         where: { settlementSig: dto.signature },
       });
-      const shares: RecipientShareDto[] = dto.shares ?? [];
       if (existingShares === 0 && shares.length > 0) {
         await tx.settlementRecipientShare.createMany({
           data: shares.map((s) => ({
@@ -44,7 +89,6 @@ export class EventsService {
           })),
         });
 
-        // Update lifetime earnings per recipient.
         for (const s of shares) {
           const amt = BigInt(s.amountLamports);
           await tx.recipientEarnings.upsert({
@@ -63,14 +107,12 @@ export class EventsService {
         }
       }
 
-      // Per-endpoint pool deltas computed from this batch's calls.
-      const perEndpoint = new Map<
-        string,
-        { premium: bigint; refund: bigint; feesPaid: bigint }
-      >();
+      // Aggregate updates — only for calls that were actually inserted.
+      const perEndpoint = new Map<string, PoolDelta>();
 
-      for (const call of dto.calls) {
-        // Upsert agent (no walletPda — agent custody, no PDA in v1).
+      for (const call of insertedCalls) {
+        // Bump Agent counters. Safe to do here because we know this call is
+        // a brand-new row, not a redelivery.
         await tx.agent.upsert({
           where: { pubkey: call.agentPubkey },
           create: {
@@ -89,34 +131,6 @@ export class EventsService {
           },
         });
 
-        // Idempotent call insert — skip on PK conflict.
-        const existing = await tx.call.findUnique({
-          where: { callId: call.callId },
-          select: { callId: true },
-        });
-        if (existing) continue;
-
-        const { breach, breachReason } = outcomeToBreach(call.outcome);
-
-        await tx.call.create({
-          data: {
-            callId: call.callId,
-            agentPubkey: call.agentPubkey,
-            endpointSlug: call.endpointSlug,
-            premiumLamports: BigInt(call.premiumLamports),
-            refundLamports: BigInt(call.refundLamports),
-            latencyMs: call.latencyMs,
-            breach,
-            breachReason,
-            source: call.source ?? null,
-            ts: new Date(call.ts),
-            settledAt: new Date(call.settledAt),
-            signature: call.signature,
-          },
-        });
-        accepted++;
-
-        // Accumulate per-endpoint deltas for PoolState.
         const slot = perEndpoint.get(call.endpointSlug) ?? {
           premium: 0n,
           refund: 0n,
@@ -127,11 +141,12 @@ export class EventsService {
         perEndpoint.set(call.endpointSlug, slot);
       }
 
-      // Distribute totalFeesPaid (sum of shares amounts) across endpoints
-      // proportional to gross premiums in this batch. The settler only
-      // tells us total fees, not per-endpoint, so we apportion. This is a
-      // best-effort attribution; per-endpoint exact split would require
-      // settler to send per-call fee deltas (out of scope for now).
+      // TODO(settler): replace proportional fee attribution with exact
+      // per-call fee deltas once the settler emits them per-call. Today the
+      // settler only reports a batch-aggregate `shares` total, so we
+      // apportion fees across endpoints proportional to gross premiums in
+      // this batch. Last endpoint absorbs rounding remainder so totals
+      // reconcile.
       const totalFees = shares.reduce(
         (s, x) => s + BigInt(x.amountLamports),
         0n,
@@ -145,7 +160,6 @@ export class EventsService {
         const slugs = Array.from(perEndpoint.keys());
         slugs.forEach((slug, i) => {
           const slot = perEndpoint.get(slug)!;
-          // Last endpoint absorbs rounding remainder so totals reconcile.
           const fee =
             i === slugs.length - 1
               ? totalFees - feesAssigned
@@ -155,10 +169,8 @@ export class EventsService {
         });
       }
 
-      // Per-endpoint PoolState upserts. PoolState row exists only if its
-      // Endpoint row exists; if we receive a call for an unknown endpoint
-      // we skip the pool update (the endpoint reader/registrar is owned
-      // elsewhere). Currentbalance increments by (premium - refund - fees).
+      // PoolState upserts. Skip endpoints that have no registered Endpoint
+      // row — endpoint registration is owned elsewhere.
       for (const [slug, delta] of perEndpoint.entries()) {
         const endpointExists = await tx.endpoint.findUnique({
           where: { slug },
@@ -187,8 +199,52 @@ export class EventsService {
           },
         });
       }
-    });
 
-    return { accepted };
+      return { accepted: insertedCalls.length };
+    });
+  }
+
+  /**
+   * Insert a Call row, returning true if a brand-new row was created or
+   * false if this `callId` already existed (P2002 unique-constraint).
+   *
+   * We deliberately do NOT swallow other Prisma errors — they should bubble
+   * up and abort the surrounding transaction so aggregate updates roll back.
+   */
+  private async tryInsertCall(
+    tx: Prisma.TransactionClient,
+    call: WrapCallEventDto,
+  ): Promise<boolean> {
+    const { breach, breachReason } = outcomeToBreach(call.outcome);
+    try {
+      await tx.call.create({
+        data: {
+          callId: call.callId,
+          agentPubkey: call.agentPubkey,
+          endpointSlug: call.endpointSlug,
+          premiumLamports: BigInt(call.premiumLamports),
+          refundLamports: BigInt(call.refundLamports),
+          latencyMs: call.latencyMs,
+          breach,
+          breachReason,
+          source: call.source ?? null,
+          ts: new Date(call.ts),
+          settledAt: new Date(call.settledAt),
+          signature: call.signature,
+        },
+      });
+      return true;
+    } catch (err) {
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === "P2002"
+      ) {
+        this.logger.debug(
+          `duplicate call insert ignored callId=${call.callId} sig=${call.signature}`,
+        );
+        return false;
+      }
+      throw err;
+    }
   }
 }
