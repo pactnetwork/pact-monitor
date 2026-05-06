@@ -113,6 +113,32 @@ export const PROTOCOL_V1_ERRORS: Record<
     name: "InvalidFeeRecipientKind",
     message: "fee_recipient.kind byte is not 0/1/2.",
   },
+  // Codex 2026-05-05 review fixes (mainnet blocker class):
+  6027: {
+    name: "InvalidProtocolConfig",
+    message:
+      "Supplied ProtocolConfig is not the canonical [b\"protocol_config\"] PDA, or is not owned by this program.",
+  },
+  6028: {
+    name: "InvalidTreasury",
+    message:
+      "Supplied Treasury is not the canonical [b\"treasury\"] PDA, or is not owned by this program.",
+  },
+  6029: {
+    name: "MissingTreasuryEntry",
+    message:
+      "fee_recipients does not contain exactly one Treasury entry — Treasury must always be present.",
+  },
+  6030: {
+    name: "TreasuryBpsZero",
+    message:
+      "Treasury entry's bps is zero — Treasury must take a non-zero cut when present in the array.",
+  },
+  6031: {
+    name: "InvalidAffiliateAta",
+    message:
+      "An AffiliateAta destination is not a valid initialized SPL Token account on the protocol USDC mint, or otherwise fails the strict ATA invariants.",
+  },
 };
 
 /**
