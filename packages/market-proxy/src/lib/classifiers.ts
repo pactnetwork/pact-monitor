@@ -41,22 +41,41 @@ export const marketDefaultClassifier: Classifier = defaultClassifier;
  *     request), -32700 (parse error) → client_error, no premium
  *   - any other JSON-RPC error → client_error (conservative)
  *
- * If the response is not 200 or the body has no `error`, fall through to
- * the default rules.
+ * Latency check: any 2xx response (200, 201, 202, 204, ...) over the SLA
+ * is classified as `latency_breach` first — this matches the Birdeye /
+ * Jupiter classifiers (which use defaultClassifier directly) and prevents
+ * a slow-but-200 JSON-RPC error response from masking the SLA breach.
+ *
+ * If the response is not 2xx, or the body has no `error`, fall through
+ * to the default rules.
  */
 export function buildHeliusClassifier(
   getBody: () => unknown,
 ): Classifier {
   return composeWithDefault((input: ClassifierInput): ClassifierResult | null => {
     if (input.response === null) return null; // network error → default
-    if (input.response.status !== 200) return null; // HTTP-level → default
+
+    const status = input.response.status;
+    const flat = input.endpointConfig.flat_premium_lamports;
+    const imputed = input.endpointConfig.imputed_cost_lamports;
+
+    // Hoist the SLA latency check so it applies to ANY 2xx response, not
+    // just 200. Mirrors the default classifier's 2xx branch but runs BEFORE
+    // body inspection so a slow JSON-RPC-error response is still recorded
+    // as `latency_breach`.
+    if (status >= 200 && status <= 299) {
+      if (input.latencyMs > input.endpointConfig.sla_latency_ms) {
+        return { outcome: "latency_breach", premium: flat, refund: imputed };
+      }
+    } else {
+      // Non-2xx → defer entirely to default HTTP-status rules.
+      return null;
+    }
 
     const body = getBody() as { error?: { code?: number } } | null;
     if (!body || typeof body !== "object" || !body.error) return null;
 
     const code = body.error.code;
-    const flat = input.endpointConfig.flat_premium_lamports;
-    const imputed = input.endpointConfig.imputed_cost_lamports;
 
     if (code === -32603 || (typeof code === "number" && code <= -32000 && code >= -32099)) {
       return { outcome: "server_error", premium: flat, refund: imputed };

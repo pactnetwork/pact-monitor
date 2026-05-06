@@ -46,6 +46,38 @@ describe("Helius classifier (composed with default)", () => {
     expect(r.refund).toBe(50_000n);
   });
 
+  // Alan review H1: hoisted latency check applies to ANY 2xx, not just 200.
+  test.each([201, 202, 204])(
+    "%d (non-200 2xx) over SLA → latency_breach, refund",
+    (status) => {
+      const c = buildHeliusClassifier(() => null);
+      const r = c.classify({
+        response: new Response(status === 204 ? null : "{}", { status }),
+        latencyMs: 1500,
+        endpointConfig: baseEndpointConfig,
+      });
+      expect(r.outcome).toBe("latency_breach");
+      expect(r.premium).toBe(500n);
+      expect(r.refund).toBe(50_000n);
+    },
+  );
+
+  // Alan review H1: even a slow JSON-RPC error response surfaces as
+  // latency_breach (the SLA breach takes precedence over body inspection).
+  test("2xx over SLA with JSON-RPC error body → latency_breach (latency wins)", () => {
+    const c = buildHeliusClassifier(() => ({
+      jsonrpc: "2.0",
+      error: { code: -32603, message: "internal" },
+    }));
+    const r = c.classify({
+      response: new Response("{}", { status: 200 }),
+      latencyMs: 1500,
+      endpointConfig: baseEndpointConfig,
+    });
+    expect(r.outcome).toBe("latency_breach");
+    expect(r.refund).toBe(50_000n);
+  });
+
   test("5xx → server_error, refund (default rule)", () => {
     const c = buildHeliusClassifier(() => null);
     const r = c.classify({
