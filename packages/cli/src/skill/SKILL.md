@@ -20,22 +20,29 @@ pact --json https://api.helius.xyz/v0/addresses/abc/balances
 | `ok` | call succeeded, use `.body` |
 | `client_error` | YOUR request was wrong (4xx). Don't retry; surface to user |
 | `server_error` | upstream failed. Refund auto-issued. Retry once if idempotent |
-| `needs_funding` | wallet needs USDC. Run `pact deposit 1` if cap allows; else surface |
+| `needs_funding` | agent's USDC ATA balance is insufficient OR no allowance granted. Run `pact approve <amount>` if cap allows; else surface |
 | `auto_deposit_capped` | hit policy cap; surface `.session_used_usdc`/`.session_max_usdc` |
 | `endpoint_paused` | provider disabled; pick another or wait |
 | `no_provider` | URL hostname unsupported; use `--raw` for uninsured |
 | `discovery_unreachable` | gateway unreachable; surface and stop |
 | `signature_rejected` | clock skew; tell user to sync NTP |
 
+## Custody model
+
+Pact uses SPL Token delegation, not a deposit-into-program model. Your USDC stays in your own associated token account (ATA). You grant the protocol's SettlementAuthority a fixed allowance with `pact approve <usdc>`; the protocol debits premiums from your ATA up to that allowance during settlement. You retain control of the funds at all times — `pact revoke` removes the allowance instantly.
+
+Agents must fund their own ATA externally (Circle faucet on devnet; bridge or transfer on mainnet). `pact approve` does NOT move USDC; it only sets the delegation.
+
 ## Self-funding policy
 
-You may run `pact deposit <amount>` automatically as long as `<amount> <= per_deposit_max_usdc` AND your session total stays under `session_total_max_usdc`. Both caps live in `~/.config/pact/<project>/policy.yaml`. If `auto_deposit_capped` returns, surface to the user.
+You may run `pact approve <amount>` automatically as long as `<amount> <= per_deposit_max_usdc` AND your session total stays under `session_total_max_usdc`. Both caps live in `~/.config/pact/<project>/policy.yaml`. If `auto_deposit_capped` returns, surface to the user.
 
 ## Useful commands
 
-- `pact balance --json` — check your project's wallet
+- `pact balance --json` — reports both ATA balance and granted allowance
 - `pact agents show --json` — see recent calls + refunds
-- `pact deposit <usdc> --json` — top up
+- `pact approve <usdc> --json` — grant SPL Token allowance to SettlementAuthority
+- `pact revoke --json` — remove the allowance
 
 ## Critical rules
 
