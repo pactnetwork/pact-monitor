@@ -139,6 +139,12 @@ export const PROTOCOL_V1_ERRORS: Record<
     message:
       "An AffiliateAta destination is not a valid initialized SPL Token account on the protocol USDC mint, or otherwise fails the strict ATA invariants.",
   },
+  // Mainnet kill-switch (added 2026-05-06 alongside `pause_protocol`):
+  6032: {
+    name: "ProtocolPaused",
+    message:
+      "Protocol kill switch is engaged — settle_batch is refusing all events until ProtocolConfig.paused is cleared via pause_protocol(0).",
+  },
 };
 
 /**

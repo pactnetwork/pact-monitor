@@ -12,6 +12,8 @@ const EXPECTED_CODES = [
   6015, 6016, 6017, 6018, 6019, 6020, 6021, 6022, 6023, 6024, 6025, 6026,
   // codex 2026-05-05 review fixes:
   6027, 6028, 6029, 6030, 6031,
+  // mainnet kill-switch (2026-05-06):
+  6032,
 ];
 
 describe("error decoder", () => {

@@ -412,6 +412,18 @@ export interface ProtocolConfig {
   usdcMint: Pubkey;
   maxTotalFeeBps: number;
   defaultFeeRecipientCount: number;
+  /**
+   * Global kill switch — `0` = unpaused (normal), non-zero = paused.
+   *
+   * When paused, the on-chain `settle_batch` handler rejects every batch with
+   * `PactError::ProtocolPaused (6032)` before any per-event processing runs.
+   * Mutated by the `pause_protocol` instruction (mainnet ops kill switch).
+   *
+   * Byte offset 75 — repurposed from the former `_padding1[0]`. Pre-existing
+   * accounts initialised before this field was added read back as `0`
+   * (unpaused) since padding was zero-filled.
+   */
+  paused: number;
   defaultFeeRecipients: FeeRecipient[];
 }
 
@@ -425,7 +437,8 @@ export interface ProtocolConfig {
  *   40..72:  usdc_mint Pubkey
  *   72..74:  max_total_fee_bps u16
  *   74:      default_fee_recipient_count u8
- *   75..80:  _padding1
+ *   75:      paused u8 (was former _padding1[0]; 0 = unpaused, non-zero = paused)
+ *   76..80:  _padding1 (4 bytes)
  *   80..464: default_fee_recipients [FeeRecipient;8]
  */
 export function decodeProtocolConfig(
@@ -444,6 +457,7 @@ export function decodeProtocolConfig(
     usdcMint: readPubkey(bytes, 40),
     maxTotalFeeBps: view.getUint16(72, true),
     defaultFeeRecipientCount: count,
+    paused: bytes[75],
     defaultFeeRecipients: decodeFeeRecipientArray(bytes, 80, count),
   };
 }

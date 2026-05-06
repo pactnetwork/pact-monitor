@@ -275,6 +275,7 @@ describe("state decoders — round-trip on hand-rolled byte buffers", () => {
     writePubkey(buf, 40, mint);
     view.setUint16(72, 3000, true); // max_total_fee_bps
     buf[74] = 2; // count
+    // byte 75 = paused (left zero)
     encodeFeeRecipient(buf, 80, FeeRecipientKind.Treasury, treasury, 1000);
     encodeFeeRecipient(buf, 80 + FEE_RECIPIENT_LEN, FeeRecipientKind.AffiliateAta, aff, 500);
 
@@ -284,6 +285,7 @@ describe("state decoders — round-trip on hand-rolled byte buffers", () => {
     expect(pc.usdcMint).toBe(mint.toBase58());
     expect(pc.maxTotalFeeBps).toBe(3000);
     expect(pc.defaultFeeRecipientCount).toBe(2);
+    expect(pc.paused).toBe(0);
     expect(pc.defaultFeeRecipients).toHaveLength(2);
     expect(pc.defaultFeeRecipients[0].kind).toBe(FeeRecipientKind.Treasury);
     expect(pc.defaultFeeRecipients[0].destination).toBe(treasury.toBase58());
@@ -291,6 +293,59 @@ describe("state decoders — round-trip on hand-rolled byte buffers", () => {
     expect(pc.defaultFeeRecipients[1].kind).toBe(FeeRecipientKind.AffiliateAta);
     expect(pc.defaultFeeRecipients[1].destination).toBe(aff.toBase58());
     expect(pc.defaultFeeRecipients[1].bps).toBe(500);
+  });
+
+  test("decodeProtocolConfig reads paused=1 from byte 75", () => {
+    // Mainnet kill-switch flag was repurposed from former _padding1[0] —
+    // byte offset 75 (after bump+pad+authority+mint+max_total_fee_bps+count).
+    const buf = new Uint8Array(PROTOCOL_CONFIG_LEN);
+    const view = new DataView(buf.buffer);
+    buf[0] = 200;
+    writePubkey(buf, 8, Keypair.generate().publicKey);
+    writePubkey(buf, 40, Keypair.generate().publicKey);
+    view.setUint16(72, 3000, true);
+    buf[74] = 0; // count = 0
+    buf[75] = 1; // paused engaged
+    // default_fee_recipients still starts at 80 (must NOT have shifted).
+
+    const pc = decodeProtocolConfig(buf);
+    expect(pc.paused).toBe(1);
+    expect(pc.defaultFeeRecipientCount).toBe(0);
+    expect(pc.defaultFeeRecipients).toHaveLength(0);
+  });
+
+  test("decodeProtocolConfig reads paused=0 from byte 75 (default)", () => {
+    const buf = new Uint8Array(PROTOCOL_CONFIG_LEN);
+    buf[0] = 200;
+    writePubkey(buf, 8, Keypair.generate().publicKey);
+    writePubkey(buf, 40, Keypair.generate().publicKey);
+    buf[74] = 0;
+    buf[75] = 0; // explicitly unpaused
+
+    const pc = decodeProtocolConfig(buf);
+    expect(pc.paused).toBe(0);
+  });
+
+  test("decodeProtocolConfig: paused byte does not shift default_fee_recipients offset", () => {
+    // The `paused` field was repurposed from former _padding1[0] specifically
+    // so default_fee_recipients still starts at byte offset 80. Confirm an
+    // entry at offset 80 still decodes correctly even when paused=1.
+    const buf = new Uint8Array(PROTOCOL_CONFIG_LEN);
+    const view = new DataView(buf.buffer);
+    const dest = Keypair.generate().publicKey;
+    buf[0] = 1;
+    writePubkey(buf, 8, Keypair.generate().publicKey);
+    writePubkey(buf, 40, Keypair.generate().publicKey);
+    view.setUint16(72, 3000, true);
+    buf[74] = 1; // count = 1
+    buf[75] = 1; // paused = 1
+    encodeFeeRecipient(buf, 80, FeeRecipientKind.Treasury, dest, 1000);
+
+    const pc = decodeProtocolConfig(buf);
+    expect(pc.paused).toBe(1);
+    expect(pc.defaultFeeRecipientCount).toBe(1);
+    expect(pc.defaultFeeRecipients[0].destination).toBe(dest.toBase58());
+    expect(pc.defaultFeeRecipients[0].bps).toBe(1000);
   });
 
   test("decoders reject buffers that are too short", () => {

@@ -24,6 +24,7 @@ import {
   DISC_INITIALIZE_SETTLEMENT_AUTHORITY,
   DISC_INITIALIZE_TREASURY,
   DISC_PAUSE_ENDPOINT,
+  DISC_PAUSE_PROTOCOL,
   DISC_REGISTER_ENDPOINT,
   DISC_SETTLE_BATCH,
   DISC_TOP_UP_COVERAGE_POOL,
@@ -32,6 +33,7 @@ import {
   PROGRAM_ID,
   TOKEN_PROGRAM_ID,
 } from "./constants.js";
+import { getProtocolConfigPda } from "./pda.js";
 import {
   FeeRecipient,
   FeeRecipientKind,
@@ -518,6 +520,58 @@ export function buildPauseEndpointIx(
 }
 
 // ---------------------------------------------------------------------------
+// pause_protocol (disc 15) — global kill switch
+// ---------------------------------------------------------------------------
+
+export interface BuildPauseProtocolOpts {
+  /** Override for the V1 program ID. Defaults to `PROGRAM_ID`. */
+  programId?: PublicKey;
+  /** ProtocolConfig.authority — the only key allowed to flip the flag. */
+  authority: PublicKey;
+  /**
+   * Desired paused state. `true` / non-zero number = pause, `false` / `0` = unpause.
+   * The on-chain handler stores the byte verbatim; any non-zero value engages the
+   * kill switch. Operators should always send `0` or `1`.
+   */
+  paused: boolean | number;
+}
+
+/**
+ * Builds the `pause_protocol` instruction (mainnet kill switch).
+ *
+ * When `paused != 0`, every subsequent `settle_batch` returns
+ * `PactError::ProtocolPaused (6032)` before any per-event work — the entire
+ * settlement pipeline halts until this same instruction is called again with
+ * `paused = 0`.
+ *
+ * Accounts (per `src/instructions/pause_protocol.rs`):
+ *   0. authority         signer; must equal ProtocolConfig.authority
+ *   1. protocol_config   writable; canonical [b"protocol_config"] PDA
+ *
+ * Data: [disc=15][paused:u8] (2 bytes total).
+ */
+export function buildPauseProtocolIx(
+  opts: BuildPauseProtocolOpts
+): TransactionInstruction {
+  const programId = opts.programId ?? PROGRAM_ID;
+  const pausedByte =
+    typeof opts.paused === "boolean"
+      ? opts.paused
+        ? 1
+        : 0
+      : opts.paused & 0xff;
+  const [protocolConfig] = getProtocolConfigPda(programId);
+  return new TransactionInstruction({
+    programId,
+    keys: [
+      { pubkey: opts.authority, isSigner: true, isWritable: false },
+      { pubkey: protocolConfig, isSigner: false, isWritable: true },
+    ],
+    data: Buffer.from([DISC_PAUSE_PROTOCOL, pausedByte]),
+  });
+}
+
+// ---------------------------------------------------------------------------
 // top_up_coverage_pool (disc 9)
 // ---------------------------------------------------------------------------
 
@@ -678,6 +732,15 @@ export interface SettleBatchParams {
   /** Must equal SettlementAuthority.signer. */
   settler: PublicKey;
   settlementAuthority: PublicKey;
+  /**
+   * Canonical ProtocolConfig PDA (`[b"protocol_config"]`). Sits at fixed
+   * account index 4 — the on-chain handler reads `paused` here before any
+   * per-event work runs and rejects the entire batch with
+   * `PactError::ProtocolPaused (6032)` if the kill switch is engaged. Pre-derive
+   * via `getProtocolConfigPda(programId)`; supplying any other key fails the
+   * `verify_protocol_config` PDA check.
+   */
+  protocolConfig: PublicKey;
   events: SettlementEvent[];
   /**
    * Per-event CallRecord PDAs. If omitted, the builder will require the caller
@@ -693,11 +756,15 @@ export const SETTLE_EVENT_BYTES = 104;
  * Builds the `settle_batch` instruction.
  *
  * Account layout (must match `src/instructions/settle_batch.rs`):
- *   Fixed prefix (4):
+ *   Fixed prefix (5):
  *     0. settler_signer
  *     1. settlement_authority PDA
  *     2. token_program
  *     3. system_program
+ *     4. protocol_config PDA — readonly canonical [b"protocol_config"];
+ *        on-chain handler reads `paused` here and rejects the entire batch
+ *        with `PactError::ProtocolPaused (6032)` before any per-event work.
+ *        (Mainnet kill-switch addition, 2026-05-06.)
  *   Per event (5 + N where N = endpoint.fee_recipient_count):
  *     0. call_record PDA
  *     1. coverage_pool PDA
@@ -757,6 +824,7 @@ export function buildSettleBatchIx(
     { pubkey: p.settlementAuthority, isSigner: false, isWritable: false },
     { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
     { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    { pubkey: p.protocolConfig, isSigner: false, isWritable: false },
   ];
 
   for (let i = 0; i < events.length; i++) {

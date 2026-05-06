@@ -6,6 +6,7 @@ import {
   DISC_INITIALIZE_SETTLEMENT_AUTHORITY,
   DISC_INITIALIZE_TREASURY,
   DISC_PAUSE_ENDPOINT,
+  DISC_PAUSE_PROTOCOL,
   DISC_REGISTER_ENDPOINT,
   DISC_SETTLE_BATCH,
   DISC_TOP_UP_COVERAGE_POOL,
@@ -20,6 +21,7 @@ import {
   buildInitializeSettlementAuthorityIx,
   buildInitializeTreasuryIx,
   buildPauseEndpointIx,
+  buildPauseProtocolIx,
   buildRegisterEndpointIx,
   buildRevokeIx,
   buildSettleBatchIx,
@@ -29,7 +31,7 @@ import {
   SETTLE_EVENT_BYTES,
 } from "../src/instructions.js";
 import { FeeRecipientKind } from "../src/state.js";
-import { slugBytes } from "../src/pda.js";
+import { getProtocolConfigPda, slugBytes } from "../src/pda.js";
 
 const newPk = () => Keypair.generate().publicKey;
 
@@ -418,6 +420,7 @@ describe("instruction builders — discriminator + payload bytes", () => {
   test("buildSettleBatchIx encodes per-event payload + ordered accounts", () => {
     const settler = newPk();
     const sa = newPk();
+    const [protocolConfig] = getProtocolConfigPda(PROGRAM_ID);
     const callId = new Uint8Array(16).fill(0xab);
     const slug = slugBytes("openai");
     const agentOwner = newPk();
@@ -431,6 +434,7 @@ describe("instruction builders — discriminator + payload bytes", () => {
     const ix = buildSettleBatchIx({
       settler,
       settlementAuthority: sa,
+      protocolConfig,
       events: [
         {
           callId,
@@ -472,31 +476,83 @@ describe("instruction builders — discriminator + payload bytes", () => {
     expect(ix.data[off + 85]).toBe(1); // fee_recipient_count_hint
     expect(ix.data.readBigInt64LE(off + 92)).toBe(1714000000n);
 
-    // Account ordering: 4 fixed prefix + 5 per-event + 1 fee ATA.
-    expect(ix.keys).toHaveLength(4 + 5 + 1);
+    // Account ordering: 5 fixed prefix (incl. ProtocolConfig at idx 4) +
+    // 5 per-event + 1 fee ATA.
+    expect(ix.keys).toHaveLength(5 + 5 + 1);
     expect(ix.keys[0].pubkey.equals(settler)).toBe(true);
     expect(ix.keys[0].isSigner).toBe(true);
     expect(ix.keys[1].pubkey.equals(sa)).toBe(true);
     expect(ix.keys[1].isWritable).toBe(false);
     expect(ix.keys[2].pubkey.equals(TOKEN_PROGRAM_ID)).toBe(true);
     expect(ix.keys[3].pubkey.equals(SystemProgram.programId)).toBe(true);
-    expect(ix.keys[4].pubkey.equals(callRecordPda)).toBe(true);
-    expect(ix.keys[5].pubkey.equals(coveragePool)).toBe(true);
-    expect(ix.keys[6].pubkey.equals(poolVault)).toBe(true);
-    expect(ix.keys[7].pubkey.equals(endpointConfig)).toBe(true);
-    expect(ix.keys[8].pubkey.equals(agentAta)).toBe(true);
-    expect(ix.keys[9].pubkey.equals(treasuryAta)).toBe(true);
+    // Index 4 = ProtocolConfig PDA (mainnet kill-switch addition 2026-05-06).
+    expect(ix.keys[4].pubkey.equals(protocolConfig)).toBe(true);
+    expect(ix.keys[4].isSigner).toBe(false);
+    expect(ix.keys[4].isWritable).toBe(false);
+    expect(ix.keys[5].pubkey.equals(callRecordPda)).toBe(true);
+    expect(ix.keys[6].pubkey.equals(coveragePool)).toBe(true);
+    expect(ix.keys[7].pubkey.equals(poolVault)).toBe(true);
+    expect(ix.keys[8].pubkey.equals(endpointConfig)).toBe(true);
+    expect(ix.keys[9].pubkey.equals(agentAta)).toBe(true);
+    expect(ix.keys[10].pubkey.equals(treasuryAta)).toBe(true);
   });
 
   test("buildSettleBatchIx mismatched callRecordPdas count throws", () => {
+    const [protocolConfig] = getProtocolConfigPda(PROGRAM_ID);
     expect(() =>
       buildSettleBatchIx({
         settler: newPk(),
         settlementAuthority: newPk(),
+        protocolConfig,
         events: [],
         callRecordPdas: [newPk()],
       })
     ).toThrow();
+  });
+
+  test("buildPauseProtocolIx with paused=true encodes [15, 1] and 2 accounts", () => {
+    const authority = newPk();
+    const ix = buildPauseProtocolIx({ authority, paused: true });
+    expect(ix.programId.equals(PROGRAM_ID)).toBe(true);
+    expect(ix.data.length).toBe(2);
+    expect(ix.data[0]).toBe(DISC_PAUSE_PROTOCOL);
+    expect(ix.data[0]).toBe(15);
+    expect(ix.data[1]).toBe(1);
+    expect(ix.keys).toHaveLength(2);
+    // 0: authority signer, not writable.
+    expect(ix.keys[0].pubkey.equals(authority)).toBe(true);
+    expect(ix.keys[0].isSigner).toBe(true);
+    expect(ix.keys[0].isWritable).toBe(false);
+    // 1: ProtocolConfig PDA writable.
+    const [pc] = getProtocolConfigPda(PROGRAM_ID);
+    expect(ix.keys[1].pubkey.equals(pc)).toBe(true);
+    expect(ix.keys[1].isSigner).toBe(false);
+    expect(ix.keys[1].isWritable).toBe(true);
+  });
+
+  test("buildPauseProtocolIx with paused=false encodes [15, 0]", () => {
+    const ix = buildPauseProtocolIx({ authority: newPk(), paused: false });
+    expect(ix.data[0]).toBe(DISC_PAUSE_PROTOCOL);
+    expect(ix.data[1]).toBe(0);
+  });
+
+  test("buildPauseProtocolIx accepts a number for paused (1 = pause)", () => {
+    const ix = buildPauseProtocolIx({ authority: newPk(), paused: 1 });
+    expect(ix.data[1]).toBe(1);
+    const ix0 = buildPauseProtocolIx({ authority: newPk(), paused: 0 });
+    expect(ix0.data[1]).toBe(0);
+  });
+
+  test("buildPauseProtocolIx custom programId derives matching ProtocolConfig PDA", () => {
+    const custom = new PublicKey("11111111111111111111111111111112");
+    const ix = buildPauseProtocolIx({
+      programId: custom,
+      authority: newPk(),
+      paused: true,
+    });
+    expect(ix.programId.equals(custom)).toBe(true);
+    const [expectedPda] = getProtocolConfigPda(custom);
+    expect(ix.keys[1].pubkey.equals(expectedPda)).toBe(true);
   });
 
   test("buildApproveIx targets SPL Token program with discriminator 4", () => {
