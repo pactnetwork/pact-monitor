@@ -26,6 +26,7 @@ export const DISC_SETTLE_BATCH = 10;
 export const DISC_INIT_PROTOCOL_CONFIG = 12;
 export const DISC_INIT_TREASURY = 13;
 export const DISC_UPDATE_FEE_RECIPIENTS = 14;
+export const DISC_PAUSE_PROTOCOL = 15;
 
 // FeeRecipientKind (from state.rs)
 export const FEE_KIND_TREASURY = 0;
@@ -449,6 +450,21 @@ export function buildUpdateFeeRecipients(args: {
   });
 }
 
+export function buildPauseProtocol(args: {
+  authority: PublicKey;
+  pcPda: PublicKey;
+  paused: number; // 0 = unpause, 1 = pause; arbitrary u8 accepted
+}): TransactionInstruction {
+  return new TransactionInstruction({
+    programId: PROGRAM_ID,
+    keys: [
+      { pubkey: args.authority, isSigner: true, isWritable: false },
+      { pubkey: args.pcPda, isSigner: false, isWritable: true },
+    ],
+    data: Buffer.from([DISC_PAUSE_PROTOCOL, args.paused & 0xff]),
+  });
+}
+
 export function buildPauseEndpoint(args: {
   authority: PublicKey;
   pcPda: PublicKey;
@@ -565,7 +581,12 @@ export function buildSettleBatch(
   settler: PublicKey,
   saPda: PublicKey,
   events: SettleEvent[],
+  pcPda?: PublicKey,
 ): TransactionInstruction {
+  // Default to the canonical ProtocolConfig PDA when caller doesn't supply
+  // an explicit one — covers every existing happy-path test that was written
+  // before the kill-switch landed.
+  const protocolConfig = pcPda ?? deriveProtocolConfig()[0];
   const data = Buffer.alloc(1 + 2 + events.length * SETTLE_EVENT_BYTES);
   data[0] = DISC_SETTLE_BATCH;
   new DataView(data.buffer).setUint16(1, events.length, true);
@@ -588,6 +609,7 @@ export function buildSettleBatch(
     { pubkey: saPda, isSigner: false, isWritable: false },
     { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
     { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    { pubkey: protocolConfig, isSigner: false, isWritable: false },
   ];
   for (const ev of events) {
     const [crPda] = deriveCallRecord(ev.callId);

@@ -6,6 +6,7 @@ import {
   registerSimpleEndpoint,
   setupSettlementAuthority,
   buildSettleBatch,
+  buildPauseProtocol,
   fundPoolDirect,
   generateKeypair,
   createTokenAccount,
@@ -519,6 +520,155 @@ test("exposure cap clamps refund: CallRecord marked ExposureCapClamped + actual_
   expect(readU64(cr, 80)).toBe(5_000n);
   // actual paid = 1000.
   expect(readU64(cr, 88)).toBe(1_000n);
+});
+
+// ---------------------------------------------------------------------------
+// Mainnet kill-switch: ProtocolConfig.paused gates settle_batch.
+// ---------------------------------------------------------------------------
+
+test("settle_batch rejects with ProtocolPaused when paused = 1", () => {
+  const base = setupProtocolAndTreasury(new LiteSVM());
+  const ep = registerSimpleEndpoint(base, "helius");
+  const settler = generateKeypair(base.svm);
+  const saPda = setupSettlementAuthority(base, settler);
+  const { agent, agentAta } = provisionAgent(base.svm, base.mint, saPda, 10_000_000n, 10_000_000n);
+  fundPoolDirect(base.svm, ep.poolPda, ep.poolVault, 5_000_000n);
+
+  // Engage the kill switch.
+  const pauseIx = buildPauseProtocol({
+    authority: base.authority.publicKey,
+    pcPda: base.pcPda,
+    paused: 1,
+  });
+  const pauseTx = new Transaction();
+  pauseTx.add(pauseIx);
+  pauseTx.recentBlockhash = base.svm.latestBlockhash();
+  pauseTx.feePayer = base.authority.publicKey;
+  pauseTx.sign(base.authority);
+  expect(base.svm.sendTransaction(pauseTx) instanceof FailedTransactionMetadata).toBe(false);
+
+  const balanceBefore = getTokenBalance(base.svm, agentAta);
+  const treasuryBefore = getTokenBalance(base.svm, base.treasuryVault);
+  const poolBefore = getTokenBalance(base.svm, ep.poolVault);
+
+  const callId = new Uint8Array(16).fill(90);
+  const now = Math.floor(Date.now() / 1000);
+  const ix = buildSettleBatch(settler.publicKey, saPda, [
+    {
+      callId,
+      agentOwner: agent.publicKey, agentAta,
+      endpointPda: ep.endpointPda, poolPda: ep.poolPda, poolVault: ep.poolVault, slug: ep.slug,
+      premium: 1_000n, refund: 0n, latencyMs: 50, breach: false, timestamp: now - 1,
+      feeRecipientAtas: [base.treasuryVault],
+    },
+  ]);
+  const tx = new Transaction();
+  tx.add(ix);
+  tx.recentBlockhash = base.svm.latestBlockhash();
+  tx.feePayer = settler.publicKey;
+  tx.sign(settler);
+  const result = base.svm.sendTransaction(tx);
+  expect(result instanceof FailedTransactionMetadata).toBe(true);
+
+  // Look for ProtocolPaused (custom 6032 = 0x1790) in the program logs.
+  // litesvm surfaces the custom error inside `meta().logs()` rather than the
+  // outer JSON, so search there.
+  if (result instanceof FailedTransactionMetadata) {
+    const logs = result.meta().logs().join("\n");
+    const has6032 = logs.includes("6032") || logs.includes("0x1790");
+    if (!has6032) {
+      console.log("PAUSED-REJECT logs:", logs);
+    }
+    expect(has6032).toBe(true);
+  }
+
+  // No balances moved (guard fires BEFORE per-event processing or transfers).
+  expect(getTokenBalance(base.svm, agentAta)).toBe(balanceBefore);
+  expect(getTokenBalance(base.svm, base.treasuryVault)).toBe(treasuryBefore);
+  expect(getTokenBalance(base.svm, ep.poolVault)).toBe(poolBefore);
+
+  // CallRecord MUST NOT have been created.
+  const [crPda] = deriveCallRecord(callId);
+  expect(getAccountData(base.svm, crPda)).toBeNull();
+});
+
+test("settle_batch resumes after pause -> unpause", () => {
+  const base = setupProtocolAndTreasury(new LiteSVM());
+  const ep = registerSimpleEndpoint(base, "helius");
+  const settler = generateKeypair(base.svm);
+  const saPda = setupSettlementAuthority(base, settler);
+  const { agent, agentAta } = provisionAgent(base.svm, base.mint, saPda, 10_000_000n, 10_000_000n);
+  fundPoolDirect(base.svm, ep.poolPda, ep.poolVault, 5_000_000n);
+
+  // Pause.
+  const pauseIx = buildPauseProtocol({
+    authority: base.authority.publicKey,
+    pcPda: base.pcPda,
+    paused: 1,
+  });
+  const pauseTx = new Transaction();
+  pauseTx.add(pauseIx);
+  pauseTx.recentBlockhash = base.svm.latestBlockhash();
+  pauseTx.feePayer = base.authority.publicKey;
+  pauseTx.sign(base.authority);
+  expect(base.svm.sendTransaction(pauseTx) instanceof FailedTransactionMetadata).toBe(false);
+
+  // First settle attempt: should fail.
+  const now = Math.floor(Date.now() / 1000);
+  const ix1 = buildSettleBatch(settler.publicKey, saPda, [
+    {
+      callId: new Uint8Array(16).fill(91),
+      agentOwner: agent.publicKey, agentAta,
+      endpointPda: ep.endpointPda, poolPda: ep.poolPda, poolVault: ep.poolVault, slug: ep.slug,
+      premium: 1_000n, refund: 0n, latencyMs: 50, breach: false, timestamp: now - 2,
+      feeRecipientAtas: [base.treasuryVault],
+    },
+  ]);
+  const t1 = new Transaction();
+  t1.add(ix1);
+  t1.recentBlockhash = base.svm.latestBlockhash();
+  t1.feePayer = settler.publicKey;
+  t1.sign(settler);
+  expect(base.svm.sendTransaction(t1) instanceof FailedTransactionMetadata).toBe(true);
+
+  // Unpause.
+  const unpauseIx = buildPauseProtocol({
+    authority: base.authority.publicKey,
+    pcPda: base.pcPda,
+    paused: 0,
+  });
+  const unpauseTx = new Transaction();
+  unpauseTx.add(unpauseIx);
+  unpauseTx.recentBlockhash = base.svm.latestBlockhash();
+  unpauseTx.feePayer = base.authority.publicKey;
+  unpauseTx.sign(base.authority);
+  expect(base.svm.sendTransaction(unpauseTx) instanceof FailedTransactionMetadata).toBe(false);
+
+  // Second settle attempt with a fresh call_id: succeeds.
+  const callId = new Uint8Array(16).fill(92);
+  const ix2 = buildSettleBatch(settler.publicKey, saPda, [
+    {
+      callId,
+      agentOwner: agent.publicKey, agentAta,
+      endpointPda: ep.endpointPda, poolPda: ep.poolPda, poolVault: ep.poolVault, slug: ep.slug,
+      premium: 1_000n, refund: 0n, latencyMs: 50, breach: false, timestamp: now - 1,
+      feeRecipientAtas: [base.treasuryVault],
+    },
+  ]);
+  const t2 = new Transaction();
+  t2.add(ix2);
+  t2.recentBlockhash = base.svm.latestBlockhash();
+  t2.feePayer = settler.publicKey;
+  t2.sign(settler);
+  const result2 = base.svm.sendTransaction(t2);
+  if (result2 instanceof FailedTransactionMetadata) {
+    console.log("UNPAUSE ERR logs:", result2.meta().logs());
+  }
+  expect(result2 instanceof FailedTransactionMetadata).toBe(false);
+
+  // CallRecord should now exist.
+  const [crPda] = deriveCallRecord(callId);
+  expect(getAccountData(base.svm, crPda)).not.toBeNull();
 });
 
 test("happy path: CallRecord settlement_status = Settled (0)", () => {
