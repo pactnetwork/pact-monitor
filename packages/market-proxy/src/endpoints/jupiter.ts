@@ -1,4 +1,8 @@
 import type { EndpointHandler } from "./types.js";
+import { buildUpstreamHeaders } from "./headers.js";
+
+// Jupiter is unauthenticated — no caller-supplied auth header is forwarded.
+const JUPITER_EXTRA_ALLOWED: ReadonlySet<string> = new Set();
 
 export const jupiterHandler: EndpointHandler = {
   async buildRequest(req: Request, upstreamBase: string): Promise<Request> {
@@ -6,9 +10,7 @@ export const jupiterHandler: EndpointHandler = {
     const upstreamUrl = new URL(url.pathname + url.search, upstreamBase);
     upstreamUrl.searchParams.delete("pact_wallet");
     upstreamUrl.searchParams.delete("demo_breach");
-    const headers = new Headers(req.headers);
-    headers.delete("host");
-    // Jupiter has no auth header requirement
+    const headers = buildUpstreamHeaders(req.headers, JUPITER_EXTRA_ALLOWED);
     return new Request(upstreamUrl.toString(), {
       method: req.method,
       headers,
