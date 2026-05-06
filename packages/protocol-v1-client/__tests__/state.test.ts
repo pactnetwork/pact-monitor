@@ -9,6 +9,7 @@ import {
   FeeRecipientKind,
   PROTOCOL_CONFIG_LEN,
   SETTLEMENT_AUTHORITY_LEN,
+  SettlementStatus,
   TREASURY_LEN,
   decodeCallRecord,
   decodeCoveragePool,
@@ -150,7 +151,8 @@ describe("state decoders — round-trip on hand-rolled byte buffers", () => {
     expect(ep.feeRecipients[0].destination).toBe(dest.toBase58());
   });
 
-  test("decodeCallRecord round-trip", () => {
+  test("decodeCallRecord round-trip (112-byte layout, codex-fix)", () => {
+    expect(CALL_RECORD_LEN).toBe(112);
     const buf = new Uint8Array(CALL_RECORD_LEN);
     const view = new DataView(buf.buffer);
     const callId = new Uint8Array(16).fill(0x42);
@@ -159,23 +161,74 @@ describe("state decoders — round-trip on hand-rolled byte buffers", () => {
 
     buf[0] = 252;
     buf[1] = 1; // breach
+    buf[2] = SettlementStatus.Settled; // settlement_status
+    // bytes 3..8 = _padding0
     buf.set(callId, 8);
     writePubkey(buf, 24, agent);
     buf.set(slug, 56);
-    view.setBigUint64(72, 5000n, true);
-    view.setBigUint64(80, 1000n, true);
-    view.setUint32(88, 3500, true);
-    view.setBigInt64(96, 1714000000n, true);
+    view.setBigUint64(72, 5000n, true); // premium
+    view.setBigUint64(80, 1000n, true); // refund (intended)
+    view.setBigUint64(88, 1000n, true); // actual_refund
+    view.setUint32(96, 3500, true);     // latency_ms
+    // bytes 100..104 = _padding1
+    view.setBigInt64(104, 1714000000n, true); // timestamp
 
     const cr = decodeCallRecord(buf);
     expect(cr.bump).toBe(252);
     expect(cr.breach).toBe(true);
+    expect(cr.settlementStatus).toBe(SettlementStatus.Settled);
     expect(Array.from(cr.callId)).toEqual(Array.from(callId));
     expect(cr.agent).toBe(agent.toBase58());
     expect(cr.premiumLamports).toBe(5000n);
     expect(cr.refundLamports).toBe(1000n);
+    expect(cr.actualRefundLamports).toBe(1000n);
     expect(cr.latencyMs).toBe(3500);
     expect(cr.timestamp).toBe(1714000000n);
+  });
+
+  test.each([
+    ["Settled", SettlementStatus.Settled],
+    ["DelegateFailed", SettlementStatus.DelegateFailed],
+    ["PoolDepleted", SettlementStatus.PoolDepleted],
+    ["ExposureCapClamped", SettlementStatus.ExposureCapClamped],
+  ])(
+    "decodeCallRecord round-trips SettlementStatus.%s",
+    (_name, status) => {
+      const buf = new Uint8Array(CALL_RECORD_LEN);
+      const view = new DataView(buf.buffer);
+      const agent = Keypair.generate().publicKey;
+      buf[0] = 100;
+      buf[1] = 1; // breach
+      buf[2] = status;
+      writePubkey(buf, 24, agent);
+      view.setBigUint64(72, 9999n, true);  // premium
+      view.setBigUint64(80, 4444n, true);  // refund (intended)
+      // PoolDepleted/ExposureCapClamped semantics: actual < refund
+      const actual =
+        status === SettlementStatus.PoolDepleted
+          ? 0n
+          : status === SettlementStatus.ExposureCapClamped
+            ? 1234n
+            : status === SettlementStatus.DelegateFailed
+              ? 0n
+              : 4444n;
+      view.setBigUint64(88, actual, true); // actual_refund
+      view.setUint32(96, 250, true);
+      view.setBigInt64(104, 1714000050n, true);
+
+      const cr = decodeCallRecord(buf);
+      expect(cr.settlementStatus).toBe(status);
+      expect(cr.refundLamports).toBe(4444n);
+      expect(cr.actualRefundLamports).toBe(actual);
+      expect(cr.premiumLamports).toBe(9999n);
+      expect(cr.timestamp).toBe(1714000050n);
+    }
+  );
+
+  test("decodeCallRecord rejects unknown settlement_status", () => {
+    const buf = new Uint8Array(CALL_RECORD_LEN);
+    buf[2] = 99; // not 0..=3
+    expect(() => decodeCallRecord(buf)).toThrow(/unknown settlement_status/);
   });
 
   test("decodeSettlementAuthority round-trip", () => {
