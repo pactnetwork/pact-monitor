@@ -64,6 +64,11 @@ pub enum PactError {
     /// the strict ATA invariants. Returned by register_endpoint and
     /// update_fee_recipients.
     InvalidAffiliateAta = 6031,
+    /// 6032 — global kill switch (`ProtocolConfig.paused != 0`) is engaged.
+    /// `settle_batch` returns this immediately, before any per-event work or
+    /// token transfer. Cleared by `pause_protocol(0)` from the protocol
+    /// authority. Mainnet-launch addition.
+    ProtocolPaused = 6032,
 }
 
 impl From<PactError> for ProgramError {
