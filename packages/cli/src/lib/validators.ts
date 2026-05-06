@@ -1,15 +1,23 @@
 import { InvalidArgumentError } from "commander";
 
-// v0.1.0 ships devnet-only. Mainnet is gated to the Friday harden pass.
-// Both --cluster and PACT_CLUSTER flow through this validator so mainnet is
-// rejected before any wallet, RPC, or signing side effects (B2).
-export function validateClusterStrict(value: string): "devnet" {
-  if (value !== "devnet") {
-    throw new InvalidArgumentError(
-      `--cluster ${value} not supported in v0.1.0; only 'devnet' is allowed (mainnet gated to Friday harden)`,
-    );
+// Tonight's mainnet launch ships closed-beta access. Mainnet is gated behind
+// PACT_MAINNET_ENABLED=1 so a default build cannot accidentally route real
+// USDC through the production program. devnet stays open. validators below
+// short-circuit invalid input to a `client_error` envelope before any RPC
+// or signing side effect.
+export function validateClusterStrict(value: string): "devnet" | "mainnet" {
+  if (value === "devnet") return "devnet";
+  if (value === "mainnet") {
+    if (process.env.PACT_MAINNET_ENABLED !== "1") {
+      throw new InvalidArgumentError(
+        "--cluster mainnet requires PACT_MAINNET_ENABLED=1 (closed beta gate)",
+      );
+    }
+    return "mainnet";
   }
-  return "devnet";
+  throw new InvalidArgumentError(
+    `--cluster ${value} not supported; choose 'devnet' or 'mainnet'`,
+  );
 }
 
 // Commander coercer: accept only finite, strictly-positive floats. Rejects

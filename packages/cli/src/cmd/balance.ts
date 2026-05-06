@@ -4,11 +4,7 @@ import {
   getSettlementAuthorityPda,
 } from "@pact-network/protocol-v1-client";
 import { loadOrCreateWallet } from "../lib/wallet.ts";
-import {
-  USDC_DEVNET_MINT,
-  USDC_MAINNET_MINT,
-  PACT_NETWORK_V1_PROGRAM_ID,
-} from "../lib/solana.ts";
+import { resolveClusterConfig } from "../lib/solana.ts";
 import type { Envelope } from "../lib/envelope.ts";
 
 export async function balanceCommand(opts: {
@@ -16,10 +12,13 @@ export async function balanceCommand(opts: {
   rpcUrl: string;
   cluster: "devnet" | "mainnet";
 }): Promise<Envelope> {
+  const cfg = resolveClusterConfig(opts.cluster);
+  if ("error" in cfg) {
+    return { status: "client_error", body: { error: cfg.error } };
+  }
   const wallet = loadOrCreateWallet({ configDir: opts.configDir });
   const conn = new Connection(opts.rpcUrl, "confirmed");
-  const mint = opts.cluster === "devnet" ? USDC_DEVNET_MINT : USDC_MAINNET_MINT;
-  const programId = PACT_NETWORK_V1_PROGRAM_ID;
+  const { programId, mint } = cfg;
   const [settlementAuthorityPda] = getSettlementAuthorityPda(programId);
 
   const owner = new PublicKey(wallet.keypair.publicKey.toBase58());

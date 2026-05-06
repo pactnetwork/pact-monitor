@@ -21,10 +21,10 @@ import { initCommand } from "./cmd/init.ts";
 const VERSION = "0.1.0";
 const DEFAULT_GATEWAY = process.env.PACT_GATEWAY_URL ?? "https://market.pactnetwork.io";
 const DEFAULT_RPC = process.env.PACT_RPC_URL ?? "https://api.devnet.solana.com";
-// v0.1.0 is devnet-only; mainnet is gated to the Friday harden pass (B2).
-// Both --cluster and PACT_CLUSTER are validated through validateClusterStrict
-// so an invalid value short-circuits to a client_error envelope before any
-// wallet/RPC side effects.
+// devnet is the default. mainnet is gated behind PACT_MAINNET_ENABLED=1 for
+// the closed-beta launch — see validateClusterStrict. Both --cluster and
+// PACT_CLUSTER flow through that validator so a closed gate short-circuits
+// to a client_error envelope before any wallet/RPC side effect.
 const DEFAULT_CLUSTER = "devnet" as const;
 
 function configDirFor(projectName: string): string {
@@ -90,7 +90,12 @@ program
   .option("--project <name>", "explicit project name (overrides env/git)")
   .option("--gateway <url>", "override gateway URL", DEFAULT_GATEWAY)
   .option("--rpc <url>", "override Solana RPC URL", DEFAULT_RPC)
-  .option("--cluster <c>", "devnet only in v0.1.0", validateClusterStrict, DEFAULT_CLUSTER);
+  .option(
+    "--cluster <c>",
+    "devnet (default) or mainnet (requires PACT_MAINNET_ENABLED=1 + PACT_MAINNET_PROGRAM_ID)",
+    validateClusterStrict,
+    DEFAULT_CLUSTER,
+  );
 
 // Route commander parse errors (invalid --cluster, unknown options, missing
 // args, etc.) through emit() as client_error envelopes so --json consumers

@@ -6,11 +6,7 @@ import {
   getSettlementAuthorityPda,
 } from "@pact-network/protocol-v1-client";
 import { loadOrCreateWallet } from "../lib/wallet.ts";
-import {
-  USDC_DEVNET_MINT,
-  USDC_MAINNET_MINT,
-  PACT_NETWORK_V1_PROGRAM_ID,
-} from "../lib/solana.ts";
+import { resolveClusterConfig } from "../lib/solana.ts";
 import {
   loadOrCreatePolicy,
   canAutoDeposit,
@@ -20,10 +16,6 @@ import type { Envelope } from "../lib/envelope.ts";
 
 type SubmitResult = { tx_signature: string; confirmation_pending: boolean };
 
-function mintFor(cluster: "devnet" | "mainnet") {
-  return cluster === "devnet" ? USDC_DEVNET_MINT : USDC_MAINNET_MINT;
-}
-
 export async function approveCommand(opts: {
   amountUsdc: number;
   configDir: string;
@@ -31,6 +23,10 @@ export async function approveCommand(opts: {
   cluster: "devnet" | "mainnet";
   submitApprove?: (allowanceLamports: bigint) => Promise<SubmitResult>;
 }): Promise<Envelope> {
+  const cfg = resolveClusterConfig(opts.cluster);
+  if ("error" in cfg) {
+    return { status: "client_error", body: { error: cfg.error } };
+  }
   const wallet = loadOrCreateWallet({ configDir: opts.configDir });
 
   const policy = loadOrCreatePolicy({ configDir: opts.configDir });
@@ -58,9 +54,8 @@ export async function approveCommand(opts: {
     opts.submitApprove ??
     (async (lamports: bigint): Promise<SubmitResult> => {
       const conn = new Connection(opts.rpcUrl, "confirmed");
-      const mint = mintFor(opts.cluster);
-      const ata = deriveAssociatedTokenAccount(wallet.keypair.publicKey, mint);
-      const [pda] = getSettlementAuthorityPda(PACT_NETWORK_V1_PROGRAM_ID);
+      const ata = deriveAssociatedTokenAccount(wallet.keypair.publicKey, cfg.mint);
+      const [pda] = getSettlementAuthorityPda(cfg.programId);
       const ix = buildApproveIx({
         agentAta: ata,
         settlementAuthorityPda: pda,
@@ -97,14 +92,17 @@ export async function revokeCommand(opts: {
   cluster: "devnet" | "mainnet";
   submitRevoke?: () => Promise<SubmitResult>;
 }): Promise<Envelope> {
+  const cfg = resolveClusterConfig(opts.cluster);
+  if ("error" in cfg) {
+    return { status: "client_error", body: { error: cfg.error } };
+  }
   const wallet = loadOrCreateWallet({ configDir: opts.configDir });
 
   const submit =
     opts.submitRevoke ??
     (async (): Promise<SubmitResult> => {
       const conn = new Connection(opts.rpcUrl, "confirmed");
-      const mint = mintFor(opts.cluster);
-      const ata = deriveAssociatedTokenAccount(wallet.keypair.publicKey, mint);
+      const ata = deriveAssociatedTokenAccount(wallet.keypair.publicKey, cfg.mint);
       const ix = buildRevokeIx({
         agentAta: ata,
         agentOwner: wallet.keypair.publicKey,
