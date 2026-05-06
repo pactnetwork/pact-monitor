@@ -27,17 +27,17 @@ describe("BatcherService", () => {
     vi.useRealTimers();
   });
 
-  it("does not flush with 49 messages", async () => {
+  it("does not flush below MAX_BATCH_SIZE messages", async () => {
     for (let i = 0; i < MAX_BATCH_SIZE - 1; i++) {
       service.push(makeMessage(i));
     }
-    // Do NOT advance time — 5s has not passed, 50th message has not arrived
+    // Do NOT advance time — 5s has not passed, MAX_BATCH_SIZE-th message has not arrived
     await Promise.resolve();
     expect(flushed).toHaveLength(0);
-    expect(service.pendingCount).toBe(49);
+    expect(service.pendingCount).toBe(MAX_BATCH_SIZE - 1);
   });
 
-  it("flushes when 50th message arrives (size-based)", async () => {
+  it("flushes when MAX_BATCH_SIZE-th message arrives (size-based)", async () => {
     for (let i = 0; i < MAX_BATCH_SIZE; i++) {
       service.push(makeMessage(i));
     }

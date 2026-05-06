@@ -41,6 +41,7 @@
 import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import {
+  ComputeBudgetProgram,
   Connection,
   Keypair,
   PublicKey,
@@ -238,8 +239,31 @@ export class SubmitterService implements OnModuleInit {
       callRecordPdas,
     });
 
+    // Compute-budget instructions are mandatory for settle_batch. Each event
+    // performs 1 SPL Token Transfer (premium-in) + 1-9 SPL Token Transfers
+    // (fee fan-out + optional refund) + 1 CallRecord init. The default 200k
+    // CU/tx limit is exceeded after ~3 events with 1 fee recipient. The
+    // priority-fee floor keeps txs landing during devnet/mainnet congestion.
+    //
+    // Sized for the 5-event MAX_BATCH_SIZE cap with up to 8 fee recipients
+    // each: ~5 × 5 ix × ~20k CU ≈ 500k headroom; doubled to 1_000_000 for
+    // safety. Tune downward once we have measured CU per event from
+    // surfpool/devnet logs.
+    const computeUnitLimitIx = ComputeBudgetProgram.setComputeUnitLimit({
+      units: 1_000_000,
+    });
+    // 5_000 microlamports/CU = 5 lamports/CU. At 1M CU that's 5_000 lamports
+    // priority fee per tx — negligible on devnet, modest on mainnet. Tune via
+    // recent-fees RPC in V2.
+    const computeUnitPriceIx = ComputeBudgetProgram.setComputeUnitPrice({
+      microLamports: 5_000,
+    });
+
     const signature = await this.sendWithRetry(async () => {
-      const tx = new Transaction().add(ix);
+      const tx = new Transaction()
+        .add(computeUnitLimitIx)
+        .add(computeUnitPriceIx)
+        .add(ix);
       return sendAndConfirmTransaction(this.connection, tx, [keypair], {
         commitment: "confirmed",
       });

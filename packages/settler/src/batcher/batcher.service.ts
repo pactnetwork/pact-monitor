@@ -1,7 +1,21 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { SettleMessage } from "../consumer/consumer.service";
 
-export const MAX_BATCH_SIZE = 50;
+/**
+ * Maximum events per batch.
+ *
+ * **Hard ceiling for v1**: 5. Each event reads ≥7 accounts (callRecord, pool,
+ * poolVault, endpoint, agentAta + up to 8 fee-recipient ATAs) plus a 104-byte
+ * SettlementEvent payload. With pubkeys serialised inline (no Address Lookup
+ * Tables yet), the legacy v0 1232-byte tx limit caps a realistic 1-3 fee-
+ * recipient batch at ~5 events. Pushing past this risks `Transaction too
+ * large` at submit time, which nack-loops the batch on Pub/Sub.
+ *
+ * Tuning lever for V2: integrate Address Lookup Tables (each pubkey shrinks
+ * from 32 bytes to 1 byte) so a 50-event batch fits comfortably. Until then
+ * keep this conservative.
+ */
+export const MAX_BATCH_SIZE = 5;
 export const FLUSH_INTERVAL_MS = 5000;
 
 export interface SettleBatch {
