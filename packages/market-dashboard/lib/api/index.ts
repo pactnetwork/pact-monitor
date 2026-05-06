@@ -1,10 +1,31 @@
 /**
  * Public data-access surface for the dashboard.
  *
- * Currently re-exports the in-memory mock until the indexer's Step D #59 work
- * lands real HTTP endpoints. Swap targets are documented in MOCK_API.md.
+ * Switches between the in-memory `./mock` fixture and the real indexer-backed
+ * `./real` fetchers based on `NEXT_PUBLIC_INDEXER_URL`:
+ *
+ *   - unset  → use mocks (local dev, Vercel previews without an indexer URL)
+ *   - set    → fetch from `${NEXT_PUBLIC_INDEXER_URL}/api/...`
+ *
+ * The env is read at module-load time. Next.js inlines `NEXT_PUBLIC_*` values
+ * at build, so toggling between mock and real requires a rebuild — by design.
+ *
+ * See `./real.ts` for wire-shape gaps; the homepage renders cleanly under
+ * either backend.
  */
-export { fetchStats, fetchCalls, fetchCall, fetchEndpoints, fetchAgent } from "./mock";
+import * as mockApi from "./mock";
+import * as realApi from "./real";
+
+const useReal = !!process.env.NEXT_PUBLIC_INDEXER_URL;
+
+export const fetchStats = useReal ? realApi.fetchStats : mockApi.fetchStats;
+export const fetchCalls = useReal ? realApi.fetchCalls : mockApi.fetchCalls;
+export const fetchCall = useReal ? realApi.fetchCall : mockApi.fetchCall;
+export const fetchEndpoints = useReal
+  ? realApi.fetchEndpoints
+  : mockApi.fetchEndpoints;
+export const fetchAgent = useReal ? realApi.fetchAgent : mockApi.fetchAgent;
+
 export type {
   Stats,
   CallEvent,
