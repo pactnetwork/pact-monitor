@@ -1,5 +1,5 @@
 {
-  "name": "@pact-network/dashboard",
+  "name": "@pact-network/market-dashboard",
   "version": "0.1.0",
   "private": true,
   "scripts": {

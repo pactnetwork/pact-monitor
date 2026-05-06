@@ -1,5 +1,5 @@
 {
-  "name": "@pact-network/proxy",
+  "name": "@pact-network/market-proxy",
   "version": "0.1.0",
   "private": true,
   "scripts": {
