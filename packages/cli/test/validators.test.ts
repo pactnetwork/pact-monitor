@@ -142,9 +142,9 @@ describe("CLI coercion end-to-end (H4)", () => {
     expect(env.body.error).toContain("URL");
   });
 
-  test("deposit -5 → client_error envelope", async () => {
+  test("approve -5 → client_error envelope", async () => {
     const proc = Bun.spawnSync({
-      cmd: ["bun", "src/index.ts", "--json", "deposit", "-5"],
+      cmd: ["bun", "src/index.ts", "--json", "approve", "-5"],
       cwd: `${import.meta.dir}/..`,
       env: { ...process.env, PACT_CLUSTER: "" },
       stdout: "pipe",
@@ -156,9 +156,9 @@ describe("CLI coercion end-to-end (H4)", () => {
     expect(env.status).not.toBe("cli_internal_error");
   });
 
-  test("deposit abc → client_error envelope", async () => {
+  test("approve abc → client_error envelope", async () => {
     const proc = Bun.spawnSync({
-      cmd: ["bun", "src/index.ts", "--json", "deposit", "abc"],
+      cmd: ["bun", "src/index.ts", "--json", "approve", "abc"],
       cwd: `${import.meta.dir}/..`,
       env: { ...process.env, PACT_CLUSTER: "" },
       stdout: "pipe",

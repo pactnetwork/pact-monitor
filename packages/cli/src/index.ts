@@ -14,7 +14,7 @@ import {
 } from "./lib/validators.ts";
 import { runCommand } from "./cmd/run.ts";
 import { balanceCommand } from "./cmd/balance.ts";
-import { depositCommand } from "./cmd/deposit.ts";
+import { approveCommand, revokeCommand } from "./cmd/approve.ts";
 import { agentsShowCommand, agentsWatchCommand } from "./cmd/agents.ts";
 import { initCommand } from "./cmd/init.ts";
 
@@ -158,12 +158,14 @@ program
   });
 
 program
-  .command("deposit")
-  .description("Deposit USDC into this project's agent wallet")
-  .argument("<usdc>", "amount in USDC (positive number)", parsePositiveFloat)
+  .command("approve")
+  .description(
+    "Grant SPL Token Approve allowance to SettlementAuthority delegate (USDC)",
+  )
+  .argument("<usdc>", "max allowance in USDC (positive number)", parsePositiveFloat)
   .action(async (usdc: number) => {
     const project = resolveProjectOrDie(program.opts().project);
-    const env = await depositCommand({
+    const env = await approveCommand({
       amountUsdc: usdc,
       configDir: configDirFor(project),
       rpcUrl: program.opts().rpc,
@@ -171,6 +173,24 @@ program
     });
     emit(env, Boolean(program.opts().json), Boolean(program.opts().quiet));
   });
+
+program
+  .command("revoke")
+  .description("Revoke the SPL Token Approve allowance for SettlementAuthority")
+  .action(async () => {
+    const project = resolveProjectOrDie(program.opts().project);
+    const env = await revokeCommand({
+      configDir: configDirFor(project),
+      rpcUrl: program.opts().rpc,
+      cluster: program.opts().cluster,
+    });
+    emit(env, Boolean(program.opts().json), Boolean(program.opts().quiet));
+  });
+
+// TODO: add `pact pause` admin command once
+// @pact-network/protocol-v1-client exposes buildPauseProtocolIx (Rick is
+// adding the program-side pause_protocol ix today; only buildPauseEndpointIx
+// exists in v1 client at this commit).
 
 program
   .command("agents")
