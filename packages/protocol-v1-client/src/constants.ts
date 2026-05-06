@@ -10,27 +10,33 @@ import { PublicKey } from "@solana/web3.js";
 /**
  * Pact Network V1 program ID.
  *
- * CANONICAL devnet deploy of the Step C refactor (per-endpoint pools, agent
- * SPL-Approve custody, fee fan-out). Set to `5jBQb7fL…` because the original
- * Wave 1A deploy at `DhWibM…` used an upgrade authority that was inaccessible
- * from the deployer environment when the Step C redeploy ran (see commit
- * `35da2f6` on `feat/pact-market-program`). The orphan at `DhWibM…` still runs
- * the old pre-refactor binary and must NOT be referenced by any client.
+ * CANONICAL mainnet deploy. Set 2026-05-06 in preparation for the V1 launch.
+ * Upgrade authority is the laptop-held key `JB7rp9wMerZbP3yQLL8ZJx5kxRxvhkcfEzaAhuG5uThL`
+ * — slated to rotate to a Squads multisig 2-4 weeks post-launch.
  *
- * Devnet upgrade authority is currently `47Fg5JqMsCeuRyDsFtD7Ra7YTdzVmTr2mZ1R2dUkZyfS`
- * (a devnet hot key) — slated to rotate to a multisig before any mainnet deploy.
+ * Local development against devnet/surfpool requires sed-replacing this constant
+ * AND `declare_id!()` in `lib.rs` to a per-environment program ID, then rebuilding
+ * the SBF binary. The smoke harness at `scripts/smoke-tier2/01-deploy.sh` does this
+ * automatically with a trap to revert.
  */
 export const PROGRAM_ID = new PublicKey(
-  "5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5"
+  "5bCJcdWdKLJ7arrMVMFh3z99rQDxV785fnD9XGcr3xwc"
 );
 
 /**
- * Orphaned pre-refactor program ID. Kept here only so off-chain log scrapers
- * and migration tooling can recognise legacy traffic. New code MUST NOT send
- * transactions to this program ID.
+ * Orphaned program IDs from earlier deploys. Kept here only so off-chain log
+ * scrapers and migration tooling can recognise legacy traffic. New code MUST NOT
+ * send transactions to these program IDs.
+ *
+ * - `DhWibM…`: pre-Step-C Wave 1A devnet deploy, replaced by `5jBQb7fL…`
+ * - `5jBQb7fL…`: Step-C devnet deploy, replaced by mainnet `5bCJcdWdK…`
  */
 export const ORPHAN_PROGRAM_ID_PRE_STEP_C = new PublicKey(
   "DhWibM2z3Vwp5VmJyashoeZCAZHLFKeHab8o12qYsiQc"
+);
+
+export const ORPHAN_PROGRAM_ID_DEVNET_STEP_C = new PublicKey(
+  "5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5"
 );
 
 /** Devnet USDC mint that the program hardcodes in src/constants.rs. */
