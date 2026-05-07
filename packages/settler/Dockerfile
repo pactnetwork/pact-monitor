@@ -14,6 +14,11 @@ RUN pnpm install --frozen-lockfile \
   --filter @pact-network/protocol-v1-client \
   --filter @pact-network/wrap
 
+# tsconfig.base.json — required because packages/wrap/tsconfig.json
+# extends ../../tsconfig.base.json (without it, tsc falls back to ES5 lib
+# and BigInt/Promise/padStart references fail to compile).
+COPY tsconfig.base.json ./
+
 # Build protocol-v1-client first (settler depends on it), then wrap, then settler
 COPY packages/protocol-v1-client packages/protocol-v1-client
 RUN pnpm --filter @pact-network/protocol-v1-client build
