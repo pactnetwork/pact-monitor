@@ -32,7 +32,7 @@
  * Env (with defaults):
  *   MAINNET_KEYS_DIR=~/pact-mainnet-keys
  *   MAINNET_RPC_URL=https://api.mainnet-beta.solana.com
- *                   (use your Helius mainnet endpoint for better reliability)
+ *                   (use your Alchemy mainnet endpoint for better reliability)
  *   DRY_RUN=1       (skip sending; print what would happen — recommended first run)
  *
  * Usage:

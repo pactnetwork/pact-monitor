@@ -174,8 +174,8 @@ https://explorer.solana.com/tx/<DEPLOY_SIG>
 |---|---|---|
 | `Account allocation failed` | Out of SOL during the multi-tx deploy. | Send 0.5 SOL more to upgrade-authority pubkey. Retry the same `solana program deploy` command — Solana CLI resumes from the on-chain buffer it created. |
 | `Custom program error: 0x1` | Program ID keypair doesn't match the `declare_id!` baked in the binary. | Verify §2.3. If mismatch, you used the wrong keypair OR built from the wrong branch. Don't proceed. |
-| `429 Too Many Requests` | Mainnet RPC rate-limited the upload. | Set `solana config set --url <helius_mainnet_url>` and retry. Or wait 30s. |
-| `RPC connection refused` | api.mainnet-beta.solana.com is having a moment. | Same as above — switch to Helius. |
+| `429 Too Many Requests` | Mainnet RPC rate-limited the upload. | Set `solana config set --url <alchemy_mainnet_url>` (or your Helius URL) and retry. Or wait 30s. |
+| `RPC connection refused` | api.mainnet-beta.solana.com is having a moment. | Same as above — switch to your Alchemy mainnet RPC. |
 | Hangs forever after upload | Buffer was uploaded but the swap-into-program tx didn't land. | Ctrl+C, then `solana program deploy --buffer <buffer_pubkey>` to resume from the buffer Solana shows in the failure output. |
 
 ---
