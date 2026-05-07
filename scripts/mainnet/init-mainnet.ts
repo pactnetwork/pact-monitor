@@ -72,9 +72,13 @@ import {
   USDC_MINT_MAINNET,
 } from "@pact-network/protocol-v1-client";
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { readKeypair, resolveKeyPath } from "./lib/keys";
 import { patchState } from "./lib/state";
+
+// ESM equivalent of __dirname (package.json declares "type": "module")
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const TOKEN_ACCOUNT_LEN = 165;
 const MAX_TOTAL_FEE_BPS = 3000; // 30% upper bound — protocol-level cap

@@ -1,5 +1,9 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+// ESM equivalent of __dirname (package.json declares "type": "module")
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const STATE_PATH = resolve(__dirname, "..", ".mainnet-state.json");
 
