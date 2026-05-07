@@ -6,11 +6,18 @@
 // publisher and swallows errors so the wrapped fetch hot path never blocks
 // on event delivery.
 
+import { createRequire } from "node:module";
 import {
   PubSubEventSink,
   type EventSink,
   type PubSubTopicPublisher,
 } from "@pact-network/wrap";
+
+// market-proxy is `"type": "module"` (ESM). The bare `require` global isn't
+// defined in ESM modules, so we synthesise one via createRequire to keep the
+// existing lazy-load pattern below working without a top-level
+// `import("@google-cloud/pubsub")` (which would force grpc into the test path).
+const require = createRequire(import.meta.url);
 
 /**
  * Build a PubSubEventSink. Imports `@google-cloud/pubsub` lazily so unit
