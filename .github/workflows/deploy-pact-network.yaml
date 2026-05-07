@@ -5,8 +5,21 @@
 # Artifact Registry (push via build-pact-network.yaml first).
 #
 # Pattern: copied from devops/pipelines-gcp/qash/deploy.yaml.
-# Secret bindings (--set-secrets) are NOT in this workflow — they're applied
-# once via gcloud post-`terraform apply` and persist across deploys.
+#
+# Env-var convention (READ BEFORE EDITING):
+#   The `cloud-run-service` Terraform module has
+#   `lifecycle.ignore_changes = [template[0].containers[0].env]`, so all env
+#   vars and secret mounts are managed out-of-band via gcloud. The bare
+#   `gcloud run deploy --image ...` below is intentional — it preserves all
+#   existing env/secrets across deploys.
+#
+#   Most env/secret bindings are applied ONCE post-`terraform apply` via
+#   `gcloud run services update --update-secrets=...` and persist across
+#   deploys. The exception is `INDEXER_PUSH_SECRET` (see below): it is
+#   re-asserted on every indexer/settler deploy because a 2026-05-07
+#   mainnet-launch incident showed the mount can get clobbered out-of-band
+#   and silently 401-spam settler->indexer pushes. The assertion is
+#   idempotent (no-op if already correctly mounted).
 # -----------------------------------------------------------------------------
 
 name: Deploy to Cloud Run (pact-network)
@@ -83,6 +96,27 @@ jobs:
             --image ${{ steps.img.outputs.uri }} \
             --region ${{ env.REGION }} \
             --platform managed
+
+      # Re-assert the INDEXER_PUSH_SECRET secret mount on every indexer and
+      # settler deploy. The indexer guard at
+      # `packages/indexer/src/guards/push-secret.guard.ts` reads
+      # `process.env.INDEXER_PUSH_SECRET`; the settler signs its push to the
+      # indexer with the same value. If the mount drifts (e.g. someone runs
+      # `gcloud run services update --remove-secrets=...` or re-mounts under
+      # the wrong env-var name), every settler->indexer push 401s and
+      # mainnet settlements stop reconciling — exactly the 2026-05-07
+      # incident.
+      #
+      # Uses `--update-secrets` (merge), NOT `--set-secrets` (destructive
+      # replace). Only re-asserts the one secret; other secret mounts
+      # (PACT_HELIUS_API_KEY, PACT_SETTLEMENT_AUTHORITY_BS58, etc.) are
+      # untouched.
+      - name: Assert INDEXER_PUSH_SECRET mount
+        if: inputs.service_name == 'pact-indexer' || inputs.service_name == 'pact-settler'
+        run: |
+          gcloud run services update ${{ inputs.service_name }} \
+            --region ${{ env.REGION }} \
+            --update-secrets=INDEXER_PUSH_SECRET=PACT_INDEXER_PUSH_SECRET:latest
 
       - name: Notify Success
         if: success()
