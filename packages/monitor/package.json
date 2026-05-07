@@ -1,12 +1,12 @@
 {
   "name": "@q3labs/pact-monitor",
-  "version": "0.1.4",
-  "description": "TypeScript SDK that wraps fetch() to monitor AI agent API reliability and sync call records to the Pact Network scorecard.",
+  "version": "0.2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/solder-build/pact-monitor.git",
+    "url": "git+https://github.com/pactnetwork/pact-monitor.git",
     "directory": "packages/monitor"
   },
+  "description": "TypeScript SDK that wraps fetch() to monitor AI agent API reliability and sync call records to the Pact Network scorecard.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

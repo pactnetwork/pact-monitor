@@ -1,0 +1,124 @@
+name: Backend tests
+
+# Phase 5 review B1: PR 46 had no CI signal because there was no workflow
+# running the backend test suite against a real Postgres. Local "63 tests
+# pass" is not signed off until CI re-runs them on a clean container.
+#
+# Triggers on PRs to develop and on direct pushes to feat/* and develop, so
+# every iteration of the Phase 5 backend track is verified before merge.
+
+on:
+  pull_request:
+    branches:
+      - develop
+      - main
+    paths:
+      - "packages/backend/**"
+      - "scripts/register-referrer.ts"
+      - "scripts/register-referrer.test.ts"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "package.json"
+      - ".github/workflows/backend-tests.yaml"
+  push:
+    branches:
+      - develop
+      - "feat/**"
+      - "fix/**"
+
+concurrency:
+  group: backend-tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Backend test suite (Postgres 16)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: pact
+          POSTGRES_PASSWORD: pact
+          POSTGRES_DB: pact
+        ports:
+          # docker-compose.dev.yml uses 5433:5432 to avoid host conflicts;
+          # CI matches that so DATABASE_URL strings copy/paste from the dev
+          # runbook. Internal Postgres listens on 5432.
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U pact"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+
+    env:
+      DATABASE_URL: postgresql://pact:pact@localhost:5433/pact
+      # Tests that touch admin paths or build a Fastify harness need a
+      # non-empty token to satisfy the requireAdmin gate's "Admin not
+      # configured" branch. Each test that exercises auth overrides this
+      # with its own random token.
+      ADMIN_TOKEN: ci-default-admin-token
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+          fetch-depth: 1
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.30.3
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+
+      - name: Install workspace deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Wait for Postgres
+        run: |
+          for i in $(seq 1 30); do
+            if pg_isready -h localhost -p 5433 -U pact >/dev/null 2>&1; then
+              echo "postgres ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "postgres did not become ready in time" >&2
+          exit 1
+
+      - name: Apply base schema + Phase 5 migrations
+        run: |
+          # Apply the base schema first so fresh containers have all the
+          # post-CREATE ALTERs (call_records.agent_pubkey, etc.). The
+          # individual test files that call initDb() will re-apply it
+          # idempotently; this just guarantees the table shape exists for
+          # tests that don't.
+          PGPASSWORD=pact psql -h localhost -p 5433 -U pact -d pact \
+            -f packages/backend/src/schema.sql
+          pnpm --filter @pact-network/backend run migrate:canonicalize-hostnames
+          pnpm --filter @pact-network/backend run migrate:referrer-schema
+
+      - name: Build @q3labs/pact-insurance (workspace dep)
+        # Backend `tsc` resolves @q3labs/pact-insurance via its package.json
+        # `main`/`types`, both of which point at `dist/`. Without this step
+        # the backend typecheck fails with TS2307 on the four files that
+        # import the SDK (pools, premium-settler, rate-updater,
+        # claim-settlement). Pre-existing CI gap landed via PR #46.
+        run: pnpm --filter @q3labs/pact-insurance run build
+
+      - name: Typecheck backend
+        run: pnpm --filter @pact-network/backend run build
+
+      - name: Run backend test suite
+        run: pnpm --filter @pact-network/backend test
+
+      - name: Run register-referrer CLI tests
+        run: pnpm --filter @pact-network/backend exec tsx --test ../../scripts/register-referrer.test.ts

@@ -1,0 +1,151 @@
+# -----------------------------------------------------------------------------
+# Pact Network — Build & Push to Artifact Registry
+#
+# Builds one of three Cloud Run services from the pact-monitor monorepo:
+#   pact-market-proxy / pact-settler / pact-indexer
+#
+# Pattern: copied from devops/pipelines-gcp/qash/build.yaml (monorepo template).
+# The corresponding infra lives at devops/terraform-gcp/pact-network/.
+#
+# Existing build.yaml / deploy.yaml at the root of .github/workflows/ are for
+# the legacy pact-monitor-backend (staging-only, single service) and untouched.
+# -----------------------------------------------------------------------------
+
+name: Build and Push to AR (pact-network)
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+      service_name:
+        description: "Service to build"
+        required: true
+        type: choice
+        options:
+          - pact-market-proxy
+          - pact-settler
+          - pact-indexer
+      dockerfile:
+        description: "Path to Dockerfile (default = packages/<service>/Dockerfile)"
+        required: false
+        default: ""
+      context:
+        description: "Docker build context (default = repo root for pnpm workspace)"
+        required: false
+        default: "."
+
+env:
+  REGION: asia-southeast1
+  AR_REPO: pact-network
+  CICD_SA: gh-pact-network-sa
+
+jobs:
+  build:
+    name: Build ${{ inputs.service_name }} (${{ inputs.environment }})
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.build.outputs.image }}
+      short_sha: ${{ steps.sha.outputs.short_sha }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          token: ${{ secrets.ORG_GITHUB_TOKEN }}
+
+      - name: Resolve environment config
+        id: env
+        run: |
+          if [ "${{ inputs.environment }}" = "staging" ]; then
+            echo "project_id=staging-apps-482206" >> $GITHUB_OUTPUT
+            echo "project_number=871482515924" >> $GITHUB_OUTPUT
+            echo "wif_pool=wif-staging-apps-pool" >> $GITHUB_OUTPUT
+            echo "wif_provider=wif-staging-apps-provider" >> $GITHUB_OUTPUT
+          else
+            echo "project_id=pact-network" >> $GITHUB_OUTPUT
+            # Filled in 2026-05-07 — project pact-network (224627201825)
+            echo "project_number=224627201825" >> $GITHUB_OUTPUT
+            echo "wif_pool=wif-pact-network-pool" >> $GITHUB_OUTPUT
+            echo "wif_provider=wif-pact-network-provider" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Resolve dockerfile path
+        id: df
+        run: |
+          if [ -n "${{ inputs.dockerfile }}" ]; then
+            echo "path=${{ inputs.dockerfile }}" >> $GITHUB_OUTPUT
+          else
+            echo "path=packages/${{ inputs.service_name == 'pact-market-proxy' && 'market-proxy' || (inputs.service_name == 'pact-settler' && 'settler' || 'indexer') }}/Dockerfile" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create env file
+        run: |
+          if [ "${{ inputs.environment }}" = "staging" ]; then
+            echo "${{ secrets.ENV_STG }}" > .env
+          else
+            echo "${{ secrets.ENV_PROD }}" > .env
+          fi
+
+      - uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ steps.env.outputs.project_id }}
+          workload_identity_provider: "projects/${{ steps.env.outputs.project_number }}/locations/global/workloadIdentityPools/${{ steps.env.outputs.wif_pool }}/providers/${{ steps.env.outputs.wif_provider }}"
+          service_account: "${{ env.CICD_SA }}@${{ steps.env.outputs.project_id }}.iam.gserviceaccount.com"
+
+      - name: Configure Docker
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev
+
+      - name: Set short SHA
+        id: sha
+        run: echo "short_sha=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+
+      - name: Build and push image
+        id: build
+        env:
+          IMAGE: "${{ env.REGION }}-docker.pkg.dev/${{ steps.env.outputs.project_id }}/${{ env.AR_REPO }}/${{ inputs.service_name }}:${{ steps.sha.outputs.short_sha }}"
+        run: |
+          docker build \
+            --platform linux/amd64 \
+            -f ${{ steps.df.outputs.path }} \
+            -t $IMAGE \
+            ${{ inputs.context }}
+          docker push $IMAGE
+          docker tag $IMAGE ${IMAGE%:*}:latest
+          docker push ${IMAGE%:*}:latest
+          echo "image=$IMAGE" >> $GITHUB_OUTPUT
+
+      - name: Notify Success
+        if: success()
+        continue-on-error: true
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          channel-id: ${{ secrets.SLACK_CHANNEL_ID }}
+          slack-message: |
+            :white_check_mark: *[${{ inputs.environment }}] Build Successful*
+            Service: `${{ inputs.service_name }}` | Image: `${{ steps.sha.outputs.short_sha }}`
+            Repo: ${{ github.repository }} | Branch: ${{ github.ref_name }}
+            By: ${{ github.actor }} | ${{ github.event.head_commit.url }}
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+
+      - name: Notify Failure
+        if: failure()
+        continue-on-error: true
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          channel-id: ${{ secrets.SLACK_CHANNEL_ID }}
+          slack-message: |
+            :x: *[${{ inputs.environment }}] Build Failed*
+            Service: `${{ inputs.service_name }}` | Branch: ${{ github.ref_name }}
+            Repo: ${{ github.repository }}
+            By: ${{ github.actor }} | ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}

@@ -207,7 +207,7 @@ describe("PactMonitor integration (live backend)", { skip: skipReason }, () => {
       timestamp: new Date().toISOString(),
       statusCode: 404,
       latencyMs: 80,
-      classification: "error" as const,
+      classification: "server_error" as const,
       payment: null,
       synced: false,
       agentPubkey,

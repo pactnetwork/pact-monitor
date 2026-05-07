@@ -4,6 +4,19 @@ import { query, getOne } from "../db.js";
 import { maybeCreateClaim } from "../utils/claims.js";
 import { detectAnomalies } from "../utils/fraud-detection.js";
 import { getEffectiveRate } from "../utils/insurance.js";
+import { canonicalHostname } from "../utils/hostname.js";
+
+// Mirror of the call_records.classification CHECK constraint in schema.sql.
+// Keep in sync with the migration in
+// migrations/20260503-split-error-classification.ts.
+const VALID_CLASSIFICATIONS = [
+  "success",
+  "timeout",
+  "client_error",
+  "server_error",
+  "schema_mismatch",
+] as const;
+type Classification = (typeof VALID_CLASSIFICATIONS)[number];
 
 interface RecordInput {
   hostname: string;
@@ -11,7 +24,7 @@ interface RecordInput {
   timestamp: string;
   status_code: number;
   latency_ms: number;
-  classification: "success" | "timeout" | "error" | "schema_mismatch";
+  classification: Classification;
   payment_protocol?: "x402" | "mpp" | null;
   payment_amount?: number | null;
   payment_asset?: string | null;
@@ -31,6 +44,8 @@ const MAX_RECORDS_PER_HOUR = 10_000;
 const RATE_LIMIT_WARNING_THRESHOLD = 0.8;
 
 async function findOrCreateProvider(hostname: string): Promise<string> {
+  // Callers pass already-canonicalized hostname; this function no longer
+  // normalizes so the transform is explicit at the ingest boundary.
   const existing = await getOne<{ id: string }>(
     "SELECT id FROM providers WHERE base_url = $1",
     [hostname],
@@ -61,9 +76,24 @@ export async function recordsRoutes(app: FastifyInstance): Promise<void> {
         });
       }
 
+      // Validate classification at the boundary so old SDKs / stale
+      // ~/.pact-monitor/records.jsonl retries that emit "error" surface as
+      // 400 instead of crashing into the call_records_classification_check
+      // CHECK constraint and bubbling a Postgres error as a 500.
+      for (let i = 0; i < records.length; i++) {
+        const cls = (records[i] as { classification?: unknown }).classification;
+        if (!VALID_CLASSIFICATIONS.includes(cls as Classification)) {
+          return reply.code(400).send({
+            error: `Invalid classification at records[${i}]: ${JSON.stringify(cls)}. Allowed: ${VALID_CLASSIFICATIONS.join(", ")}`,
+            field: `records[${i}].classification`,
+          });
+        }
+      }
+
       const authed = request as FastifyRequest & {
         agentId: string;
         agentPubkey: string | null;
+        referrerPubkey: string | null;
       };
 
       // DB-backed hourly rate limit (works across instances and restarts)
@@ -87,11 +117,27 @@ export async function recordsRoutes(app: FastifyInstance): Promise<void> {
 
       const agentId = authed.agentId;
       const agentPubkey = authed.agentPubkey;
+      // Snapshotted at auth-time so that clearing the referrer mid-batch
+      // doesn't retroactively re-attribute earlier records in the same POST.
+      const referrerPubkey = authed.referrerPubkey;
       const providerIds = new Set<string>();
       let accepted = 0;
 
       for (const rec of records) {
-        const providerId = await findOrCreateProvider(rec.hostname);
+        // Canonicalize once per record; downstream DB rows, PDA derivation,
+        // and claim creation all share this value so api.helius.xyz and
+        // API.Helius.XYZ map to a single pool.
+        let canonicalHost: string;
+        try {
+          canonicalHost = canonicalHostname(rec.hostname);
+        } catch (err) {
+          request.log.warn(
+            { err, hostname: rec.hostname },
+            "Skipping record with invalid hostname",
+          );
+          continue;
+        }
+        const providerId = await findOrCreateProvider(canonicalHost);
         providerIds.add(providerId);
 
         // ON CONFLICT DO NOTHING on the partial unique index
@@ -139,7 +185,8 @@ export async function recordsRoutes(app: FastifyInstance): Promise<void> {
           classification: rec.classification,
           paymentAmount: rec.payment_amount ?? null,
           agentPubkey,
-          providerHostname: rec.hostname,
+          referrerPubkey,
+          providerHostname: canonicalHost,
           latencyMs: rec.latency_ms,
           statusCode: rec.status_code,
           createdAt: new Date(rec.timestamp),
@@ -159,14 +206,21 @@ export async function recordsRoutes(app: FastifyInstance): Promise<void> {
         }
       }
 
-      // Update provider wallet_address from payment data if available
+      // Update provider wallet_address from payment data if available. Use
+      // canonical hostname so a non-canonical ingest string still matches
+      // the canonical providers row written above.
       for (const rec of records) {
-        if (rec.recipient_address) {
-          await query(
-            "UPDATE providers SET wallet_address = $1 WHERE base_url = $2 AND wallet_address IS NULL",
-            [rec.recipient_address, rec.hostname],
-          );
+        if (!rec.recipient_address) continue;
+        let canonicalHost: string;
+        try {
+          canonicalHost = canonicalHostname(rec.hostname);
+        } catch {
+          continue;
         }
+        await query(
+          "UPDATE providers SET wallet_address = $1 WHERE base_url = $2 AND wallet_address IS NULL",
+          [rec.recipient_address, canonicalHost],
+        );
       }
 
       // Include effective rates per provider so agent can see premium impact

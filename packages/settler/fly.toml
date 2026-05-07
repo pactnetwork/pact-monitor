@@ -1,0 +1,29 @@
+app = "pact-settler"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[http_service.checks]]
+  interval = "30s"
+  timeout = "5s"
+  grace_period = "10s"
+  method = "GET"
+  path = "/health"
+
+[env]
+  NODE_ENV = "production"
+
+# secrets set via `fly secrets set`:
+# UPSTASH_REDIS_URL
+# UPSTASH_REDIS_TOKEN
+# SOLANA_RPC_URL
+# SETTLEMENT_AUTHORITY_KEY  (base58-encoded keypair)
+# PROGRAM_ID

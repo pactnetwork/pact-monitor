@@ -1,7 +1,17 @@
-import type { CallRecord } from "./types.js";
+import type { EventEmitter } from "events";
 import type { PactStorage } from "./storage.js";
 import { serializeRecords, createSignature } from "./signing.js";
 import bs58 from "bs58";
+
+export interface SyncAuthError {
+  status: number; // 401 or 403
+  body: string;
+}
+
+export interface SyncTransientError {
+  status: number; // 4xx (non-auth) or 5xx
+  body: string;
+}
 
 export class PactSync {
   private storage: PactStorage;
@@ -10,8 +20,13 @@ export class PactSync {
   private intervalMs: number;
   private batchSize: number;
   private readonly keypair: { publicKey: Uint8Array; secretKey: Uint8Array } | null;
+  private events: EventEmitter | null;
   private timer: ReturnType<typeof setInterval> | null = null;
   private flushInFlight: Promise<void> | null = null;
+  // Latch: once a 401/403 surfaces, the API key is rejected for this run. No
+  // amount of retrying recovers without a new key. Stop spamming the backend
+  // and stop swallowing the error — the consumer needs to know NOW.
+  private authFailed = false;
 
   constructor(
     storage: PactStorage,
@@ -20,6 +35,7 @@ export class PactSync {
     intervalMs: number,
     batchSize: number,
     keypair: { publicKey: Uint8Array; secretKey: Uint8Array } | null,
+    events: EventEmitter | null = null,
   ) {
     this.storage = storage;
     this.backendUrl = backendUrl;
@@ -27,6 +43,13 @@ export class PactSync {
     this.intervalMs = intervalMs;
     this.batchSize = batchSize;
     this.keypair = keypair;
+    this.events = events;
+  }
+
+  // Exposed so the wrapper can short-circuit "is sync still healthy?" checks
+  // (and demos can fail loudly on shutdown if the auth latch fired). Read-only.
+  isAuthFailed(): boolean {
+    return this.authFailed;
   }
 
   start(): void {
@@ -60,6 +83,16 @@ export class PactSync {
   }
 
   private async doFlush(): Promise<void> {
+    // Once the API key has been rejected once, every subsequent flush will
+    // also be rejected — the key is not going to become valid mid-process.
+    // Codex review on PR #54: the auth_error event already fires once and
+    // the timer is stopped, but explicit `flush()` calls (including the
+    // one in PactMonitor.shutdown()) bypass the timer and still POST to
+    // the backend. That defeats the "no further records will be flushed"
+    // contract documented on the latch. Early-return here so `flush()`
+    // and `shutdown()` are also no-ops post-auth-failure.
+    if (this.authFailed) return;
+
     const unsynced = this.storage.getUnsynced();
     if (unsynced.length === 0) return;
 
@@ -105,6 +138,52 @@ export class PactSync {
 
     if (response.ok) {
       this.storage.markSynced(batch.length);
+      return;
+    }
+
+    // Read once for the diagnostic message — Response body is single-use
+    // and useful errors (e.g. "Invalid API key") live here.
+    let body = "";
+    try {
+      body = await response.text();
+    } catch {
+      // ignore — body read failure is itself diagnostic noise; status is
+      // enough to classify the error below.
+    }
+
+    if (response.status === 401 || response.status === 403) {
+      // Permanent error. Stop the sync loop and surface loudly.
+      // - Without this, the SDK retries every interval forever and the
+      //   demo prints "billed 1.0000 USDC" while ZERO records reach the
+      //   backend. The external-agent UX test caught this exact failure
+      //   mode: the user thinks monitoring works.
+      // - One log line + one event. Don't spam — an inert sync loop is
+      //   better than a thousand identical logs.
+      if (!this.authFailed) {
+        this.authFailed = true;
+        // eslint-disable-next-line no-console
+        console.error(
+          `[pact-monitor] sync rejected: ${response.status} ${body}. ` +
+            "API key is invalid or revoked. The sync loop is now stopping; " +
+            "no further records will be flushed for this PactMonitor instance. " +
+            "Fix the apiKey config and create a new PactMonitor.",
+        );
+        if (this.events) {
+          const evt: SyncAuthError = { status: response.status, body };
+          this.events.emit("auth_error", evt);
+        }
+        // Stop the timer so the loop doesn't keep firing 401s every 30s.
+        this.stop();
+      }
+      return;
+    }
+
+    // Other non-2xx: 400 (validation), 429 (rate limit), 5xx (server). All
+    // retriable. Surface via event so demos can show a counter, but don't
+    // spam stderr — the records stay queued for the next interval.
+    if (this.events) {
+      const evt: SyncTransientError = { status: response.status, body };
+      this.events.emit("sync_error", evt);
     }
   }
 }

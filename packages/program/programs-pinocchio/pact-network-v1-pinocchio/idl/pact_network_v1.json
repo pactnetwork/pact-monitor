@@ -1,0 +1,345 @@
+{
+  "address": "5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5",
+  "metadata": {
+    "name": "pact_network_v1",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Pact Network v1 — parametric micro-insurance for AI-agent API payments. Pinocchio-based program. The IDL is hand-written: per-event accounts and per-event payload bytes inside settle_batch are documented here as opaque `bytes`/remainingAccounts because the layout is variable (count-driven), not a fixed Anchor variant.",
+    "repository": "https://github.com/pactnetwork/pact-monitor"
+  },
+  "instructions": [
+    {
+      "name": "initialize_settlement_authority",
+      "docs": [
+        "Create the singleton SettlementAuthority PDA. The PDA itself is the SPL-Token delegate every agent pre-approves off-chain via SPL Approve; the program signs as this PDA via invoke_signed during settle_batch."
+      ],
+      "discriminator": [1],
+      "accounts": [
+        { "name": "authority", "writable": true, "signer": true, "docs": ["Must equal ProtocolConfig.authority. Pays rent."] },
+        { "name": "protocol_config", "docs": ["Singleton PDA [b\"protocol_config\"]; must already be initialized."] },
+        { "name": "settlement_authority", "writable": true, "docs": ["PDA [b\"settlement_authority\"]; created here."] },
+        { "name": "system_program", "address": "11111111111111111111111111111111" }
+      ],
+      "args": [
+        { "name": "signer_pubkey", "type": "pubkey", "docs": ["The off-chain settler signer that is allowed to call settle_batch."] }
+      ]
+    },
+    {
+      "name": "register_endpoint",
+      "docs": [
+        "Atomically register an endpoint AND create its per-slug CoveragePool PDA + USDC vault. Folds the legacy initialize_coverage_pool path so an endpoint can never exist without a pool."
+      ],
+      "discriminator": [2],
+      "accounts": [
+        { "name": "authority", "writable": true, "signer": true, "docs": ["Must equal ProtocolConfig.authority."] },
+        { "name": "protocol_config", "docs": ["Singleton PDA [b\"protocol_config\"]; must be initialized."] },
+        { "name": "treasury", "docs": ["Singleton PDA [b\"treasury\"]; readonly. Used to substitute Treasury-kind fee recipient destinations with the Treasury USDC vault."] },
+        { "name": "endpoint_config", "writable": true, "docs": ["PDA [b\"endpoint\", slug]; created here."] },
+        { "name": "coverage_pool", "writable": true, "docs": ["PDA [b\"coverage_pool\", slug]; created here."] },
+        { "name": "pool_vault", "writable": true, "docs": ["Pre-allocated 165-byte SPL token account; initialized here with owner = coverage_pool PDA."] },
+        { "name": "usdc_mint", "docs": ["Must equal ProtocolConfig.usdc_mint."] },
+        { "name": "system_program", "address": "11111111111111111111111111111111" },
+        { "name": "token_program", "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" }
+      ],
+      "args": [
+        { "name": "slug", "type": { "array": ["u8", 16] }, "docs": ["Endpoint slug; ASCII-printable bytes, zero-padded."] },
+        { "name": "flat_premium_lamports", "type": "u64" },
+        { "name": "percent_bps", "type": "u16" },
+        { "name": "sla_latency_ms", "type": "u32" },
+        { "name": "imputed_cost_lamports", "type": "u64" },
+        { "name": "exposure_cap_per_hour_lamports", "type": "u64" },
+        { "name": "fee_recipients_present", "type": "u8", "docs": ["0 = use ProtocolConfig defaults. 1 = use the supplied fee_recipients."] },
+        { "name": "fee_recipient_count", "type": "u8", "docs": ["0..=8. Only meaningful when fee_recipients_present == 1."] },
+        { "name": "fee_recipients", "type": "bytes", "docs": ["When fee_recipients_present == 1: count * 48 bytes, each entry is FeeRecipient on-wire (kind u8, 7 pad, destination [u8;32], bps u16 LE, 6 pad). Empty otherwise."] }
+      ]
+    },
+    {
+      "name": "update_endpoint_config",
+      "docs": [
+        "Pool-authority-only updates to mutable EndpointConfig fields. Each field is preceded by a 1-byte presence flag; absent fields keep their previous value."
+      ],
+      "discriminator": [3],
+      "accounts": [
+        { "name": "authority", "signer": true, "docs": ["Must equal ProtocolConfig.authority."] },
+        { "name": "protocol_config" },
+        { "name": "endpoint_config", "writable": true }
+      ],
+      "args": [
+        { "name": "flat_premium_lamports_present", "type": "u8" },
+        { "name": "flat_premium_lamports", "type": "u64" },
+        { "name": "percent_bps_present", "type": "u8" },
+        { "name": "percent_bps", "type": "u16" },
+        { "name": "sla_latency_ms_present", "type": "u8" },
+        { "name": "sla_latency_ms", "type": "u32" },
+        { "name": "imputed_cost_lamports_present", "type": "u8" },
+        { "name": "imputed_cost_lamports", "type": "u64" },
+        { "name": "exposure_cap_per_hour_lamports_present", "type": "u8" },
+        { "name": "exposure_cap_per_hour_lamports", "type": "u64" }
+      ]
+    },
+    {
+      "name": "pause_endpoint",
+      "docs": ["Toggle the paused flag on an endpoint. 0 = unpause, 1 = pause."],
+      "discriminator": [4],
+      "accounts": [
+        { "name": "authority", "signer": true, "docs": ["Must equal ProtocolConfig.authority."] },
+        { "name": "protocol_config" },
+        { "name": "endpoint_config", "writable": true }
+      ],
+      "args": [
+        { "name": "paused", "type": "u8" }
+      ]
+    },
+    {
+      "name": "top_up_coverage_pool",
+      "docs": [
+        "Top up a per-endpoint coverage pool from the pool authority's USDC ATA. SPL Token transfer from authority_ata to pool_vault, signed by authority."
+      ],
+      "discriminator": [9],
+      "accounts": [
+        { "name": "authority", "signer": true, "docs": ["Must equal CoveragePool.authority."] },
+        { "name": "coverage_pool", "writable": true, "docs": ["PDA [b\"coverage_pool\", slug]."] },
+        { "name": "authority_ata", "writable": true, "docs": ["Source USDC ATA; owner = authority."] },
+        { "name": "pool_vault", "writable": true, "docs": ["Destination USDC token account; must equal CoveragePool.usdc_vault."] },
+        { "name": "token_program", "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" }
+      ],
+      "args": [
+        { "name": "endpoint_slug", "type": { "array": ["u8", 16] } },
+        { "name": "amount", "type": "u64" }
+      ]
+    },
+    {
+      "name": "settle_batch",
+      "docs": [
+        "Process up to MAX_BATCH_SIZE settlement events. Per event: (1) validate endpoint and exposure cap; (2) init CallRecord PDA (rejects duplicate call_id); (3) premium-in via SPL transfer agent_ata -> pool_vault using SettlementAuthority delegate; (4) fee fan-out from pool_vault to each fee_recipient ATA, authority = CoveragePool PDA; (5) on breach, refund pool_vault -> agent_ata.",
+        "",
+        "ACCOUNT LAYOUT — Anchor IDL cannot model the variable per-event tail accounts, so the IDL declares only the fixed prefix (settler_signer, settlement_authority, token_program, system_program). All per-event accounts (call_record, coverage_pool, pool_vault, endpoint_config, agent_ata, then `endpoint.fee_recipient_count` fee-recipient ATAs) must be appended in order as remaining accounts; consult the Rust handler doc-comment in src/instructions/settle_batch.rs.",
+        "",
+        "EVENT PAYLOAD — packed as: u16 LE event_count, then `event_count * 104` bytes per event. Per-event layout: call_id [u8;16], agent owner pubkey [u8;32], endpoint_slug [u8;16], premium_lamports u64, refund_lamports u64, latency_ms u32, breach u8, fee_recipient_count_hint u8, _pad [u8;6], timestamp i64, _pad2 [u8;4]."
+      ],
+      "discriminator": [10],
+      "accounts": [
+        { "name": "settler_signer", "signer": true, "docs": ["Must equal SettlementAuthority.signer."] },
+        { "name": "settlement_authority", "docs": ["PDA [b\"settlement_authority\"]; SPL-Token delegate."] },
+        { "name": "token_program", "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" },
+        { "name": "system_program", "address": "11111111111111111111111111111111" }
+      ],
+      "args": [
+        { "name": "events_blob", "type": "bytes", "docs": ["Variable-length packed event blob; see instruction docs for layout. Use raw bytes because per-event size and per-event account count depend on each endpoint's fee_recipient_count."] }
+      ]
+    },
+    {
+      "name": "initialize_protocol_config",
+      "docs": ["Initialize the singleton ProtocolConfig PDA with default fee recipients and an optional max_total_fee_bps override."],
+      "discriminator": [12],
+      "accounts": [
+        { "name": "authority", "writable": true, "signer": true, "docs": ["Pays rent and becomes the protocol authority."] },
+        { "name": "protocol_config", "writable": true, "docs": ["PDA [b\"protocol_config\"]; created here."] },
+        { "name": "usdc_mint", "docs": ["Must equal USDC_DEVNET or USDC_MAINNET."] },
+        { "name": "system_program", "address": "11111111111111111111111111111111" }
+      ],
+      "args": [
+        { "name": "max_total_fee_bps_present", "type": "u8", "docs": ["0 = use DEFAULT_MAX_TOTAL_FEE_BPS (3000). 1 = use the supplied value."] },
+        { "name": "max_total_fee_bps", "type": "u16" },
+        { "name": "default_fee_recipient_count", "type": "u8" },
+        { "name": "default_fee_recipients", "type": "bytes", "docs": ["count * 48 bytes; each entry is FeeRecipient on-wire."] }
+      ]
+    },
+    {
+      "name": "initialize_treasury",
+      "docs": ["Initialize the singleton Treasury PDA + USDC vault. Vault is initialized via SPL InitializeAccount3 with owner = treasury PDA."],
+      "discriminator": [13],
+      "accounts": [
+        { "name": "authority", "writable": true, "signer": true, "docs": ["Must equal ProtocolConfig.authority. Pays rent."] },
+        { "name": "protocol_config" },
+        { "name": "treasury", "writable": true, "docs": ["PDA [b\"treasury\"]; created here."] },
+        { "name": "treasury_vault", "writable": true, "docs": ["Pre-allocated 165-byte SPL token account; initialized here."] },
+        { "name": "usdc_mint" },
+        { "name": "system_program", "address": "11111111111111111111111111111111" },
+        { "name": "token_program", "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" }
+      ],
+      "args": []
+    },
+    {
+      "name": "update_fee_recipients",
+      "docs": ["Atomically replace an endpoint's fee_recipients array. Treasury-kind entries get their destination substituted with the Treasury USDC vault."],
+      "discriminator": [14],
+      "accounts": [
+        { "name": "authority", "signer": true, "docs": ["Must equal ProtocolConfig.authority."] },
+        { "name": "protocol_config" },
+        { "name": "treasury" },
+        { "name": "endpoint_config", "writable": true }
+      ],
+      "args": [
+        { "name": "endpoint_slug", "type": { "array": ["u8", 16] } },
+        { "name": "fee_recipient_count", "type": "u8" },
+        { "name": "fee_recipients", "type": "bytes", "docs": ["count * 48 bytes; each entry is FeeRecipient on-wire."] }
+      ]
+    }
+  ],
+  "accounts": [
+    { "name": "CoveragePool", "discriminator": [0, 0, 0, 0, 0, 0, 0, 1] },
+    { "name": "EndpointConfig", "discriminator": [0, 0, 0, 0, 0, 0, 0, 2] },
+    { "name": "CallRecord", "discriminator": [0, 0, 0, 0, 0, 0, 0, 3] },
+    { "name": "SettlementAuthority", "discriminator": [0, 0, 0, 0, 0, 0, 0, 4] },
+    { "name": "Treasury", "discriminator": [0, 0, 0, 0, 0, 0, 0, 5] },
+    { "name": "ProtocolConfig", "discriminator": [0, 0, 0, 0, 0, 0, 0, 6] }
+  ],
+  "errors": [
+    { "code": 6000, "name": "InsufficientBalance" },
+    { "code": 6001, "name": "EndpointPaused" },
+    { "code": 6002, "name": "ExposureCapExceeded" },
+    { "code": 6005, "name": "UnauthorizedSettler" },
+    { "code": 6006, "name": "UnauthorizedAuthority" },
+    { "code": 6007, "name": "DuplicateCallId" },
+    { "code": 6008, "name": "EndpointNotFound" },
+    { "code": 6010, "name": "PoolDepleted" },
+    { "code": 6011, "name": "InvalidTimestamp" },
+    { "code": 6012, "name": "BatchTooLarge" },
+    { "code": 6013, "name": "PremiumTooSmall" },
+    { "code": 6014, "name": "InvalidSlug" },
+    { "code": 6015, "name": "ArithmeticOverflow" },
+    { "code": 6016, "name": "FeeRecipientArrayTooLong" },
+    { "code": 6017, "name": "FeeBpsExceedsCap" },
+    { "code": 6018, "name": "FeeBpsSumOver10k" },
+    { "code": 6019, "name": "FeeRecipientDuplicateDestination" },
+    { "code": 6020, "name": "FeeRecipientInvalidUsdcMint" },
+    { "code": 6021, "name": "MultipleTreasuryRecipients" },
+    { "code": 6022, "name": "RecipientCoverageMismatch" },
+    { "code": 6023, "name": "ProtocolConfigNotInitialized" },
+    { "code": 6024, "name": "TreasuryNotInitialized" },
+    { "code": 6025, "name": "EndpointAlreadyRegistered" },
+    { "code": 6026, "name": "InvalidFeeRecipientKind" }
+  ],
+  "types": [
+    {
+      "name": "FeeRecipient",
+      "docs": ["48-byte fee recipient entry. Wire layout: kind u8, _pad0 [u8;7], destination [u8;32], bps u16 LE, _pad1 [u8;6]. Embedded inline in EndpointConfig.fee_recipients[8] and ProtocolConfig.default_fee_recipients[8]."],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          { "name": "kind", "type": "u8", "docs": ["FeeRecipientKind discriminant: 0 = Treasury, 1 = AffiliateAta, 2 = AffiliatePda."] },
+          { "name": "_pad0", "type": { "array": ["u8", 7] } },
+          { "name": "destination", "type": "pubkey" },
+          { "name": "bps", "type": "u16" },
+          { "name": "_pad1", "type": { "array": ["u8", 6] } }
+        ]
+      }
+    },
+    {
+      "name": "CoveragePool",
+      "docs": ["Per-endpoint PDA [b\"coverage_pool\", endpoint_slug]; 160 bytes."],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          { "name": "bump", "type": "u8" },
+          { "name": "_padding0", "type": { "array": ["u8", 7] } },
+          { "name": "authority", "type": "pubkey" },
+          { "name": "usdc_mint", "type": "pubkey" },
+          { "name": "usdc_vault", "type": "pubkey" },
+          { "name": "endpoint_slug", "type": { "array": ["u8", 16] } },
+          { "name": "total_deposits", "type": "u64" },
+          { "name": "total_premiums", "type": "u64" },
+          { "name": "total_refunds", "type": "u64" },
+          { "name": "current_balance", "type": "u64" },
+          { "name": "created_at", "type": "i64" }
+        ]
+      }
+    },
+    {
+      "name": "EndpointConfig",
+      "docs": ["Per-endpoint PDA [b\"endpoint\", slug]; 544 bytes."],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          { "name": "bump", "type": "u8" },
+          { "name": "paused", "type": "u8" },
+          { "name": "_padding0", "type": { "array": ["u8", 6] } },
+          { "name": "slug", "type": { "array": ["u8", 16] } },
+          { "name": "flat_premium_lamports", "type": "u64" },
+          { "name": "percent_bps", "type": "u16" },
+          { "name": "_padding1", "type": { "array": ["u8", 6] } },
+          { "name": "sla_latency_ms", "type": "u32" },
+          { "name": "_padding2", "type": { "array": ["u8", 4] } },
+          { "name": "imputed_cost_lamports", "type": "u64" },
+          { "name": "exposure_cap_per_hour_lamports", "type": "u64" },
+          { "name": "current_period_start", "type": "i64" },
+          { "name": "current_period_refunds", "type": "u64" },
+          { "name": "total_calls", "type": "u64" },
+          { "name": "total_breaches", "type": "u64" },
+          { "name": "total_premiums", "type": "u64" },
+          { "name": "total_refunds", "type": "u64" },
+          { "name": "last_updated", "type": "i64" },
+          { "name": "coverage_pool", "type": "pubkey" },
+          { "name": "fee_recipient_count", "type": "u8" },
+          { "name": "_padding3", "type": { "array": ["u8", 7] } },
+          { "name": "fee_recipients", "type": { "array": [{ "defined": { "name": "FeeRecipient" } }, 8] } }
+        ]
+      }
+    },
+    {
+      "name": "CallRecord",
+      "docs": ["Dedup sentinel PDA [b\"call\", call_id]; 104 bytes."],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          { "name": "bump", "type": "u8" },
+          { "name": "breach", "type": "u8" },
+          { "name": "_padding0", "type": { "array": ["u8", 6] } },
+          { "name": "call_id", "type": { "array": ["u8", 16] } },
+          { "name": "agent", "type": "pubkey" },
+          { "name": "endpoint_slug", "type": { "array": ["u8", 16] } },
+          { "name": "premium_lamports", "type": "u64" },
+          { "name": "refund_lamports", "type": "u64" },
+          { "name": "latency_ms", "type": "u32" },
+          { "name": "_padding1", "type": { "array": ["u8", 4] } },
+          { "name": "timestamp", "type": "i64" }
+        ]
+      }
+    },
+    {
+      "name": "SettlementAuthority",
+      "docs": ["Singleton PDA [b\"settlement_authority\"]; 48 bytes. Acts as the SPL-Token delegate for every agent ATA."],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          { "name": "bump", "type": "u8" },
+          { "name": "_padding0", "type": { "array": ["u8", 7] } },
+          { "name": "signer", "type": "pubkey" },
+          { "name": "set_at", "type": "i64" }
+        ]
+      }
+    },
+    {
+      "name": "Treasury",
+      "docs": ["Singleton PDA [b\"treasury\"]; 80 bytes. Owns the protocol-side USDC vault."],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          { "name": "bump", "type": "u8" },
+          { "name": "_padding0", "type": { "array": ["u8", 7] } },
+          { "name": "authority", "type": "pubkey" },
+          { "name": "usdc_vault", "type": "pubkey" },
+          { "name": "set_at", "type": "i64" }
+        ]
+      }
+    },
+    {
+      "name": "ProtocolConfig",
+      "docs": ["Singleton PDA [b\"protocol_config\"]; 464 bytes."],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          { "name": "bump", "type": "u8" },
+          { "name": "_padding0", "type": { "array": ["u8", 7] } },
+          { "name": "authority", "type": "pubkey" },
+          { "name": "usdc_mint", "type": "pubkey" },
+          { "name": "max_total_fee_bps", "type": "u16" },
+          { "name": "default_fee_recipient_count", "type": "u8" },
+          { "name": "_padding1", "type": { "array": ["u8", 5] } },
+          { "name": "default_fee_recipients", "type": { "array": [{ "defined": { "name": "FeeRecipient" } }, 8] } }
+        ]
+      }
+    }
+  ]
+}

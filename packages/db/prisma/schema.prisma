@@ -1,0 +1,118 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("PG_URL")
+}
+
+// Per layering plan §5.8 — per-endpoint pools, agent custody (no AgentWallet PDA),
+// and per-recipient settlement breakdown.
+
+model Endpoint {
+  slug                       String   @id @db.VarChar(16)
+  flatPremiumLamports        BigInt
+  percentBps                 Int
+  slaLatencyMs               Int
+  imputedCostLamports        BigInt
+  exposureCapPerHourLamports BigInt
+  paused                     Boolean  @default(false)
+  upstreamBase               String
+  displayName                String
+  logoUrl                    String?
+  registeredAt               DateTime
+  lastUpdated                DateTime
+  calls                      Call[]
+  poolState                  PoolState?
+}
+
+model Agent {
+  pubkey                String     @id @db.VarChar(44)
+  // walletPda is GONE — no AgentWallet PDA in v1 anymore (agent custody).
+  displayName           String?
+  totalPremiumsLamports BigInt     @default(0)
+  totalRefundsLamports  BigInt     @default(0)
+  callCount             BigInt     @default(0)
+  lastCallAt            DateTime?
+  createdAt             DateTime
+  calls                 Call[]
+}
+
+model Call {
+  callId          String   @id @db.VarChar(36)
+  agentPubkey     String   @db.VarChar(44)
+  endpointSlug    String   @db.VarChar(16)
+  premiumLamports BigInt
+  refundLamports  BigInt
+  latencyMs       Int
+  breach          Boolean
+  breachReason    String?  @db.VarChar(16)
+  source          String?  @db.VarChar(32)
+  ts              DateTime
+  settledAt       DateTime
+  signature       String   @db.VarChar(88)
+
+  agent    Agent    @relation(fields: [agentPubkey], references: [pubkey])
+  endpoint Endpoint @relation(fields: [endpointSlug], references: [slug])
+
+  @@index([agentPubkey, ts(sort: Desc)])
+  @@index([endpointSlug, ts(sort: Desc)])
+  @@index([ts(sort: Desc)])
+  @@index([breach, ts(sort: Desc)])
+}
+
+model Settlement {
+  signature             String                     @id @db.VarChar(88)
+  batchSize             Int
+  totalPremiumsLamports BigInt
+  totalRefundsLamports  BigInt
+  ts                    DateTime
+  shares                SettlementRecipientShare[]
+}
+
+// Per-recipient breakdown of a settlement batch's fee outflows.
+// recipientKind ∈ FeeRecipientKind: 0=Treasury, 1=AffiliateAta, 2=AffiliatePda.
+model SettlementRecipientShare {
+  id              String     @id @default(cuid())
+  settlementSig   String     @db.VarChar(88)
+  recipientKind   Int
+  recipientPubkey String     @db.VarChar(44)
+  amountLamports  BigInt
+  settlement      Settlement @relation(fields: [settlementSig], references: [signature])
+
+  @@index([recipientPubkey])
+  @@index([settlementSig])
+}
+
+// Per-endpoint pool state — replaces the old singleton PoolState.
+model PoolState {
+  endpointSlug           String   @id @db.VarChar(16)
+  currentBalanceLamports BigInt
+  totalDepositsLamports  BigInt
+  totalPremiumsLamports  BigInt   // gross in, before fees
+  totalFeesPaidLamports  BigInt   // sum of fee outflows
+  totalRefundsLamports   BigInt
+  lastUpdated            DateTime
+  endpoint               Endpoint @relation(fields: [endpointSlug], references: [slug])
+}
+
+// Lifetime earnings per fee recipient — used for integrator leaderboards.
+model RecipientEarnings {
+  recipientPubkey        String   @id @db.VarChar(44)
+  recipientKind          Int
+  lifetimeEarnedLamports BigInt
+  lastUpdated            DateTime
+}
+
+model DemoAllowlist {
+  walletPubkey String   @id @db.VarChar(44)
+  addedAt      DateTime @default(now())
+  note         String?
+}
+
+model OperatorAllowlist {
+  walletPubkey String   @id @db.VarChar(44)
+  addedAt      DateTime @default(now())
+  note         String?
+}

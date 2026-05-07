@@ -5,18 +5,23 @@
   "type": "module",
   "description": "Live runnable demos for Pact Network — scorecard monitor loop and insured-agent Phase 3 flow.",
   "scripts": {
-    "monitor": "tsx monitor.ts",
-    "insured-agent": "tsx insured-agent.ts"
+    "build:deps": "pnpm --filter @q3labs/pact-monitor --filter @q3labs/pact-insurance build",
+    "monitor": "pnpm run build:deps && tsx monitor.ts",
+    "insurance-basic": "pnpm run build:deps && tsx insurance-basic.ts",
+    "insured-agent": "pnpm run build:deps && tsx insured-agent.ts",
+    "external-agent": "pnpm run build:deps && tsx external-agent.ts",
+    "monitor-plus-insurance": "pnpm run build:deps && tsx monitor-plus-insurance.ts"
   },
   "dependencies": {
     "@q3labs/pact-monitor": "workspace:*",
     "@q3labs/pact-insurance": "workspace:*",
-    "@anchor-lang/core": "^1.0.0",
+    "@solana/kit": "^6.8.0",
     "@solana/web3.js": "^1.98.4",
     "@solana/spl-token": "^0.4.14",
     "bn.js": "^5.2.3",
     "dotenv": "^16.5.0",
-    "pg": "^8.16.0"
+    "pg": "^8.16.0",
+    "tweetnacl": "^1.0.3"
   },
   "devDependencies": {
     "@types/bn.js": "^5.1.5",

@@ -1,0 +1,22 @@
+{
+  "name": "@pact-network/scripts-mainnet-smoke",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Real-mainnet 10-call smoke harness — see README.md",
+  "scripts": {
+    "preflight":  "tsx 00-preflight.ts",
+    "fire":       "tsx 01-fire-10-calls.ts",
+    "reconcile":  "tsx 02-reconcile.ts"
+  },
+  "dependencies": {
+    "@pact-network/protocol-v1-client": "workspace:*",
+    "@solana/web3.js": "^1.95.8",
+    "axios": "^1.7.9",
+    "tsx": "^4.19.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "typescript": "^5.7.2"
+  }
+}

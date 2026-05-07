@@ -1,5 +1,21 @@
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
+-- Self-serve API key issuance challenges. Single-use nonces issued by
+-- POST /api/v1/keys/self-serve/challenge and consumed by the matching
+-- /self-serve issuance call after the caller signs the challenge with the
+-- ed25519 keypair backing the agent_pubkey. Without this proof-of-ownership
+-- step, anyone could mint a key bound to any wallet (codex review on PR
+-- #50). Rows expire after a short TTL and the consumption is idempotent
+-- via DELETE … RETURNING.
+CREATE TABLE IF NOT EXISTS api_key_challenges (
+  nonce        TEXT PRIMARY KEY,
+  agent_pubkey TEXT NOT NULL,
+  expires_at   TIMESTAMPTZ NOT NULL,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_api_key_challenges_pubkey ON api_key_challenges(agent_pubkey);
+CREATE INDEX IF NOT EXISTS idx_api_key_challenges_expires_at ON api_key_challenges(expires_at);
+
 CREATE TABLE IF NOT EXISTS providers (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name TEXT NOT NULL,
@@ -16,7 +32,7 @@ CREATE TABLE IF NOT EXISTS call_records (
   timestamp TIMESTAMPTZ NOT NULL,
   status_code INTEGER NOT NULL,
   latency_ms INTEGER NOT NULL,
-  classification TEXT NOT NULL CHECK (classification IN ('success', 'timeout', 'error', 'schema_mismatch')),
+  classification TEXT NOT NULL CHECK (classification IN ('success', 'timeout', 'client_error', 'server_error', 'schema_mismatch')),
   payment_protocol TEXT CHECK (payment_protocol IN ('x402', 'mpp') OR payment_protocol IS NULL),
   payment_amount BIGINT,
   payment_asset TEXT,
@@ -87,8 +103,46 @@ CREATE TABLE IF NOT EXISTS api_keys (
 
 ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS agent_pubkey TEXT;
 ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';
+-- Drop any pre-existing index with the same name (legacy dev DBs may have a
+-- non-unique variant), then recreate as UNIQUE. Tiny table, so the brief
+-- AccessExclusiveLock during drop is microseconds and runs at boot before
+-- traffic is accepted.
+DROP INDEX IF EXISTS idx_api_keys_label;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_label ON api_keys(label);
 CREATE INDEX IF NOT EXISTS idx_api_keys_agent_pubkey ON api_keys(agent_pubkey);
+
+-- F1: Referrer revenue share. An api_keys row can (optionally) be linked to
+-- a referrer pubkey; every on-chain policy created from that key captures
+-- the referrer + share_bps at creation time. Hard ceiling of 3000 bps
+-- (30%) enforced at the CHECK; program will mirror the same ceiling.
+-- Nullable: existing keys (pre-F1) have no referrer and settle two-way as
+-- before.
+ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS referrer_pubkey TEXT NULL;
+ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS referrer_share_bps INTEGER NULL;
+-- Enforces the (pubkey, share_bps) pair invariant: both null (cleared) or
+-- both set with share_bps in [1, 3000]. The earlier check name allowed
+-- share_bps=0 paired with a non-null pubkey, which the on-chain Pinocchio
+-- policy rejects as InvalidRate. Drop-then-add inside a DO block so this is
+-- safe to re-apply on boot regardless of whether the older constraint exists.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'api_keys_referrer_share_bps_check'
+  ) THEN
+    ALTER TABLE api_keys DROP CONSTRAINT api_keys_referrer_share_bps_check;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'api_keys_referrer_pair_check'
+  ) THEN
+    ALTER TABLE api_keys
+      ADD CONSTRAINT api_keys_referrer_pair_check
+      CHECK (
+        (referrer_pubkey IS NULL AND referrer_share_bps IS NULL)
+        OR (referrer_pubkey IS NOT NULL AND referrer_share_bps BETWEEN 1 AND 3000)
+      );
+  END IF;
+END $$;
+CREATE INDEX IF NOT EXISTS idx_api_keys_referrer ON api_keys(referrer_pubkey) WHERE referrer_pubkey IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS claims (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -96,7 +150,7 @@ CREATE TABLE IF NOT EXISTS claims (
   provider_id     UUID NOT NULL REFERENCES providers(id),
   agent_id        TEXT,
   policy_id       TEXT,
-  trigger_type    TEXT NOT NULL CHECK (trigger_type IN ('timeout', 'error', 'schema_mismatch', 'latency_sla')),
+  trigger_type    TEXT NOT NULL CHECK (trigger_type IN ('timeout', 'server_error', 'schema_mismatch', 'latency_sla')),
   call_cost       BIGINT,
   refund_pct      INTEGER NOT NULL,
   refund_amount   BIGINT,
@@ -110,6 +164,15 @@ CREATE INDEX IF NOT EXISTS idx_claims_provider_id ON claims(provider_id);
 CREATE INDEX IF NOT EXISTS idx_claims_agent_id ON claims(agent_id);
 CREATE INDEX IF NOT EXISTS idx_claims_status ON claims(status);
 CREATE INDEX IF NOT EXISTS idx_claims_created_at ON claims(created_at);
+
+-- F1: denormalized referrer for fast partner reads. Populated by the
+-- policy-creation flow (when the on-chain fields land) + mirrored from the
+-- api_keys.referrer_pubkey snapshot at claim time so the partners endpoint
+-- avoids a JOIN back to api_keys. Partial index keeps it small until the
+-- on-chain fields ship.
+ALTER TABLE claims ADD COLUMN IF NOT EXISTS referrer_pubkey TEXT NULL;
+CREATE INDEX IF NOT EXISTS idx_claims_referrer
+  ON claims(referrer_pubkey) WHERE referrer_pubkey IS NOT NULL;
 
 -- Audit trail for /api/v1/faucet/drip. Not used for enforcement (rate limit
 -- lives in @fastify/rate-limit), just a record of who got what and when so we

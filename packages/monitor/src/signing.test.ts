@@ -19,7 +19,7 @@ describe("serializeRecords", () => {
 describe("createSignature + verifySignature", () => {
   it("round-trips with a valid keypair", () => {
     const keypair = Keypair.generate();
-    const payload = JSON.stringify([{ hostname: "test.com", classification: "error" }]);
+    const payload = JSON.stringify([{ hostname: "test.com", classification: "server_error" }]);
 
     const signature = createSignature(payload, keypair.secretKey);
     assert.equal(typeof signature, "string");

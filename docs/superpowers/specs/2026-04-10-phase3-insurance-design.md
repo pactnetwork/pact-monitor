@@ -8,7 +8,7 @@
 
 ## Goal
 
-Build the Solana on-chain parametric insurance layer for Pact Network. A single Anchor program manages coverage pools, agent policies, and automatic claim settlement. The existing Fastify backend acts as a trusted oracle and runs crank loops for periodic premium settlement. A new `@pact-network/insurance` SDK provides agent-facing APIs with per-call UX on top of a batched settlement model. Deploy to devnet first; mainnet after 24 hours of clean devnet operation.
+Build the Solana on-chain parametric insurance layer for Pact Network. A single Anchor program manages coverage pools, agent policies, and automatic claim settlement. The existing Fastify backend acts as a trusted oracle and runs crank loops for periodic premium settlement. A new `@q3labs/pact-insurance` SDK provides agent-facing APIs with per-call UX on top of a batched settlement model. Deploy to devnet first; mainnet after 24 hours of clean devnet operation.
 
 ## Relationship to Rick's PRD
 
@@ -32,8 +32,8 @@ This spec follows Rick's PRD as the canonical source for architecture, account s
 ```
 Agent (Node.js)
   │
-  ├── @pact-network/monitor         (exists, Phase 1 — add 'failure' event)
-  └── @pact-network/insurance       (NEW — PactInsurance class)
+  ├── @q3labs/pact-monitor         (exists, Phase 1 — add 'failure' event)
+  └── @q3labs/pact-insurance       (NEW — PactInsurance class)
          │
          ▼
 Pact Insurance Program (Anchor, single program)
@@ -459,17 +459,17 @@ CRANK_ENABLED=true             # feature flag
 
 ---
 
-## `@pact-network/insurance` SDK (New Package)
+## `@q3labs/pact-insurance` SDK (New Package)
 
 Location: `packages/insurance/`
-Package name: `@pact-network/insurance`
-Peer dependency: `@pact-network/monitor` (exists)
+Package name: `@q3labs/pact-insurance`
+Peer dependency: `@q3labs/pact-monitor` (exists)
 
 ### Public API
 
 ```typescript
 import { Connection, Keypair } from '@solana/web3.js';
-import { PactInsurance } from '@pact-network/insurance';
+import { PactInsurance } from '@q3labs/pact-insurance';
 
 const insurance = new PactInsurance({
   connection: new Connection(RPC_URL),
@@ -547,7 +547,7 @@ The SDK presents a per-call experience even though settlement is batched:
 
 ### Monitor SDK Change (Backward Compatible)
 
-`@pact-network/monitor` adds an `EventEmitter` base (or `mitt` for lightweight alternative). `wrapper.ts` emits a `'failure'` event whenever the classifier marks a call as failed. Emits after the call record has been stored, so listeners see a complete record. Existing consumers that don't listen to events are unaffected.
+`@q3labs/pact-monitor` adds an `EventEmitter` base (or `mitt` for lightweight alternative). `wrapper.ts` emits a `'failure'` event whenever the classifier marks a call as failed. Emits after the call record has been stored, so listeners see a complete record. Existing consumers that don't listen to events are unaffected.
 
 ---
 
@@ -701,7 +701,7 @@ packages/
       claims.ts
     migrations/deploy.ts
 
-  insurance/                              # NEW — @pact-network/insurance
+  insurance/                              # NEW — @q3labs/pact-insurance
     src/
       index.ts
       client.ts
@@ -712,7 +712,7 @@ packages/
     tests/
     package.json
 
-  sdk/                                    # EXISTING — @pact-network/monitor
+  sdk/                                    # EXISTING — @q3labs/pact-monitor
     src/
       wrapper.ts                          # MODIFY — emit 'failure' event
       events.ts                           # NEW — EventEmitter base
@@ -791,7 +791,7 @@ Alan works actively on Friday evening and Monday. Saturday and Sunday are delega
 11. Backend: crank loops (`premium-settler.ts`, `rate-updater.ts`, `policy-sweeper.ts`)
 12. Backend: wire `claims.ts` oracle submit path
 13. `packages/insurance/` — `PactInsurance` class, anchor client, event emitters
-14. `@pact-network/monitor` modification — add `'failure'` event
+14. `@q3labs/pact-monitor` modification — add `'failure'` event
 15. Scorecard: `CoveragePoolsPanel`, `PoolDetail`, hooks, `ProviderDetail` enhancement
 16. `packages/test-simulation/` — scenarios 1-4 (core happy path and key safety features)
 

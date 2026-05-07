@@ -1,7 +1,16 @@
 # Pact Monitor — Agent Integration Examples
 
 Copy-paste examples for the `@q3labs/pact-monitor` SDK (no Solana deps).
-For insurance-SDK examples (on-chain policy + claims), see `samples/demo/`.
+For the full insurance flow (on-chain policy + claims), see [`samples/demo/external-agent.ts`](../demo/external-agent.ts) — that's the recommended end-to-end demo for external agents.
+
+## Classification reference
+
+`monitor.fetch()` tags every call with one of:
+- `success` — 2xx + (optional) schema match + within latency budget
+- `timeout` — 2xx but latency > threshold (claimable, 100% refund)
+- `server_error` — 5xx, network unreachable, DNS failure (claimable, 100% refund)
+- `schema_mismatch` — 2xx but body fails `expectedSchema` (claimable, 75% refund)
+- `client_error` — 4xx (404, 401, 403, 429, ...) — **NOT claimable**, agent-side issue
 
 ## Prerequisites
 

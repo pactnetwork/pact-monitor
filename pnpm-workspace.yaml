@@ -1,3 +1,6 @@
 packages:
   - "packages/*"
   - "samples/demo"
+  - "scripts/smoke-tier2"
+  - "scripts/mainnet"
+  - "scripts/mainnet-smoke"
