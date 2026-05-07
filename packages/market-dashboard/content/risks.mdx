@@ -1,0 +1,161 @@
+---
+title: "Risks and disclosures"
+description: "What Pact Network is, what it isn't, and everything that can go wrong."
+updated: "2026-05-07"
+---
+
+# Risks and disclosures
+
+Read this before you connect. We'd rather you walk away than walk in
+expecting something Pact isn't.
+
+## 1. This is not regulated insurance
+
+Pact Network is a parametric, on-chain coverage protocol. It is **not**
+insurance in the legal sense — no insurer, no policy contract, no regulator,
+no guaranty fund, no FDIC-equivalent backstop. Nothing here is underwritten,
+rated, or licensed.
+
+A Solana program watches every API call you route through Pact. If a call
+breaches a pre-defined SLA, the program refunds you from a coverage pool.
+The protocol code defines the coverage rules. If you want to know what's
+covered, read the program.
+
+## 2. No KYC, no regulatory protection, jurisdictional restrictions
+
+We don't collect KYC. The trade-off: no consumer-protection recourse
+through any regulator. If something goes wrong, no agency makes you whole.
+
+**Restricted users:** Pact is not offered to US persons or to persons
+located in OFAC-sanctioned jurisdictions (currently Cuba, Iran, North
+Korea, Syria, and the Crimea, Donetsk, and Luhansk regions of Ukraine).
+You must also be 18 or older. By connecting a wallet, you confirm you are
+not a restricted user and that your use does not violate local law.
+
+Enforcement at launch is disclaimer-only — we rely on your attestation in
+the connect modal rather than IP geofencing. We may add edge-level geo
+controls later if regulators surface concerns.
+
+## 3. Smart contract risk
+
+Pact's Solana program: `5bCJcdWdKLJ7arrMVMFh3z99rQDxV785fnD9XGcr3xwc`.
+
+- **Not third-party audited yet.** An external audit is in the queue. Until
+  it's done and findings are addressed, treat the code as unaudited.
+- **Upgrade authority is a single hot key:**
+  `JB7rp9wMerZbP3yQLL8ZJx5kxRxvhkcfEzaAhuG5uThL`. It sits on a developer
+  machine. If that machine is compromised before we rotate to a Squads
+  multisig (~2-4 weeks from launch), an attacker could redeploy the program
+  with malicious bytecode and drain pools or seize approved-token allowances.
+- **Bugs can drain pools.** A logic bug in settlement, exposure caps, or pool
+  accounting could spend pools incorrectly, refund the wrong wallet, or fail
+  to refund. We've reviewed and tested on devnet, but we have not proven it
+  bug-free.
+
+If you can't tolerate losing the USDC you have approved to the program,
+don't approve it.
+
+## 4. Coverage pool exhaustion
+
+Refunds come from a finite per-endpoint coverage pool. No one writes a check
+from elsewhere if the pool runs dry.
+
+- Each endpoint (Helius, Birdeye, Jupiter, Elfa, fal.ai) has its own pool
+  with a per-rolling-hour exposure cap on-chain.
+- If breach payouts hit that cap, **subsequent breaches in that pool will not
+  be refunded** until the pool is topped up and the hourly window clears.
+- A drained pool does not stop premium charges on successful calls — only
+  breach refunds in that pool pause until capacity returns.
+
+Parametric coverage is backed by real, finite capital. That makes the
+on-chain math honest, and worst-case days expensive for you.
+
+## 5. Settlement timing is not guaranteed
+
+When a call breaches SLA, settlement runs through an off-chain Pub/Sub queue
+and lands as a Solana transaction. Normal round trip is under 30 seconds —
+not instant, and not guaranteed.
+
+Delays can come from the settlement signer running out of SOL for fees,
+Solana RPC outages, queue backups, or bugs we haven't seen yet.
+
+Calls received but not yet settled return an `x-pact-settlement-pending: 1`
+header. Treat that header as the source of truth for "refund inflight."
+Stuck settlements show up in the dashboard's per-call history.
+
+## 6. Network and upstream API risks
+
+Pact refunds per-call SLA breaches as defined by the protocol. That's it.
+The protocol does **not** cover Solana network outages, chain reorgs,
+upstream APIs going down or throttling, wallet compromise, key loss,
+signing-tool bugs, or RPC providers feeding bad data.
+
+If Solana is down, settlement is down. If your upstream is down, the SLA
+breach refund covers what the protocol says it covers — nothing more.
+
+## 7. Premiums are not refundable on success
+
+Each call debits a small premium from your USDC ATA (around $0.001, varies
+by endpoint). **On a successful call within SLA, that premium is not
+refundable.** Roughly 90% goes to the endpoint's coverage pool and 10% to
+the network treasury.
+
+You only get money back when a call breaches SLA — on a breach, the refund
+returns both the imputed upstream cost and the premium, so a breached call
+is net-zero to you. If your traffic doesn't breach much, Pact costs you the
+premium. That's the deal.
+
+## 8. Self-custody, and how to leave
+
+Pact never holds your USDC. You authorize the program as a delegate on your
+USDC ATA via SPL Token Approval. The program can debit only the approved
+amount, only per the protocol rules.
+
+To stop further premium debits:
+
+```bash
+spl-token revoke <your-USDC-ATA>
+```
+
+After revoke, no further debits can happen. Your remaining USDC is
+unaffected. No lock-up, no withdrawal queue, no notice period.
+
+Flip side: if you lose your private key, we can't recover it. If you sign a
+malicious tx elsewhere that drains your USDC, we can't reverse it.
+Self-custody puts key safety on you.
+
+## 9. No customer support SLA
+
+Pact is experimental software run by a small team. We respond to email when
+we can and monitor for outages. We do **not** offer a guaranteed response
+time, a 24/7 on-call, incident credits beyond what the protocol refunds
+on-chain, or account recovery / dispute resolution.
+
+If something goes wrong outside the protocol's automated refund path, your
+recourse is to revoke the approval and stop using Pact.
+
+## What we don't promise
+
+We won't tell you Pact is "trustless," "secure," or "guaranteed." The
+accurate statement: the protocol code defines the behavior, the code is
+unaudited, the upgrade authority is currently a hot key, the coverage pools
+are finite, and you bear the residual risk.
+
+If that trade works for you in exchange for parametric refunds on AI API
+calls, connect a wallet. If not, don't.
+
+## Contact
+
+For security disclosures and critical bugs, email
+<security@pactnetwork.io>. PGP key forthcoming — send unencrypted reports
+to this address until further notice.
+
+The protocol code is the source of truth — it lives at
+<https://github.com/pactnetwork/pact-monitor>. If this document and the
+program disagree, the program wins.
+
+---
+
+*Last updated: 2026-05-07. Updated as the protocol evolves — when the
+upgrade authority rotates to multisig, when an external audit completes,
+and when new endpoints come online.*
