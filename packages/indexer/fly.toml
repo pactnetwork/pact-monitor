@@ -24,4 +24,6 @@ primary_region = "iad"
 # secrets set via `fly secrets set`:
 # PG_URL
 # HELIUS_WEBHOOK_SECRET
+# INDEXER_PUSH_SECRET
 # PROGRAM_ID
+# SOLANA_RPC_URL
