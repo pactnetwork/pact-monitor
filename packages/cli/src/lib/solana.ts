@@ -1,43 +1,31 @@
 import { Connection, PublicKey } from "@solana/web3.js";
 import {
   PROGRAM_ID,
-  USDC_MINT_DEVNET,
   USDC_MINT_MAINNET,
 } from "@pact-network/protocol-v1-client";
 
-// Re-export under names the CLI has historically used. The new SDK is the
-// single source of truth for both the program ID and the USDC mints; the
-// CLI never carries its own copy.
-export const USDC_DEVNET_MINT = USDC_MINT_DEVNET;
+// v0.1.0 is mainnet-only — the SDK is the single source of truth for the
+// program ID (baked to 5bCJcdWdK… by develop's PR #71) and the USDC mint.
+// Local devnet testing requires sed-replacing constants.rs and rebuilding the
+// program per Rick's runbook; the binary does not support it.
 export const USDC_MAINNET_MINT = USDC_MINT_MAINNET;
 export const PACT_NETWORK_V1_PROGRAM_ID = PROGRAM_ID;
 
 export type ClusterConfig = { programId: PublicKey; mint: PublicKey };
 export type ClusterConfigResult = ClusterConfig | { error: string };
 
-// Resolve the on-chain config for a cluster. devnet returns the canonical V1
-// deploy from @pact-network/protocol-v1-client. mainnet reads the program ID
-// from PACT_MAINNET_PROGRAM_ID since the canonical mainnet deploy is being
-// done from Rick's laptop today and the binary cannot ship with a hardcoded
-// pubkey before then.
-// TODO: set canonical mainnet program ID once Rick deploys today.
-export function resolveClusterConfig(
-  cluster: "devnet" | "mainnet",
-): ClusterConfigResult {
-  if (cluster === "devnet") {
-    return { programId: PACT_NETWORK_V1_PROGRAM_ID, mint: USDC_DEVNET_MINT };
-  }
-  const fromEnv = process.env.PACT_MAINNET_PROGRAM_ID;
-  if (!fromEnv) {
+// Enforce the PACT_MAINNET_ENABLED speed-bump at point-of-use. Commander's
+// `--cluster` validator only fires when the user passes the option explicitly;
+// the default value bypasses validation, so the gate is re-checked here so a
+// bare `pact balance` / `pact run` cannot silently route to mainnet.
+export function resolveClusterConfig(): ClusterConfigResult {
+  if (process.env.PACT_MAINNET_ENABLED !== "1") {
     return {
-      error: "PACT_MAINNET_PROGRAM_ID env var required for mainnet",
+      error:
+        "v0.1.0 is mainnet-only and requires PACT_MAINNET_ENABLED=1 (closed beta gate)",
     };
   }
-  try {
-    return { programId: new PublicKey(fromEnv), mint: USDC_MAINNET_MINT };
-  } catch {
-    return { error: `invalid PACT_MAINNET_PROGRAM_ID: '${fromEnv}'` };
-  }
+  return { programId: PROGRAM_ID, mint: USDC_MINT_MAINNET };
 }
 
 export async function getUsdcAtaBalanceLamports(opts: {

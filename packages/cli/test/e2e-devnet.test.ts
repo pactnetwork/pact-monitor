@@ -45,7 +45,6 @@ describe("e2e devnet (against mock proxy)", () => {
       configDir: dir,
       gatewayUrl: `http://localhost:${port}`,
       project: "e2e",
-      cluster: "devnet",
       skipBalanceCheck: true,
     });
     expect(a.status).toBe("ok");
@@ -57,7 +56,6 @@ describe("e2e devnet (against mock proxy)", () => {
       configDir: dir,
       gatewayUrl: `http://localhost:${port}`,
       project: "e2e",
-      cluster: "devnet",
       skipBalanceCheck: true,
     });
     expect(b.status).toBe("endpoint_paused");
@@ -69,7 +67,6 @@ describe("e2e devnet (against mock proxy)", () => {
       configDir: dir,
       gatewayUrl: `http://localhost:${port}`,
       project: "e2e",
-      cluster: "devnet",
       skipBalanceCheck: true,
     });
     expect(c.status).toBe("no_provider");

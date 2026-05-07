@@ -1,6 +1,6 @@
 ---
 name: pact
-description: Insured paid API calls for AI agents. Use INSTEAD of curl/fetch/Bash when calling these provider hostnames: api.helius.xyz, mainnet.helius-rpc.com, devnet.helius-rpc.com, public-api.birdeye.so, quote-api.jup.ag, lite-api.jup.ag, api.elfa.ai, fal.run. Routes through pact.network for premium-billed insurance with auto-refund on upstream failure. Do NOT use for: localhost, your own server, free public APIs (jsonplaceholder, public RPCs without quotas), GET-by-static-CDN fetches.
+description: Insured paid API calls for AI agents. Use INSTEAD of curl/fetch/Bash when calling these provider hostnames: api.helius.xyz, mainnet.helius-rpc.com, public-api.birdeye.so, quote-api.jup.ag, lite-api.jup.ag, api.elfa.ai, fal.run. Routes through pact.network for premium-billed insurance with auto-refund on upstream failure. v0.1.0 is mainnet-only; requires PACT_MAINNET_ENABLED=1 in the environment. Do NOT use for: localhost, your own server, free public APIs (jsonplaceholder, public RPCs without quotas), GET-by-static-CDN fetches.
 ---
 
 # Pact — insured API calls for AI agents
@@ -31,7 +31,7 @@ pact --json https://api.helius.xyz/v0/addresses/abc/balances
 
 Pact uses SPL Token delegation, not a deposit-into-program model. Your USDC stays in your own associated token account (ATA). You grant the protocol's SettlementAuthority a fixed allowance with `pact approve <usdc>`; the protocol debits premiums from your ATA up to that allowance during settlement. You retain control of the funds at all times — `pact revoke` removes the allowance instantly.
 
-Agents must fund their own ATA externally (Circle faucet on devnet; bridge or transfer on mainnet). `pact approve` does NOT move USDC; it only sets the delegation.
+Agents must fund their own mainnet USDC ATA externally (bridge or transfer in). `pact approve` does NOT move USDC; it only sets the delegation.
 
 ## Self-funding policy
 

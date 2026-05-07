@@ -28,7 +28,7 @@ pact agents show
 
 ## Custody model
 
-Your USDC stays in your own associated token account (ATA). `pact approve <usdc>` issues an SPL Token `Approve` ix that authorizes the protocol's `SettlementAuthority` PDA to debit up to `<usdc>` lamports during settlement. `pact approve` does **not** move funds — fund your ATA externally (Circle faucet on devnet; bridge or transfer on mainnet).
+Your USDC stays in your own associated token account (ATA). `pact approve <usdc>` issues an SPL Token `Approve` ix that authorizes the protocol's `SettlementAuthority` PDA to debit up to `<usdc>` lamports during settlement. `pact approve` does **not** move funds — fund your mainnet USDC ATA externally (bridge or transfer in).
 
 `pact balance` reports both ATA balance and currently-granted allowance plus an `eligible` flag mirroring what the program will see at debit time.
 
@@ -56,10 +56,9 @@ Project name is resolved from `--project`, `$PACT_PROJECT`, git repo, or cwd bas
 
 - `PACT_PRIVATE_KEY` — bypass disk wallet
 - `PACT_GATEWAY_URL` — override gateway (default `https://market.pactnetwork.io`)
-- `PACT_RPC_URL` — override Solana RPC
-- `PACT_CLUSTER` — `devnet` (default) or `mainnet`. `mainnet` requires `PACT_MAINNET_ENABLED=1` (closed-beta gate). Any other value is rejected at startup with a `client_error` envelope.
-- `PACT_MAINNET_ENABLED=1` — opt in to `--cluster mainnet`. Without this, mainnet is rejected at parse time so a default build cannot route real USDC through the production program.
-- `PACT_MAINNET_PROGRAM_ID` — required for the mainnet path; the canonical mainnet program ID is set after deploy and the binary will refuse to operate on mainnet without it.
+- `PACT_RPC_URL` — override Solana RPC (default `https://api.mainnet-beta.solana.com`)
+- `PACT_CLUSTER` — only `mainnet` is accepted; any other value is rejected at startup with a `client_error` envelope. v0.1.0 is mainnet-only — local devnet testing requires sed-replacing `constants.rs` and rebuilding the program per Rick's runbook.
+- `PACT_MAINNET_ENABLED=1` — required closed-beta gate. Any on-chain command (`balance`, `approve`, `revoke`, `<url>`) returns `client_error` until set, so a first-invocation accident cannot route real USDC through the production program.
 - `PACT_AUTO_DEPOSIT_DISABLED=1` — disable auto-approve
 
 See `docs/superpowers/specs/2026-05-05-pact-cli-design.md` for full spec.

@@ -8,13 +8,17 @@ import type { Policy } from "../src/lib/policy.ts";
 
 describe("cmd/approve: policy enforcement", () => {
   let dir: string;
+  const originalGate = process.env.PACT_MAINNET_ENABLED;
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "pact-approve-test-"));
+    process.env.PACT_MAINNET_ENABLED = "1";
   });
 
   afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
+    if (originalGate === undefined) delete process.env.PACT_MAINNET_ENABLED;
+    else process.env.PACT_MAINNET_ENABLED = originalGate;
   });
 
   test("returns auto_deposit_capped when per_deposit_max_usdc exceeded", async () => {
@@ -30,8 +34,7 @@ describe("cmd/approve: policy enforcement", () => {
     const env = await approveCommand({
       amountUsdc: 1.0,
       configDir: dir,
-      rpcUrl: "https://api.devnet.solana.com",
-      cluster: "devnet",
+      rpcUrl: "https://api.mainnet-beta.solana.com",
     });
 
     expect(env.status).toBe("auto_deposit_capped");
@@ -54,8 +57,7 @@ describe("cmd/approve: policy enforcement", () => {
     const env = await approveCommand({
       amountUsdc: 0.1,
       configDir: dir,
-      rpcUrl: "https://api.devnet.solana.com",
-      cluster: "devnet",
+      rpcUrl: "https://api.mainnet-beta.solana.com",
       submitApprove: async (lamports: bigint) => {
         submittedLamports = lamports;
         return { tx_signature: "mock-sig-123", confirmation_pending: false };
@@ -74,21 +76,24 @@ describe("cmd/approve: policy enforcement", () => {
 
 describe("cmd/revoke", () => {
   let dir: string;
+  const originalGate = process.env.PACT_MAINNET_ENABLED;
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "pact-revoke-test-"));
+    process.env.PACT_MAINNET_ENABLED = "1";
   });
 
   afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
+    if (originalGate === undefined) delete process.env.PACT_MAINNET_ENABLED;
+    else process.env.PACT_MAINNET_ENABLED = originalGate;
   });
 
   test("returns ok with submitted signature", async () => {
     let revokeCalled = false;
     const env = await revokeCommand({
       configDir: dir,
-      rpcUrl: "https://api.devnet.solana.com",
-      cluster: "devnet",
+      rpcUrl: "https://api.mainnet-beta.solana.com",
       submitRevoke: async () => {
         revokeCalled = true;
         return { tx_signature: "mock-revoke-sig", confirmation_pending: false };

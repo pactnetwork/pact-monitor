@@ -7,7 +7,7 @@ import {
   validateClusterStrict,
 } from "../src/lib/validators.ts";
 
-describe("validateClusterStrict (mainnet gate)", () => {
+describe("validateClusterStrict (mainnet-only + gate)", () => {
   const originalEnabled = process.env.PACT_MAINNET_ENABLED;
   beforeEach(() => {
     delete process.env.PACT_MAINNET_ENABLED;
@@ -17,15 +17,15 @@ describe("validateClusterStrict (mainnet gate)", () => {
     else process.env.PACT_MAINNET_ENABLED = originalEnabled;
   });
 
-  test("accepts 'devnet' regardless of PACT_MAINNET_ENABLED", () => {
-    expect(validateClusterStrict("devnet")).toBe("devnet");
+  test("rejects 'devnet' — v0.1.0 is mainnet-only", () => {
+    expect(() => validateClusterStrict("devnet")).toThrow(InvalidArgumentError);
   });
 
   test("rejects 'mainnet' when PACT_MAINNET_ENABLED is not '1'", () => {
     expect(() => validateClusterStrict("mainnet")).toThrow(InvalidArgumentError);
   });
 
-  test("rejection message points at the PACT_MAINNET_ENABLED gate", () => {
+  test("rejection message for mainnet points at the PACT_MAINNET_ENABLED gate", () => {
     try {
       validateClusterStrict("mainnet");
       throw new Error("expected throw");
@@ -51,7 +51,6 @@ describe("--cluster mainnet end-to-end (gate enforcement)", () => {
   function cleanEnv(extra: Record<string, string> = {}): Record<string, string> {
     const base = { ...process.env } as Record<string, string>;
     delete base.PACT_MAINNET_ENABLED;
-    delete base.PACT_MAINNET_PROGRAM_ID;
     base.PACT_CLUSTER = "";
     return { ...base, ...extra };
   }
@@ -88,18 +87,36 @@ describe("--cluster mainnet end-to-end (gate enforcement)", () => {
     expect(env.body.error).toContain("PACT_MAINNET_ENABLED");
   });
 
-  test("--cluster mainnet with gate but no PACT_MAINNET_PROGRAM_ID → client_error envelope", async () => {
+  test("--cluster devnet → client_error (v0.1.0 is mainnet-only)", async () => {
     const proc = Bun.spawnSync({
-      cmd: ["bun", "src/index.ts", "--json", "--cluster", "mainnet", "balance"],
+      cmd: ["bun", "src/index.ts", "--json", "--cluster", "devnet", "balance"],
       cwd: `${import.meta.dir}/..`,
-      env: cleanEnv({ PACT_MAINNET_ENABLED: "1" }),
+      env: cleanEnv(),
       stdout: "pipe",
       stderr: "pipe",
     });
     const stdout = proc.stdout.toString().trim();
     const env = JSON.parse(stdout);
     expect(env.status).toBe("client_error");
-    expect(env.body.error).toContain("PACT_MAINNET_PROGRAM_ID");
+    expect(env.body.error).toContain("not supported");
+  });
+
+  test("bare `pact balance` (no --cluster) without gate → client_error envelope", async () => {
+    // Default --cluster is mainnet; commander does not run the validator on
+    // defaults, so the gate is enforced inside resolveClusterConfig at action
+    // time. Smoke-tests that path so a first-invocation accident can't reach
+    // mainnet.
+    const proc = Bun.spawnSync({
+      cmd: ["bun", "src/index.ts", "--json", "--project", "test", "balance"],
+      cwd: `${import.meta.dir}/..`,
+      env: cleanEnv(),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stdout = proc.stdout.toString().trim();
+    const env = JSON.parse(stdout);
+    expect(env.status).toBe("client_error");
+    expect(env.body.error).toContain("PACT_MAINNET_ENABLED");
   });
 });
 

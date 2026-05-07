@@ -1,12 +1,11 @@
 import { InvalidArgumentError } from "commander";
 
-// Tonight's mainnet launch ships closed-beta access. Mainnet is gated behind
-// PACT_MAINNET_ENABLED=1 so a default build cannot accidentally route real
-// USDC through the production program. devnet stays open. validators below
-// short-circuit invalid input to a `client_error` envelope before any RPC
-// or signing side effect.
-export function validateClusterStrict(value: string): "devnet" | "mainnet" {
-  if (value === "devnet") return "devnet";
+// v0.1.0 is mainnet-only. Mainnet is gated behind PACT_MAINNET_ENABLED=1 so
+// a default build cannot accidentally route real USDC through the production
+// program — kept as a defensive speed-bump for first-invocation safety. Any
+// other cluster value short-circuits to a `client_error` envelope before any
+// RPC or signing side effect.
+export function validateClusterStrict(value: string): "mainnet" {
   if (value === "mainnet") {
     if (process.env.PACT_MAINNET_ENABLED !== "1") {
       throw new InvalidArgumentError(
@@ -16,7 +15,7 @@ export function validateClusterStrict(value: string): "devnet" | "mainnet" {
     return "mainnet";
   }
   throw new InvalidArgumentError(
-    `--cluster ${value} not supported; choose 'devnet' or 'mainnet'`,
+    `--cluster ${value} not supported; v0.1.0 is mainnet-only (local devnet testing requires rebuilding the program per Rick's runbook)`,
   );
 }
 

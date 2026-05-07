@@ -20,12 +20,13 @@ import { initCommand } from "./cmd/init.ts";
 
 const VERSION = "0.1.0";
 const DEFAULT_GATEWAY = process.env.PACT_GATEWAY_URL ?? "https://market.pactnetwork.io";
-const DEFAULT_RPC = process.env.PACT_RPC_URL ?? "https://api.devnet.solana.com";
-// devnet is the default. mainnet is gated behind PACT_MAINNET_ENABLED=1 for
-// the closed-beta launch — see validateClusterStrict. Both --cluster and
-// PACT_CLUSTER flow through that validator so a closed gate short-circuits
-// to a client_error envelope before any wallet/RPC side effect.
-const DEFAULT_CLUSTER = "devnet" as const;
+const DEFAULT_RPC = process.env.PACT_RPC_URL ?? "https://api.mainnet-beta.solana.com";
+// v0.1.0 is mainnet-only. Mainnet still requires PACT_MAINNET_ENABLED=1 as a
+// defensive speed-bump so first-invocation accidents can't route real USDC.
+// Both --cluster and PACT_CLUSTER flow through validateClusterStrict so a
+// closed gate short-circuits to a client_error envelope before any
+// wallet/RPC side effect.
+const DEFAULT_CLUSTER = "mainnet" as const;
 
 function configDirFor(projectName: string): string {
   return join(homedir(), ".config", "pact", projectName);
@@ -92,7 +93,7 @@ program
   .option("--rpc <url>", "override Solana RPC URL", DEFAULT_RPC)
   .option(
     "--cluster <c>",
-    "devnet (default) or mainnet (requires PACT_MAINNET_ENABLED=1 + PACT_MAINNET_PROGRAM_ID)",
+    "mainnet only in v0.1.0 (requires PACT_MAINNET_ENABLED=1)",
     validateClusterStrict,
     DEFAULT_CLUSTER,
   );
@@ -142,7 +143,7 @@ program
       configDir: configDirFor(project),
       gatewayUrl: program.opts().gateway,
       project,
-      cluster: program.opts().cluster,
+      rpcUrl: program.opts().rpc,
       raw: options.raw,
       timeoutMs: (options.timeout as number) * 1000,
     });
@@ -157,7 +158,6 @@ program
     const env = await balanceCommand({
       configDir: configDirFor(project),
       rpcUrl: program.opts().rpc,
-      cluster: program.opts().cluster,
     });
     emit(env, Boolean(program.opts().json), Boolean(program.opts().quiet));
   });
@@ -174,7 +174,6 @@ program
       amountUsdc: usdc,
       configDir: configDirFor(project),
       rpcUrl: program.opts().rpc,
-      cluster: program.opts().cluster,
     });
     emit(env, Boolean(program.opts().json), Boolean(program.opts().quiet));
   });
@@ -187,7 +186,6 @@ program
     const env = await revokeCommand({
       configDir: configDirFor(project),
       rpcUrl: program.opts().rpc,
-      cluster: program.opts().cluster,
     });
     emit(env, Boolean(program.opts().json), Boolean(program.opts().quiet));
   });

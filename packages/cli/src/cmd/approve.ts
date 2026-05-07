@@ -20,10 +20,9 @@ export async function approveCommand(opts: {
   amountUsdc: number;
   configDir: string;
   rpcUrl: string;
-  cluster: "devnet" | "mainnet";
   submitApprove?: (allowanceLamports: bigint) => Promise<SubmitResult>;
 }): Promise<Envelope> {
-  const cfg = resolveClusterConfig(opts.cluster);
+  const cfg = resolveClusterConfig();
   if ("error" in cfg) {
     return { status: "client_error", body: { error: cfg.error } };
   }
@@ -89,10 +88,9 @@ export async function approveCommand(opts: {
 export async function revokeCommand(opts: {
   configDir: string;
   rpcUrl: string;
-  cluster: "devnet" | "mainnet";
   submitRevoke?: () => Promise<SubmitResult>;
 }): Promise<Envelope> {
-  const cfg = resolveClusterConfig(opts.cluster);
+  const cfg = resolveClusterConfig();
   if ("error" in cfg) {
     return { status: "client_error", body: { error: cfg.error } };
   }

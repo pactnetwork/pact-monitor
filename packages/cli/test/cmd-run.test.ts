@@ -45,7 +45,6 @@ describe("cmd/run", () => {
       configDir: dir,
       gatewayUrl: `http://localhost:${port}`,
       project: "test",
-      cluster: "devnet",
       skipBalanceCheck: true,
     });
     expect(env.status).toBe("ok");
@@ -61,7 +60,6 @@ describe("cmd/run", () => {
       configDir: dir,
       gatewayUrl: `http://localhost:${port}`,
       project: "test",
-      cluster: "devnet",
       skipBalanceCheck: true,
     });
     expect(env.status).toBe("no_provider");
@@ -75,7 +73,6 @@ describe("cmd/run", () => {
       configDir: dir,
       gatewayUrl: `http://localhost:${port}`,
       project: "test",
-      cluster: "devnet",
       skipBalanceCheck: true,
       raw: true,
     });
@@ -91,7 +88,6 @@ describe("cmd/run", () => {
       configDir: dir,
       gatewayUrl: `http://localhost:${port}`,
       project: "test",
-      cluster: "devnet",
       skipBalanceCheck: false,
       getBalanceLamports: async (_pubkey: PublicKey) => 0n,
     });
@@ -111,7 +107,6 @@ describe("cmd/run", () => {
       configDir: dir,
       gatewayUrl: `http://localhost:${port}`,
       project: "test",
-      cluster: "devnet",
       skipBalanceCheck: false,
       getBalanceLamports: async (_pubkey: PublicKey) => 1_000_000n,
     });
@@ -149,7 +144,6 @@ describe("cmd/run: signature_rejected", () => {
       configDir: dir,
       gatewayUrl: `http://localhost:${port}`,
       project: "test",
-      cluster: "devnet",
       skipBalanceCheck: true,
     });
     expect(env.status).toBe("signature_rejected");

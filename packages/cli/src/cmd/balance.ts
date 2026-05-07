@@ -10,9 +10,8 @@ import type { Envelope } from "../lib/envelope.ts";
 export async function balanceCommand(opts: {
   configDir: string;
   rpcUrl: string;
-  cluster: "devnet" | "mainnet";
 }): Promise<Envelope> {
-  const cfg = resolveClusterConfig(opts.cluster);
+  const cfg = resolveClusterConfig();
   if ("error" in cfg) {
     return { status: "client_error", body: { error: cfg.error } };
   }

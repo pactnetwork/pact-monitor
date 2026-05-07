@@ -3,7 +3,7 @@ import { Connection, PublicKey } from "@solana/web3.js";
 import { fetchEndpoints, resolveSlug, invalidateCache } from "../lib/discovery.ts";
 import { loadOrCreateWallet } from "../lib/wallet.ts";
 import { signedRequest, type SignedRequestResult } from "../lib/transport.ts";
-import { getUsdcAtaBalanceLamports, USDC_DEVNET_MINT, USDC_MAINNET_MINT } from "../lib/solana.ts";
+import { getUsdcAtaBalanceLamports, resolveClusterConfig } from "../lib/solana.ts";
 import { type Envelope, type Outcome } from "../lib/envelope.ts";
 
 export interface RunOpts {
@@ -14,7 +14,6 @@ export interface RunOpts {
   configDir: string;
   gatewayUrl: string;
   project: string;
-  cluster: "devnet" | "mainnet";
   rpcUrl?: string;
   raw?: boolean;
   skipBalanceCheck?: boolean;
@@ -67,12 +66,17 @@ export async function runCommand(opts: RunOpts): Promise<Envelope> {
     if (opts.getBalanceLamports) {
       balanceLamports = await opts.getBalanceLamports(pubkey);
     } else {
-      const rpcUrl = opts.rpcUrl ?? (opts.cluster === "mainnet"
-        ? "https://api.mainnet-beta.solana.com"
-        : "https://api.devnet.solana.com");
+      const cfg = resolveClusterConfig();
+      if ("error" in cfg) {
+        return { status: "client_error", body: { error: cfg.error } };
+      }
+      const rpcUrl = opts.rpcUrl ?? "https://api.mainnet-beta.solana.com";
       const connection = new Connection(rpcUrl, "confirmed");
-      const mint = opts.cluster === "mainnet" ? USDC_MAINNET_MINT : USDC_DEVNET_MINT;
-      balanceLamports = await getUsdcAtaBalanceLamports({ connection, agentPubkey: pubkey, mint });
+      balanceLamports = await getUsdcAtaBalanceLamports({
+        connection,
+        agentPubkey: pubkey,
+        mint: cfg.mint,
+      });
     }
     const estimatedPremium = BigInt(Math.max(100, Math.ceil(provider.premiumBps * 1_000_000 / 10000)));
     if (balanceLamports < estimatedPremium) {
