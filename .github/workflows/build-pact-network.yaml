@@ -120,41 +120,29 @@ jobs:
         id: sha
         run: echo "short_sha=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
 
-      - name: Resolve build args
-        id: buildargs
+      - name: Build and push image
+        id: build
+        env:
+          IMAGE: "${{ env.REGION }}-docker.pkg.dev/${{ steps.env.outputs.project_id }}/${{ env.AR_REPO }}/${{ inputs.service_name }}:${{ steps.sha.outputs.short_sha }}"
+          SERVICE_NAME: ${{ inputs.service_name }}
+          ENV_NAME: ${{ inputs.environment }}
+          DOCKERFILE_PATH: ${{ steps.df.outputs.path }}
+          BUILD_CONTEXT: ${{ inputs.context }}
         run: |
           # pact-market-dashboard is a Next.js standalone build — NEXT_PUBLIC_*
           # values are baked into the client bundle at build time. They're
           # public (visible in the JS the browser downloads), not secrets, so
           # they're hardcoded here. Mainnet-only — staging dashboard would
           # need different values; revisit when staging dashboard ships.
-          if [ "${{ inputs.service_name }}" = "pact-market-dashboard" ] \
-             && [ "${{ inputs.environment }}" = "production" ]; then
-            {
-              echo 'args<<EOF'
-              echo '--build-arg NEXT_PUBLIC_INDEXER_URL=https://indexer.pactnetwork.io'
-              echo '--build-arg NEXT_PUBLIC_USDC_MINT=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
-              echo '--build-arg NEXT_PUBLIC_SOLANA_RPC=https://api.mainnet-beta.solana.com'
-              echo 'EOF'
-            } >> $GITHUB_OUTPUT
-          else
-            echo "args=" >> $GITHUB_OUTPUT
+          BUILD_ARGS=""
+          if [ "$SERVICE_NAME" = "pact-market-dashboard" ] && [ "$ENV_NAME" = "production" ]; then
+            BUILD_ARGS="--build-arg NEXT_PUBLIC_INDEXER_URL=https://indexer.pactnetwork.io --build-arg NEXT_PUBLIC_USDC_MINT=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v --build-arg NEXT_PUBLIC_SOLANA_RPC=https://api.mainnet-beta.solana.com"
           fi
 
-      - name: Build and push image
-        id: build
-        env:
-          IMAGE: "${{ env.REGION }}-docker.pkg.dev/${{ steps.env.outputs.project_id }}/${{ env.AR_REPO }}/${{ inputs.service_name }}:${{ steps.sha.outputs.short_sha }}"
-        run: |
-          docker build \
-            --platform linux/amd64 \
-            -f ${{ steps.df.outputs.path }} \
-            ${{ steps.buildargs.outputs.args }} \
-            -t $IMAGE \
-            ${{ inputs.context }}
-          docker push $IMAGE
-          docker tag $IMAGE ${IMAGE%:*}:latest
-          docker push ${IMAGE%:*}:latest
+          docker build --platform linux/amd64 -f "$DOCKERFILE_PATH" $BUILD_ARGS -t "$IMAGE" "$BUILD_CONTEXT"
+          docker push "$IMAGE"
+          docker tag "$IMAGE" "${IMAGE%:*}:latest"
+          docker push "${IMAGE%:*}:latest"
           echo "image=$IMAGE" >> $GITHUB_OUTPUT
 
       - name: Notify Success
