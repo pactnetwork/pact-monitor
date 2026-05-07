@@ -51,10 +51,10 @@
  */
 import {
   Connection,
+  Keypair,
   PublicKey,
   SystemProgram,
   Transaction,
-  sendAndConfirmTransaction,
 } from "@solana/web3.js";
 import {
   buildInitializeProtocolConfigIx,
@@ -127,17 +127,75 @@ async function ensureBalance(conn: Connection, pubkey: PublicKey, minSol: number
   console.log(`  balance OK: ${balSol.toFixed(4)} SOL @ ${pubkey.toBase58()}`);
 }
 
+/**
+ * Send a tx and confirm via HTTP polling instead of websocket subscription.
+ *
+ * The default `sendAndConfirmTransaction` from @solana/web3.js calls the WS
+ * `signatureSubscribe` method, which Alchemy's free-tier Solana RPC does not
+ * expose. This helper sends via `sendRawTransaction` and polls
+ * `getSignatureStatuses` (HTTP) until the desired commitment is reached.
+ * Works on every standard RPC without needing a websocket endpoint.
+ */
+async function sendAndPoll(
+  conn: Connection,
+  tx: Transaction,
+  signers: Keypair[],
+  commitment: "confirmed" | "finalized" = "confirmed",
+  timeoutMs = 90_000,
+): Promise<string> {
+  if (signers.length === 0) throw new Error("sendAndPoll: at least one signer required");
+  const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash(commitment);
+  tx.feePayer = signers[0].publicKey;
+  tx.recentBlockhash = blockhash;
+  tx.lastValidBlockHeight = lastValidBlockHeight;
+  tx.sign(...signers);
+
+  const sig = await conn.sendRawTransaction(tx.serialize(), {
+    skipPreflight: false,
+    preflightCommitment: commitment,
+    maxRetries: 3,
+  });
+
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const res = await conn.getSignatureStatuses([sig], { searchTransactionHistory: false });
+    const status = res?.value?.[0];
+    if (status?.err) {
+      throw new Error(`tx ${sig} failed on-chain: ${JSON.stringify(status.err)}`);
+    }
+    const cs = status?.confirmationStatus as string | undefined;
+    if (cs === "finalized" || (commitment === "confirmed" && cs === "confirmed")) {
+      return sig;
+    }
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+  throw new Error(`tx ${sig} not confirmed within ${timeoutMs}ms (RPC subscription-free polling)`);
+}
+
 async function maybeSend(
   label: string,
   conn: Connection,
   tx: Transaction,
-  signers: Parameters<typeof sendAndConfirmTransaction>[2],
+  signers: Keypair[],
 ): Promise<string> {
   if (DRY_RUN) {
     console.log(`  [DRY_RUN] would send ${label} with ${signers.length} signer(s)`);
     return `DRY_RUN_${label.replace(/\s+/g, "_")}`;
   }
-  return sendAndConfirmTransaction(conn, tx, signers, { commitment: "confirmed" });
+  return sendAndPoll(conn, tx, signers, "confirmed");
+}
+
+/**
+ * Idempotency check: returns true if the PDA already has data on-chain.
+ * Each init step uses this to skip its tx if the target PDA exists.
+ */
+async function pdaExists(conn: Connection, pda: PublicKey): Promise<boolean> {
+  try {
+    const acct = await conn.getAccountInfo(pda, "confirmed");
+    return acct !== null && acct.data.length > 0;
+  } catch {
+    return false;
+  }
 }
 
 async function main() {
@@ -203,10 +261,15 @@ async function main() {
 
   const sigs: Record<string, string> = {};
 
+  const totalSteps = 3 + epConfig.endpoints.length;
+
   // ---------- 1. initialize_protocol_config ----------
   const [protocolConfigPda] = getProtocolConfigPda(programId);
-  console.log(`[1/8] initialize_protocol_config → ${protocolConfigPda.toBase58()}`);
-  {
+  console.log(`[1/${totalSteps}] initialize_protocol_config → ${protocolConfigPda.toBase58()}`);
+  if (!DRY_RUN && (await pdaExists(conn, protocolConfigPda))) {
+    console.log(`  already initialized — skipping\n`);
+    sigs.initializeProtocolConfig = "ALREADY_INITIALIZED";
+  } else {
     const ix = buildInitializeProtocolConfigIx({
       programId,
       authority: upgradeAuth.publicKey,
@@ -222,8 +285,11 @@ async function main() {
 
   // ---------- 2. initialize_treasury ----------
   const [treasuryPda] = getTreasuryPda(programId);
-  console.log(`[2/8] initialize_treasury → PDA ${treasuryPda.toBase58()}`);
-  {
+  console.log(`[2/${totalSteps}] initialize_treasury → PDA ${treasuryPda.toBase58()}`);
+  if (!DRY_RUN && (await pdaExists(conn, treasuryPda))) {
+    console.log(`  already initialized — skipping\n`);
+    sigs.initializeTreasury = "ALREADY_INITIALIZED";
+  } else {
     const rent = DRY_RUN
       ? 2_039_280
       : await conn.getMinimumBalanceForRentExemption(TOKEN_ACCOUNT_LEN);
@@ -250,8 +316,11 @@ async function main() {
 
   // ---------- 3. initialize_settlement_authority ----------
   const [saPda] = getSettlementAuthorityPda(programId);
-  console.log(`[3/8] initialize_settlement_authority → PDA ${saPda.toBase58()}`);
-  {
+  console.log(`[3/${totalSteps}] initialize_settlement_authority → PDA ${saPda.toBase58()}`);
+  if (!DRY_RUN && (await pdaExists(conn, saPda))) {
+    console.log(`  already initialized — skipping\n`);
+    sigs.initializeSettlementAuthority = "ALREADY_INITIALIZED";
+  } else {
     const ix = buildInitializeSettlementAuthorityIx({
       programId,
       authority: upgradeAuth.publicKey,
@@ -279,7 +348,7 @@ async function main() {
     const poolVault = poolVaults.get(ep.slug)!;
 
     console.log(
-      `[${step}/${3 + epConfig.endpoints.length}] register_endpoint("${ep.slug}")\n` +
+      `[${step}/${totalSteps}] register_endpoint("${ep.slug}")\n` +
         `  endpointConfig: ${endpointConfigPda.toBase58()}\n` +
         `  coveragePool:   ${coveragePool.toBase58()}\n` +
         `  poolVault:      ${poolVault.publicKey.toBase58()}\n` +
@@ -288,49 +357,54 @@ async function main() {
         `  SLA:            ${ep.slaLatencyMs}ms`,
     );
 
-    const rent = DRY_RUN
-      ? 2_039_280
-      : await conn.getMinimumBalanceForRentExemption(TOKEN_ACCOUNT_LEN);
-    const createIx = SystemProgram.createAccount({
-      fromPubkey: upgradeAuth.publicKey,
-      newAccountPubkey: poolVault.publicKey,
-      lamports: rent,
-      space: TOKEN_ACCOUNT_LEN,
-      programId: TOKEN_PROGRAM_ID,
-    });
-    const regIx = buildRegisterEndpointIx({
-      programId,
-      authority: upgradeAuth.publicKey,
-      protocolConfig: protocolConfigPda,
-      treasury: treasuryPda,
-      endpointConfig: endpointConfigPda,
-      coveragePool,
-      poolVault: poolVault.publicKey,
-      usdcMint,
-      slug,
-      flatPremiumLamports: BigInt(ep.flatPremiumLamports),
-      percentBps: ep.percentBps,
-      slaLatencyMs: ep.slaLatencyMs,
-      imputedCostLamports: BigInt(ep.imputedCostLamports),
-      exposureCapPerHourLamports: BigInt(ep.exposureCapPerHourLamports),
-      feeRecipients: [
-        {
-          kind: FeeRecipientKind.Treasury,
-          destination: treasuryPda.toBase58(),
-          bps: treasuryFeeBps,
-        },
-      ],
-      feeRecipientCount: 1,
-    });
-    const tx = new Transaction().add(createIx).add(regIx);
-    const sig = await maybeSend(
-      `register_endpoint:${ep.slug}`,
-      conn,
-      tx,
-      [upgradeAuth, poolVault],
-    );
-    console.log(`  sig: ${sig}\n`);
-    sigs[`registerEndpoint:${ep.slug}`] = sig;
+    if (!DRY_RUN && (await pdaExists(conn, endpointConfigPda))) {
+      console.log(`  already registered — skipping\n`);
+      sigs[`registerEndpoint:${ep.slug}`] = "ALREADY_INITIALIZED";
+    } else {
+      const rent = DRY_RUN
+        ? 2_039_280
+        : await conn.getMinimumBalanceForRentExemption(TOKEN_ACCOUNT_LEN);
+      const createIx = SystemProgram.createAccount({
+        fromPubkey: upgradeAuth.publicKey,
+        newAccountPubkey: poolVault.publicKey,
+        lamports: rent,
+        space: TOKEN_ACCOUNT_LEN,
+        programId: TOKEN_PROGRAM_ID,
+      });
+      const regIx = buildRegisterEndpointIx({
+        programId,
+        authority: upgradeAuth.publicKey,
+        protocolConfig: protocolConfigPda,
+        treasury: treasuryPda,
+        endpointConfig: endpointConfigPda,
+        coveragePool,
+        poolVault: poolVault.publicKey,
+        usdcMint,
+        slug,
+        flatPremiumLamports: BigInt(ep.flatPremiumLamports),
+        percentBps: ep.percentBps,
+        slaLatencyMs: ep.slaLatencyMs,
+        imputedCostLamports: BigInt(ep.imputedCostLamports),
+        exposureCapPerHourLamports: BigInt(ep.exposureCapPerHourLamports),
+        feeRecipients: [
+          {
+            kind: FeeRecipientKind.Treasury,
+            destination: treasuryPda.toBase58(),
+            bps: treasuryFeeBps,
+          },
+        ],
+        feeRecipientCount: 1,
+      });
+      const tx = new Transaction().add(createIx).add(regIx);
+      const sig = await maybeSend(
+        `register_endpoint:${ep.slug}`,
+        conn,
+        tx,
+        [upgradeAuth, poolVault],
+      );
+      console.log(`  sig: ${sig}\n`);
+      sigs[`registerEndpoint:${ep.slug}`] = sig;
+    }
 
     recorded!.push({
       slug: ep.slug,
