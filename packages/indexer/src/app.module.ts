@@ -6,6 +6,7 @@ import { EventsModule } from "./events/events.module";
 import { StatsModule } from "./stats/stats.module";
 import { ApiModule } from "./api/api.module";
 import { OpsModule } from "./ops/ops.module";
+import { SyncModule } from "./sync/sync.module";
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { OpsModule } from "./ops/ops.module";
     StatsModule,
     ApiModule,
     OpsModule,
+    SyncModule,
   ],
 })
 export class AppModule {}
