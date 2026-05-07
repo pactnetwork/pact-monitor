@@ -31,23 +31,35 @@ export class EndpointRegistry {
   }
 
   async reload(): Promise<void> {
+    // The Prisma schema in @pact-network/db creates table "Endpoint" (PascalCase,
+    // quoted) with camelCase columns (also quoted). Postgres requires double
+    // quotes for any identifier with uppercase letters. Querying lowercase
+    // `FROM endpoints` errors with `relation "endpoints" does not exist` and
+    // crashes the request handler with a generic 500.
     const { rows } = await this.pg.query(
-      `SELECT slug, flat_premium_lamports, percent_bps, sla_latency_ms,
-              imputed_cost_lamports, exposure_cap_per_hour_lamports,
-              paused, upstream_base, display_name FROM endpoints`
+      `SELECT slug,
+              "flatPremiumLamports",
+              "percentBps",
+              "slaLatencyMs",
+              "imputedCostLamports",
+              "exposureCapPerHourLamports",
+              paused,
+              "upstreamBase",
+              "displayName"
+       FROM "Endpoint"`
     );
     this.cache.clear();
     for (const r of rows) {
       this.cache.set(r.slug, {
         slug: r.slug,
-        flatPremiumLamports: BigInt(r.flat_premium_lamports),
-        percentBps: Number(r.percent_bps),
-        slaLatencyMs: Number(r.sla_latency_ms),
-        imputedCostLamports: BigInt(r.imputed_cost_lamports),
-        exposureCapPerHourLamports: BigInt(r.exposure_cap_per_hour_lamports),
+        flatPremiumLamports: BigInt(r.flatPremiumLamports),
+        percentBps: Number(r.percentBps),
+        slaLatencyMs: Number(r.slaLatencyMs),
+        imputedCostLamports: BigInt(r.imputedCostLamports),
+        exposureCapPerHourLamports: BigInt(r.exposureCapPerHourLamports),
         paused: Boolean(r.paused),
-        upstreamBase: r.upstream_base,
-        displayName: r.display_name,
+        upstreamBase: r.upstreamBase,
+        displayName: r.displayName,
       });
     }
     this.loadedAt = Date.now();
