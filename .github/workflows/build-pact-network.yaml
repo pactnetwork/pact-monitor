@@ -1,14 +1,20 @@
 # -----------------------------------------------------------------------------
 # Pact Network — Build & Push to Artifact Registry
 #
-# Builds one of three Cloud Run services from the pact-monitor monorepo:
-#   pact-market-proxy / pact-settler / pact-indexer
+# Builds one of four Cloud Run services from the pact-monitor monorepo:
+#   pact-market-proxy / pact-settler / pact-indexer / pact-market-dashboard
 #
 # Pattern: copied from devops/pipelines-gcp/qash/build.yaml (monorepo template).
 # The corresponding infra lives at devops/terraform-gcp/pact-network/.
 #
 # Existing build.yaml / deploy.yaml at the root of .github/workflows/ are for
 # the legacy pact-monitor-backend (staging-only, single service) and untouched.
+#
+# pact-market-dashboard is a Next.js 15 standalone build. Its NEXT_PUBLIC_*
+# values are baked into the client bundle at BUILD time (hardcoded below —
+# they're public values, not secrets). Other services receive their env via
+# `gcloud run services update --update-env-vars` post-deploy (see deploy
+# workflow).
 # -----------------------------------------------------------------------------
 
 name: Build and Push to AR (pact-network)
@@ -31,6 +37,7 @@ on:
           - pact-market-proxy
           - pact-settler
           - pact-indexer
+          - pact-market-dashboard
       dockerfile:
         description: "Path to Dockerfile (default = packages/<service>/Dockerfile)"
         required: false
@@ -83,7 +90,13 @@ jobs:
           if [ -n "${{ inputs.dockerfile }}" ]; then
             echo "path=${{ inputs.dockerfile }}" >> $GITHUB_OUTPUT
           else
-            echo "path=packages/${{ inputs.service_name == 'pact-market-proxy' && 'market-proxy' || (inputs.service_name == 'pact-settler' && 'settler' || 'indexer') }}/Dockerfile" >> $GITHUB_OUTPUT
+            case "${{ inputs.service_name }}" in
+              pact-market-proxy)     echo "path=packages/market-proxy/Dockerfile"     >> $GITHUB_OUTPUT ;;
+              pact-settler)          echo "path=packages/settler/Dockerfile"          >> $GITHUB_OUTPUT ;;
+              pact-indexer)          echo "path=packages/indexer/Dockerfile"          >> $GITHUB_OUTPUT ;;
+              pact-market-dashboard) echo "path=packages/market-dashboard/Dockerfile" >> $GITHUB_OUTPUT ;;
+              *)                     echo "Unknown service_name: ${{ inputs.service_name }}" && exit 1 ;;
+            esac
           fi
 
       - name: Create env file
@@ -107,6 +120,27 @@ jobs:
         id: sha
         run: echo "short_sha=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
 
+      - name: Resolve build args
+        id: buildargs
+        run: |
+          # pact-market-dashboard is a Next.js standalone build — NEXT_PUBLIC_*
+          # values are baked into the client bundle at build time. They're
+          # public (visible in the JS the browser downloads), not secrets, so
+          # they're hardcoded here. Mainnet-only — staging dashboard would
+          # need different values; revisit when staging dashboard ships.
+          if [ "${{ inputs.service_name }}" = "pact-market-dashboard" ] \
+             && [ "${{ inputs.environment }}" = "production" ]; then
+            {
+              echo 'args<<EOF'
+              echo '--build-arg NEXT_PUBLIC_INDEXER_URL=https://indexer.pactnetwork.io'
+              echo '--build-arg NEXT_PUBLIC_USDC_MINT=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
+              echo '--build-arg NEXT_PUBLIC_SOLANA_RPC=https://api.mainnet-beta.solana.com'
+              echo 'EOF'
+            } >> $GITHUB_OUTPUT
+          else
+            echo "args=" >> $GITHUB_OUTPUT
+          fi
+
       - name: Build and push image
         id: build
         env:
@@ -115,6 +149,7 @@ jobs:
           docker build \
             --platform linux/amd64 \
             -f ${{ steps.df.outputs.path }} \
+            ${{ steps.buildargs.outputs.args }} \
             -t $IMAGE \
             ${{ inputs.context }}
           docker push $IMAGE
