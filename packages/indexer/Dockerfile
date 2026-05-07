@@ -12,7 +12,10 @@ COPY packages/indexer/package.json ./packages/indexer/
 # Install all workspace deps (frozen)
 RUN pnpm install --frozen-lockfile
 
-# Copy sources
+# Copy sources (tsconfig.base.json is required because packages/db/tsconfig.json
+# extends ../../tsconfig.base.json — without it, tsc falls back to ES5 lib and
+# Prisma's generated types reference BigInt/Symbol/Map fail to compile)
+COPY tsconfig.base.json ./
 COPY packages/db/ ./packages/db/
 COPY packages/indexer/ ./packages/indexer/
 
