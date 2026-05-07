@@ -23,15 +23,29 @@
  * Usage:
  *   cd scripts/mainnet
  *   bun install
- *   bun run pause -- --paused 1     # PAUSE the protocol
- *   bun run pause -- --paused 0     # UNPAUSE the protocol
- *   DRY_RUN=1 bun run pause -- --paused 1   # rehearse
+ *   bun run pause -- --paused 1            # PAUSE the protocol (interactive y/N prompt)
+ *   bun run pause -- --paused 1 --yes      # PAUSE the protocol, skip confirmation
+ *   bun run pause -- --paused 0            # UNPAUSE the protocol (interactive y/N prompt)
+ *   DRY_RUN=1 bun run pause -- --paused 1  # rehearse (no prompt; no tx sent)
+ *
+ * Confirmation prompt:
+ *   For non-DRY_RUN runs, the script prints the destructive change clearly and
+ *   waits for the operator to type `y` or `yes` on stdin before sending the tx.
+ *   Anything else aborts with exit code 1. The prompt is skipped when:
+ *     - `DRY_RUN=1` (no tx will be sent), OR
+ *     - the operator passes `--yes` (incident-response automation).
  *
  * The script:
- *   1. Reads current `ProtocolConfig.paused` from chain.
+ *   1. Reads current `ProtocolConfig.paused` from chain (commitment=`confirmed`,
+ *      cheap pre-flight check).
  *   2. No-ops cleanly if the on-chain state already matches the requested target.
- *   3. Builds + signs `pause_protocol` (discriminator 15) with the upgrade authority.
- *   4. Sends the tx, then refetches and asserts the post-tx state matches the target.
+ *   3. Confirms the destructive change with the operator unless skipped.
+ *   4. Builds + signs `pause_protocol` (discriminator 15) with the upgrade authority.
+ *   5. Sends the tx with `confirmed` commitment, then refetches the
+ *      ProtocolConfig at `finalized` commitment to assert the post-tx state
+ *      matches the target. `finalized` is used here so a chain reorg cannot
+ *      let us walk away thinking the toggle landed when it might still be
+ *      rolled back.
  */
 import {
   Connection,
@@ -43,35 +57,48 @@ import {
   decodeProtocolConfig,
   getProtocolConfigPda,
 } from "@pact-network/protocol-v1-client";
+import { createInterface } from "node:readline";
 import { readKeypair, resolveKeyPath } from "./lib/keys";
 
 const KEYS_DIR = process.env.MAINNET_KEYS_DIR ?? "~/pact-mainnet-keys";
 const RPC_URL = process.env.MAINNET_RPC_URL ?? "https://api.mainnet-beta.solana.com";
 const DRY_RUN = process.env.DRY_RUN === "1" || process.env.DRY_RUN === "true";
 
-const USAGE = `Usage: bun run pause -- --paused <0|1>
+const USAGE = `Usage: bun run pause -- --paused <0|1> [--yes]
 
   --paused 1   PAUSE the protocol (every settle_batch fails fast with 6032)
   --paused 0   UNPAUSE the protocol (resume normal settlement)
+  --yes        Skip the interactive y/N confirmation prompt
 
 Env:
   MAINNET_KEYS_DIR  default ~/pact-mainnet-keys
   MAINNET_RPC_URL   default https://api.mainnet-beta.solana.com
-  DRY_RUN=1         skip sending; print what would happen
+  DRY_RUN=1         skip sending; print what would happen (also skips prompt)
 `;
 
-function parseTarget(argv: string[]): 0 | 1 {
-  // Accept --paused 1 or --paused=1.
+interface ParsedArgs {
+  target: 0 | 1;
+  yes: boolean;
+}
+
+function parseArgs(argv: string[]): ParsedArgs {
+  // Accept --paused 1 or --paused=1, plus a boolean --yes flag (no value).
   let value: string | undefined;
+  let yes = false;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--paused") {
       value = argv[i + 1];
-      break;
+      i++;
+      continue;
     }
     if (a.startsWith("--paused=")) {
       value = a.slice("--paused=".length);
-      break;
+      continue;
+    }
+    if (a === "--yes" || a === "-y") {
+      yes = true;
+      continue;
     }
   }
   if (value === undefined) {
@@ -82,7 +109,23 @@ function parseTarget(argv: string[]): 0 | 1 {
       `Invalid --paused value "${value}". Must be exactly 0 or 1.\n\n${USAGE}`,
     );
   }
-  return value === "1" ? 1 : 0;
+  return { target: value === "1" ? 1 : 0, yes };
+}
+
+/**
+ * Prompt the operator to confirm a destructive on-chain change. Resolves to
+ * true only if the operator types exactly `y` or `yes` (case-insensitive).
+ * Any other input — including EOF on stdin — resolves to false.
+ */
+function confirm(prompt: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    rl.question(prompt, (answer) => {
+      rl.close();
+      const a = (answer ?? "").trim().toLowerCase();
+      resolve(a === "y" || a === "yes");
+    });
+  });
 }
 
 function key(name: string): string {
@@ -94,13 +137,14 @@ function describe(p: number): "paused" | "unpaused" {
 }
 
 async function main() {
-  const target = parseTarget(process.argv.slice(2));
+  const { target, yes } = parseArgs(process.argv.slice(2));
 
   console.log(`=== Pact Network V1 mainnet pause_protocol ===`);
   console.log(`  RPC:    ${RPC_URL}`);
   console.log(`  Keys:   ${resolveKeyPath(KEYS_DIR)}`);
   console.log(`  Mode:   ${DRY_RUN ? "DRY RUN (no tx sent)" : "REAL (tx will land on mainnet)"}`);
-  console.log(`  Target: paused=${target} (${describe(target)})\n`);
+  console.log(`  Target: paused=${target} (${describe(target)})`);
+  console.log(`  Confirm: ${DRY_RUN ? "skipped (DRY_RUN)" : yes ? "skipped (--yes)" : "interactive y/N"}\n`);
 
   // Load keypairs up front so a missing file fails fast.
   const programKp = readKeypair(key("pact-network-v1-program-keypair.json"));
@@ -167,6 +211,26 @@ async function main() {
     return;
   }
 
+  // Operator confirmation. Skipped only with explicit --yes — no env var
+  // override on purpose; incident automation must opt in via the flag so a
+  // misset env never silently disables the prompt.
+  if (!yes) {
+    const promptText =
+      `About to set ProtocolConfig.paused ${current} -> ${target} on mainnet ` +
+      `(${RPC_URL}).\n` +
+      `  ProtocolConfig: ${protocolConfigPda.toBase58()}\n` +
+      `  Authority:      ${upgradeAuth.publicKey.toBase58()}\n` +
+      `Type 'yes' to confirm, anything else aborts: `;
+    const ok = await confirm(promptText);
+    if (!ok) {
+      console.error(
+        "\nAborted by operator (no 'y'/'yes' confirmation). No tx sent.",
+      );
+      process.exit(1);
+    }
+    console.log("");
+  }
+
   // Build + send the tx.
   const ix = buildPauseProtocolIx({
     programId,
@@ -180,8 +244,11 @@ async function main() {
   });
   console.log(`  sig: ${sig}\n`);
 
-  // Verify post-tx state.
-  const postAcct = await conn.getAccountInfo(protocolConfigPda, "confirmed");
+  // Verify post-tx state at `finalized` so a chain reorg (rare on Solana but
+  // real) cannot let us walk away thinking the toggle landed when it might
+  // still be rolled back. The pre-tx fetch above used `confirmed` because
+  // it's a low-stakes read; this one is the real verification gate.
+  const postAcct = await conn.getAccountInfo(protocolConfigPda, "finalized");
   if (!postAcct) {
     throw new Error(
       `Post-tx fetch returned null for ${protocolConfigPda.toBase58()}. ` +
@@ -190,7 +257,7 @@ async function main() {
   }
   const postCfg = decodeProtocolConfig(postAcct.data);
   const postPaused = postCfg.paused;
-  console.log(`Post-tx paused=${postPaused} (${describe(postPaused)})`);
+  console.log(`Post-tx (finalized) paused=${postPaused} (${describe(postPaused)})`);
 
   const expectedNonZero = target === 1;
   const actualNonZero = postPaused !== 0;
