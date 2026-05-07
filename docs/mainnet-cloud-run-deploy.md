@@ -25,7 +25,7 @@ To bring up production:
 1. Rick creates the `pact-network-prod` GCP project + links billing.
 2. Capture `project_number`; fill it into `terraform-gcp/pact-network-prod/terraform.tfvars` and the two GitHub workflows.
 3. `cd ~/devops/terraform-gcp/pact-network-prod && terraform init && terraform apply`.
-4. Add GitHub repo secrets (`ENV_PROD`, `ORG_GITHUB_TOKEN`, `PACT_HELIUS_API_KEY` value pushed via `gcloud secrets versions add`).
+4. Add GitHub repo secrets (`ENV_PROD`, `ORG_GITHUB_TOKEN`). Push two RPC API keys via `gcloud secrets versions add`: `PACT_ALCHEMY_API_KEY` (Pact's internal Solana RPC) and `PACT_HELIUS_API_KEY` (upstream for the user-facing `helius` endpoint slug).
 5. Trigger `build-pact-network.yaml` (per service) → `deploy-pact-network.yaml` (per service).
 6. Phase 2: point `api.pactnetwork.io` and `indexer.pactnetwork.io` A records at the LB IP from `terraform output lb_ip`. Wait 15-30 min for SSL.
 
@@ -72,10 +72,10 @@ The operational sections below describe what runs where, env vars, monitoring, c
             ▼                                                ▼
    ┌──────────────────┐                  ┌────────────────────────────────┐
    │ Solana mainnet   │                  │ Cloud Run: pact-indexer        │
-   │ - Helius free    │                  │ - NestJS, asia-southeast1      │
+   │ - Alchemy        │                  │ - NestJS, asia-southeast1      │
    │ - api.mainnet... │                  │ - Public read API at           │
-   │ (HA via Helius   │                  │   indexer.pactnetwork.io       │
-   │  + fallback)     │                  │ - Connects to Cloud SQL        │
+   │   (HA fallback)  │                  │   indexer.pactnetwork.io       │
+   │                  │                  │ - Connects to Cloud SQL        │
    └──────────────────┘                  └────────────────────────────────┘
                                                           │
                                                           ▼
@@ -100,7 +100,7 @@ Five deployables:
 - **market-dashboard** → Vercel (public)
 - **postgres** → Cloud SQL (private)
 
-Plus three GCP-managed resources (all created by Terraform): Pub/Sub topic + subscription + DLQ, Secret Manager (for settlement-authority keypair, indexer push secret, db password, Helius API key), and Cloud SQL.
+Plus three GCP-managed resources (all created by Terraform): Pub/Sub topic + subscription + DLQ, Secret Manager (for settlement-authority keypair, indexer push secret, db password, Alchemy API key, Helius API key), and Cloud SQL.
 
 ---
 
@@ -119,7 +119,7 @@ vercel env add NEXT_PUBLIC_INDEXER_URL production
 # value: https://indexer.pactnetwork.io
 
 vercel env add NEXT_PUBLIC_RPC_URL production
-# value: https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}
+# value: https://solana-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}
 
 vercel env add NEXT_PUBLIC_PROGRAM_ID production
 # value: 5bCJcdWdKLJ7arrMVMFh3z99rQDxV785fnD9XGcr3xwc
@@ -149,8 +149,11 @@ LOG_LEVEL: info
 
 ```yaml
 PUBSUB_TOPIC: projects/pact-network-prod/topics/pact-settle-events
+# Upstream URL for the `helius` endpoint slug we proxy on behalf of users.
+# Separate concern from Pact's own internal Solana RPC (SOLANA_RPC_URL below).
 HELIUS_UPSTREAM_URL: https://mainnet.helius-rpc.com/?api-key=${PACT_HELIUS_API_KEY}
-SOLANA_RPC_URL: https://mainnet.helius-rpc.com/?api-key=${PACT_HELIUS_API_KEY}
+# Internal Solana RPC for chain reads (SPL Token Approval state, agent ATA balances, etc.)
+SOLANA_RPC_URL: https://solana-mainnet.g.alchemy.com/v2/${PACT_ALCHEMY_API_KEY}
 BIRDEYE_UPSTREAM_URL: https://public-api.birdeye.so
 JUPITER_UPSTREAM_URL: https://api.jup.ag
 ELFA_UPSTREAM_URL: https://api.elfa.ai
@@ -159,12 +162,13 @@ DEMO_BREACH_ALLOWLIST: ""  # MUST be empty in prod
 ```
 
 Secrets bound to env (`--set-secrets`):
-- `PACT_HELIUS_API_KEY`
+- `PACT_HELIUS_API_KEY` — for forwarding user calls to the `helius` endpoint slug
+- `PACT_ALCHEMY_API_KEY` — for Pact's internal Solana RPC reads
 
 ### pact-settler
 
 ```yaml
-RPC_URL: https://mainnet.helius-rpc.com/?api-key=${PACT_HELIUS_API_KEY}
+RPC_URL: https://solana-mainnet.g.alchemy.com/v2/${PACT_ALCHEMY_API_KEY}
 PUBSUB_PROJECT: pact-network-prod
 PUBSUB_SUBSCRIPTION: pact-settle-events-settler
 INDEXER_URL: https://indexer.pactnetwork.io
@@ -175,7 +179,7 @@ SETTLER_BATCH_SIZE: 3   # MAX_BATCH_SIZE per FIX-1
 Secrets bound to env (`--set-secrets`):
 - `PACT_SETTLEMENT_AUTHORITY_JSON` → mounted, NOT env-injected. Set `SETTLEMENT_AUTHORITY_KEYPAIR_PATH` to the mount path.
 - `PACT_INDEXER_PUSH_SECRET`
-- `PACT_HELIUS_API_KEY`
+- `PACT_ALCHEMY_API_KEY` — for `settle_batch` tx submission + chain state reads
 
 ### pact-indexer
 
@@ -274,7 +278,8 @@ Pin these as saved Logs Explorer queries.
 | Cloud Run egress | low at beta | $1-5 |
 | Vercel hobby (dashboard) | hobby tier | $0-20 |
 | **Subtotal (GCP + Vercel)** | | **~$110-185/mo** |
-| Helius mainnet RPC (if exceeding free tier) | ~5M req/mo | $50 |
+| Alchemy Solana RPC (Pact's internal RPC) | growth tier if exceeding free | $0-50 |
+| Helius mainnet RPC (upstream for `helius` endpoint slug) | ~5M req/mo | $0-50 |
 | Mainnet SOL for tx fees | ~0.045 SOL/mo at beta | <$10 |
 
 ---
@@ -347,7 +352,7 @@ NOT a one-step operation. Options:
 Run this before flipping DNS:
 
 - [ ] `terraform apply` in `~/devops/terraform-gcp/pact-network-prod/` succeeded; `terraform output lb_ip` returns an IP.
-- [ ] All 4 secret values pushed via `gcloud secrets versions add` (Helius API key, settlement-authority JSON, indexer push secret, db password). Confirm with `gcloud secrets versions list <NAME> --project=pact-network-prod`.
+- [ ] All 5 secret values pushed via `gcloud secrets versions add` (Alchemy API key, Helius API key, settlement-authority JSON, indexer push secret, db password). Confirm with `gcloud secrets versions list <NAME> --project=pact-network-prod`.
 - [ ] First-time deploy of each service via `deploy-pact-network.yaml` includes `--set-secrets` to bind secret env vars. (One-shot — bindings persist across future deploys.)
 - [ ] All 3 Cloud Run services deployed, health checks pass:
   ```bash
@@ -381,7 +386,8 @@ After all green: invite first selected user, monitor `gcloud logs tail` for an h
 | Mainnet 10-call smoke harness (task #19) — adapt smoke-tier2 against real mainnet | TODO |
 | User disclosure copy + onboarding doc (task #20) | TODO |
 | GCP project provisioned (`pact-network-prod`) | NOT YET — Rick to do |
-| Helius mainnet API key | NOT YET — Rick to obtain |
+| Alchemy mainnet API key (Pact's internal Solana RPC) | NOT YET — Rick to obtain |
+| Helius mainnet API key (upstream for `helius` endpoint slug) | NOT YET — Rick to obtain |
 | `pactnetwork.io` DNS access | NOT YET — Rick to confirm |
 | GitHub repo secrets (`ENV_PROD`, `ORG_GITHUB_TOKEN`) | NOT YET — Rick to set |
 
@@ -392,10 +398,11 @@ Before any of this can run, Rick needs to:
    - `~/devops/terraform-gcp/pact-network-prod/terraform.tfvars` — `project_number` and `default_compute_sa`.
    - `pact-monitor/.github/workflows/build-pact-network.yaml` — replace `TODO_FILL_AFTER_PROJECT_CREATION`.
    - `pact-monitor/.github/workflows/deploy-pact-network.yaml` — same.
-4. Generate a Helius mainnet API key (free tier OK for beta).
-5. Confirm DNS control at `pactnetwork.io`.
-6. Run `terraform init && terraform apply` in `~/devops/terraform-gcp/pact-network-prod/`.
-7. Push the 4 secret values via `gcloud secrets versions add ... --data-file=-`.
+4. Generate an Alchemy mainnet API key for Pact's internal Solana RPC (free tier OK for beta).
+5. Generate a Helius mainnet API key for the upstream `helius` endpoint slug we proxy.
+6. Confirm DNS control at `pactnetwork.io`.
+7. Run `terraform init && terraform apply` in `~/devops/terraform-gcp/pact-network-prod/`.
+8. Push the 5 secret values via `gcloud secrets versions add ... --data-file=-`.
 8. Trigger build + deploy workflow per service. First deploy must add `--set-secrets` (one-shot — see §3 secret list).
 9. Phase 2: add A records pointing both subdomains to `terraform output lb_ip`.
 
