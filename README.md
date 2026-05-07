@@ -15,6 +15,42 @@ Provider tiers:
 - **ELEVATED** — failure rate 1%--5%
 - **HIGH RISK** — failure rate > 5%
 
+## On-chain Programs
+
+V1 (Pinocchio 0.10, ~88 KB binary): per-endpoint coverage pools, agent SPL-Approve custody, fee fan-out, on-chain `pause_protocol` kill switch.
+
+### Mainnet — production
+
+| | |
+|---|---|
+| **Program ID** | [`5bCJcdWdKLJ7arrMVMFh3z99rQDxV785fnD9XGcr3xwc`](https://explorer.solana.com/address/5bCJcdWdKLJ7arrMVMFh3z99rQDxV785fnD9XGcr3xwc) |
+| **Upgrade authority** | `JB7rp9wMerZbP3yQLL8ZJx5kxRxvhkcfEzaAhuG5uThL` |
+| **ProgramData** | `6iRJjfUMq4xqFbTSsF2dC2ARv6K3MFWSvCHcVwnrHhoN` |
+| **Loader** | `BPFLoaderUpgradeable11111111111111111111111` |
+| **Binary size** | 88,680 bytes |
+| **First deploy** | 2026-05-07, slot `418138207` |
+| **Status** | Live; private beta |
+
+The mainnet upgrade authority is currently a laptop hot key. **Rotation to a Squads multisig is scheduled within 2-4 weeks of launch.** The protocol authority + Treasury authority share this same key for V1 simplicity.
+
+### Devnet — testing
+
+| | |
+|---|---|
+| **Program ID** | [`5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5`](https://explorer.solana.com/address/5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5?cluster=devnet) |
+| **Upgrade authority** | `47Fg5JqMsCeuRyDsFtD7Ra7YTdzVmTr2mZ1R2dUkZyfS` (hot key — fine for devnet) |
+| **Status** | Used for end-to-end smoke / integration tests |
+
+### Orphans — do NOT target
+
+Earlier deploys that should not be referenced by any client. Listed only so log scrapers and migration tooling can recognise legacy traffic.
+
+| Program ID | Network | Reason |
+|---|---|---|
+| `DhWibM2z3Vwp5VmJyashoeZCAZHLFKeHab8o12qYsiQc` | devnet | pre-Step-C Wave 1A binary; original upgrade authority lost |
+
+These addresses are also exported as constants in `packages/protocol-v1-client/src/constants.ts` (`PROGRAM_ID`, `ORPHAN_PROGRAM_ID_PRE_STEP_C`, `ORPHAN_PROGRAM_ID_DEVNET_STEP_C`).
+
 ## Monorepo Structure
 
 ```
@@ -170,7 +206,7 @@ Brutalist aesthetic. No gradients, no rounded corners, no emojis.
 
 The Anchor program at `packages/program/` lifts the parametric insurance from a simulated DB row into a real on-chain market. See [`docs/PHASE3.md`](./docs/PHASE3.md) for the full design, devnet state, and operator runbook.
 
-**Devnet program**: `4Z1Y3W49U2Cn6bz9UpkahVP7LaeobQ4cAaEt3uNaqSob`
+For canonical mainnet + devnet program IDs, see [On-chain Programs](#on-chain-programs) above.
 
 **New here?** Three docs to read in order:
 1. [`docs/ONBOARDING.md`](./docs/ONBOARDING.md) — narrative walkthrough for someone who knows nothing
