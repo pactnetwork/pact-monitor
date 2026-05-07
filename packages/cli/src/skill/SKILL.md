@@ -43,7 +43,25 @@ You may run `pact approve <amount>` automatically as long as `<amount> <= per_de
 - `pact agents show --json` — see recent calls + refunds
 - `pact approve <usdc> --json` — grant SPL Token allowance to SettlementAuthority
 - `pact revoke --json` — remove the allowance
+- `pact pay <tool> [args...]` — wrap any CLI tool through 402 challenges using the existing allowance (see below)
 - `pact pause --json` — admin only; protocol kill switch. Requires `PACT_PRIVATE_KEY` to hold the ProtocolConfig.authority secret. Do NOT run unless the user is the protocol operator.
+
+## `pact pay` — wrap a CLI through 402 challenges
+
+When the user has a tool that doesn't go through the listed hostnames but
+still hits a 402-gated paid API (e.g. an x402 or MPP endpoint), use
+`pact pay <tool>` to wrap it. v0.1.0 supports `curl` only:
+
+```bash
+pact pay curl https://debugger.pay.sh/mpp/quote/AAPL
+```
+
+`pact pay` runs the wrapped tool, intercepts a 402 response, signs a
+`pact-allowance` authorization with the project wallet, and re-runs the
+tool with the retry header attached. The wrapped tool's stdout passes
+through unchanged so you can `| jq '...'` as usual. On failure paths
+(unsupported tool, payment rejected) the command emits a JSON envelope
+on stderr with a `status: client_error` and a structured `error` code.
 
 ## Critical rules
 

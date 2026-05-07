@@ -24,6 +24,7 @@ pact balance                           # ATA balance + granted allowance
 pact approve 5                         # SPL Token Approve to SettlementAuthority
 pact revoke                            # remove the allowance
 pact agents show
+pact pay curl https://api.example.com  # wrap any tool through 402 challenges
 ```
 
 ## Custody model
@@ -31,6 +32,33 @@ pact agents show
 Your USDC stays in your own associated token account (ATA). `pact approve <usdc>` issues an SPL Token `Approve` ix that authorizes the protocol's `SettlementAuthority` PDA to debit up to `<usdc>` lamports during settlement. `pact approve` does **not** move funds — fund your mainnet USDC ATA externally (bridge or transfer in).
 
 `pact balance` reports both ATA balance and currently-granted allowance plus an `eligible` flag mirroring what the program will see at debit time.
+
+## `pact pay <tool> [args...]`
+
+Wrap any CLI tool so its 402-gated requests settle through the agent's
+existing SPL Approve allowance to `SettlementAuthority`. Calling convention
+matches [solana-foundation/pay](https://github.com/solana-foundation/pay):
+
+```bash
+pact pay curl https://api.example.com/v1/quote/AAPL
+pact pay curl -X POST -d '{...}' https://api.example.com/v1/orders
+```
+
+When the upstream returns 402 with an `X-Payment-Required` header (x402) or
+`WWW-Authenticate: SolanaCharge ...` (MPP), `pact pay` parses the challenge,
+signs a `pact-allowance` authorization with the project wallet, and re-runs
+the wrapped tool with the retry header attached. Stdout / stderr / exit code
+of the wrapped tool pass through transparently — `pact pay` only emits a
+JSON envelope on failure paths (unsupported tool, payment rejected, unknown
+402, retry failure).
+
+There is no per-call biometric prompt: the project wallet is on-disk at
+`~/.config/pact/<project>/wallet.json`, and the on-chain debit happens
+server-side via Pact's gateway using the previously-granted allowance.
+
+v0.1.0 supports `curl` only. Other tools (`wget`, `http` (HTTPie), `claude`,
+`codex`) are explicit non-MVP and return a `client_error` envelope so
+callers can detect the gap programmatically.
 
 ## Admin: `pact pause`
 
