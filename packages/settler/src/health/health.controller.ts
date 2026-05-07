@@ -5,9 +5,17 @@ import {
   HttpStatus,
   Res,
 } from "@nestjs/common";
-import type { Response } from "express";
 
 import { PipelineService } from "../pipeline/pipeline.service";
+
+/**
+ * Minimal shape of the express.Response object used here. Inlined so we
+ * don't have to add @types/express to the settler package just for one
+ * .status() call.
+ */
+interface MinimalResponse {
+  status(code: number): unknown;
+}
 import {
   CRIT_THRESHOLD_LAMPORTS,
   LAMPORTS_PER_SOL,
@@ -60,7 +68,7 @@ export class HealthController {
    */
   @Get()
   @HttpCode(HttpStatus.OK)
-  check(@Res({ passthrough: true }) res: Response): HealthResponse {
+  check(@Res({ passthrough: true }) res: MinimalResponse): HealthResponse {
     const lamports = this.balance.currentLamports;
     const lastPolledAt = this.balance.lastPolledAt;
     const lastError = this.balance.lastError;
