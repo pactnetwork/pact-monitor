@@ -26,7 +26,7 @@ export default async function HomePage() {
       <div>
         <h1 className="font-serif text-3xl text-[#f5f0eb] mb-1">Pact Market</h1>
         <p className="text-sm text-[#8a7a70]">
-          Parametric API insurance for Solana agents — devnet
+          Parametric API coverage for Solana agents — mainnet
         </p>
       </div>
 
