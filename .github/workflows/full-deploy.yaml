@@ -19,6 +19,10 @@ on:
         required: false
         default: "packages/backend"
 
+permissions:
+  contents: read
+  id-token: write
+
 jobs:
   build:
     name: Build
