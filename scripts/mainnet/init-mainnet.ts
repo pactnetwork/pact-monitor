@@ -14,7 +14,7 @@
  *
  * Pre-flight:
  *   - All keypair files present in $MAINNET_KEYS_DIR (default: ~/pact-mainnet-keys)
- *   - Upgrade-authority funded with ≥1.5 SOL mainnet
+ *   - Upgrade-authority funded with ≥1 SOL mainnet (covers ~0.62 SOL deploy rent + ~0.05 SOL init txs + buffer; was 1.5 before dropping --max-len from deploy)
  *   - Program already deployed (run scripts/mainnet/02-deploy.sh first or `solana program deploy` manually)
  *   - endpoint-config.json reviewed and finalised
  *

@@ -19,7 +19,7 @@ A single Pinocchio 0.10 SBF binary built from `packages/program/programs-pinocch
 | Binary size | ~88 KB |
 | Build flag | `cargo build-sbf --features bpf-entrypoint` |
 | Network | Solana mainnet-beta |
-| SOL needed | ~1.5 SOL on the upgrade-authority pubkey |
+| SOL needed | ~1 SOL on the upgrade-authority pubkey (covers ~0.62 SOL rent + ~0.05 init txs + buffer) |
 
 The binary contains 16 instructions: `initialize_protocol_config`, `initialize_treasury`, `initialize_settlement_authority`, `register_endpoint`, `pause_endpoint`, `top_up_coverage_pool`, `update_endpoint_config`, `update_fee_recipients`, `settle_batch`, `pause_protocol`, plus internals.
 
@@ -61,7 +61,7 @@ ls -la ~/pact-mainnet-keys/
 
 ### 1.3 Funding
 
-The upgrade-authority pubkey needs **≥1.5 SOL mainnet** before the deploy step.
+The upgrade-authority pubkey needs **≥1 SOL mainnet** before the deploy step.
 
 ```bash
 solana config set --url https://api.mainnet-beta.solana.com
@@ -71,13 +71,15 @@ solana balance
 ```
 
 Estimated spend:
-- Program rent (88 KB × ~0.0072 SOL/KB exempt rate × 2 for Loader v3 buffer): ~0.6 SOL
+- Program rent for 88,680-byte ProgramData: `(88,680 + 128) × 6,960 / 1e9` ≈ **0.62 SOL**
 - Per-tx fees during deploy: ~0.005 SOL
 - Init txs (8 of them, after deploy): ~0.05 SOL
-- Buffer cushion: 0.5 SOL
-- **Total: ~1.2 SOL conservatively, 1.5 SOL safe**
+- Buffer cushion: 0.3 SOL
+- **Total: ~1.0 SOL safe**
 
-If the deploy fails partway with "Account allocation failed" you'll need ~0.5 SOL more — top up and retry. Solana CLI auto-resumes from the buffer.
+> The deploy command below intentionally omits `--max-len`. Solana sizes ProgramData to the binary, keeping rent at ~0.62 SOL. If you ever ship a binary larger than the current allocation, run `solana program extend <PROG_ID> <ADDITIONAL_BYTES>` first (one tx, pays rent on the new bytes only). For comparison: passing `--max-len 1048576` would have allocated 1 MB and required **~7.3 SOL** of rent upfront — not what we want for V1 launch.
+
+If the deploy fails partway with "Account allocation failed" you'll need ~0.3 SOL more — top up and retry. Solana CLI auto-resumes from the buffer.
 
 ---
 
@@ -147,13 +149,12 @@ solana balance
 # Deploy
 solana program deploy \
   --program-id ~/pact-mainnet-keys/pact-network-v1-program-keypair.json \
-  ~/Downloads/pact_network_v1.so \
-  --max-len 1048576
+  ~/Downloads/pact_network_v1.so
 ```
 
-### 3.1 What `--max-len 1048576` does
+### 3.1 Why no `--max-len`
 
-Allocates 1 MB for the program account regardless of current binary size. This lets you upgrade to a larger binary later without re-deploying at a new address. 1 MB is the standard ceiling — covers any realistic future binary growth.
+ProgramData is sized to fit the binary exactly (~88 KB), keeping rent at ~0.62 SOL. To upgrade to a larger binary later, run `solana program extend <PROG_ID> <ADDITIONAL_BYTES>` once before the upgrade `deploy` — pays only the marginal rent for the new bytes. Trade-off: passing a large `--max-len` upfront pre-pays for capacity you may never use (1 MB = ~7.3 SOL of locked rent).
 
 ### 3.2 Watch for the success line
 
@@ -242,7 +243,14 @@ solana program deploy \
   ../../target/deploy/pact_network_v1.so
 ```
 
-(No `--max-len` needed on upgrade — the program account already has the 1 MB allocation from initial deploy.)
+If the new binary is **larger** than the existing ProgramData allocation, you'll get an error. Extend first:
+
+```bash
+solana program extend <PROGRAM_ID> <ADDITIONAL_BYTES_NEEDED> \
+  --keypair ~/pact-mainnet-keys/pact-mainnet-upgrade-authority.json
+```
+
+Then re-run `solana program deploy`. The extend tx costs the marginal rent for the new bytes (~0.007 SOL per KB).
 
 The upgrade is atomic from the user's perspective: the next slot after the deploy tx confirms uses the new binary. There's no downtime, but there's a 1-2 slot window where in-flight `settle_batch` txs could land against the old binary OR the new one. If the upgrade changes account layouts in a non-backwards-compatible way, **pause the protocol first** (§7) to drain in-flight txs, then upgrade, then unpause.
 
@@ -353,7 +361,7 @@ Run through before clicking deploy:
 - [ ] Seed phrases backed up offline (paper or password manager — NOT cloud sync)
 - [ ] FileVault / disk encryption ON for the laptop
 - [ ] `solana config get` shows mainnet URL + upgrade-authority keypair
-- [ ] `solana balance` ≥ 1.5 SOL
+- [ ] `solana balance` ≥ 1 SOL
 - [ ] Built binary is 88 KB (not 3 KB stub)
 - [ ] `grep declare_id` shows mainnet pubkey, not devnet
 - [ ] Squads multisig pre-staged (rotate-target captured) — can defer if launch is urgent

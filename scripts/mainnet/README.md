@@ -14,14 +14,15 @@ for slug in helius birdeye jupiter elfa fal; do
 done
 chmod 600 ~/pact-mainnet-keys/*.json
 
-# Phase 2: deploy program (~0.6 SOL)
+# Phase 2: deploy program (~0.62 SOL rent — no --max-len, ProgramData fits binary)
 solana config set --url https://api.mainnet-beta.solana.com
 solana config set --keypair ~/pact-mainnet-keys/pact-mainnet-upgrade-authority.json
-solana balance   # need ≥1.5 SOL
+solana balance   # need ≥1 SOL
 solana program deploy \
   --program-id ~/pact-mainnet-keys/pact-network-v1-program-keypair.json \
-  ~/Downloads/pact_network_v1.so \
-  --max-len 1048576
+  ~/Downloads/pact_network_v1.so
+# To grow the binary in a future upgrade:
+#   solana program extend <PROG_ID> <ADDITIONAL_BYTES>  (pays marginal rent only)
 
 # Phase 3: rehearsal init (no txs sent)
 cd /path/to/pact-monitor/scripts/mainnet
@@ -82,7 +83,7 @@ Save this output — `init-mainnet.ts` will use these and the printout is your i
 
 ## Phase 2: Deploy program
 
-You need ≥**1.5 SOL** on the upgrade-authority pubkey before this step. If you've already funded it, verify:
+You need ≥**1 SOL** on the upgrade-authority pubkey before this step. (~0.62 rent + ~0.05 init + buffer — no `--max-len` keeps it cheap.) If you've already funded it, verify:
 
 ```bash
 solana config set --url https://api.mainnet-beta.solana.com
@@ -114,9 +115,10 @@ Deploy:
 ```bash
 solana program deploy \
   --program-id ~/pact-mainnet-keys/pact-network-v1-program-keypair.json \
-  ~/Downloads/pact_network_v1.so \
-  --max-len 1048576
+  ~/Downloads/pact_network_v1.so
 ```
+
+> No `--max-len`. ProgramData is sized to the binary (~88KB), keeping rent at ~0.62 SOL. If a future binary is bigger than that, run `solana program extend <PROG_ID> <ADDITIONAL_BYTES>` once before the upgrade `deploy`.
 
 Watch for:
 ```

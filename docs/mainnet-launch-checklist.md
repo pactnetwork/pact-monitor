@@ -174,9 +174,10 @@ ls -la ../../target/deploy/pact_network_v1.so
 ```bash
 solana program deploy \
   --program-id ~/pact-mainnet-keys/pact-network-v1-program-keypair.json \
-  packages/program/target/deploy/pact_network_v1.so \
-  --max-len 1048576
+  packages/program/target/deploy/pact_network_v1.so
 ```
+
+> No `--max-len` — ProgramData sized to the binary, rent ~0.62 SOL. To grow the binary later: `solana program extend <PROG_ID> <ADDITIONAL_BYTES>` first. Avoids the 7.3 SOL rent that `--max-len 1048576` would lock in.
 
 Save the deploy signature. Verify:
 
@@ -518,7 +519,7 @@ git push origin main --tags
 ## Estimated cost (one-time + monthly)
 
 **One-time on launch day:**
-- ~0.6 SOL program rent + 0.05 SOL init txs = **~$100-150** (at ~$200/SOL)
+- ~0.62 SOL program rent + 0.05 SOL init txs = **~$135** (at ~$200/SOL)
 - ~$1000 USDC seed split across 5 pools (your call on amount)
 
 **Recurring monthly:**

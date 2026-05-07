@@ -31,7 +31,7 @@ MAINNET_PROGRAM_ID="5bCJcdWdKLJ7arrMVMFh3z99rQDxV785fnD9XGcr3xwc"
 MAINNET_UPGRADE_AUTH="JB7rp9wMerZbP3yQLL8ZJx5kxRxvhkcfEzaAhuG5uThL"
 EXPECTED_BINARY_BYTES=88680
 EXPECTED_BINARY_BYTES_TOLERANCE=1024  # ±1KB to allow for minor compile diffs
-MIN_SOL_LAMPORTS=1500000000  # 1.5 SOL
+MIN_SOL_LAMPORTS=1000000000  # 1.0 SOL — covers ~0.62 SOL rent + ~0.05 init + ~0.3 buffer
 
 # -----------------------------------------------------------------------------
 # Defaults
@@ -268,7 +268,9 @@ About to ${RED}${BOLD}DEPLOY ON MAINNET${RESET}:
   Upgrade authority: $MAINNET_UPGRADE_AUTH (signing)
   Binary:            $BINARY_PATH ($binary_bytes bytes)
   RPC URL:           $RPC_URL
-  Spending:          ~0.6 SOL on initial deploy (less on upgrade)
+  Spending:          ~0.62 SOL rent + ~0.005 SOL tx fees on initial deploy
+                     (no --max-len; ProgramData sized to binary. To grow
+                     binary later: \`solana program extend <PROG_ID> <BYTES>\`.)
 
 EOF
 
@@ -298,7 +300,6 @@ if ! solana program deploy \
        --keypair "$UPGRADE_KEY" \
        --program-id "$PROGRAM_KEY" \
        "$BINARY_PATH" \
-       --max-len 1048576 \
        2>&1 | tee /tmp/pact-deploy.log
 then
   err "deploy command failed — see output above"
