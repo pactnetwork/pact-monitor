@@ -1,4 +1,4 @@
-FROM node:22-alpine AS builder
+FROM node:22-slim AS builder
 WORKDIR /app
 
 # Install pnpm
@@ -23,7 +23,7 @@ COPY packages/indexer/ ./packages/indexer/
 RUN pnpm --filter @pact-network/db build
 RUN pnpm --filter @pact-network/indexer build
 
-FROM node:22-alpine
+FROM node:22-slim
 WORKDIR /app
 
 RUN corepack enable && corepack prepare pnpm@latest --activate
