@@ -7,6 +7,13 @@ import {
 } from "@nestjs/common";
 
 import { PipelineService } from "../pipeline/pipeline.service";
+import {
+  CRIT_THRESHOLD_LAMPORTS,
+  LAMPORTS_PER_SOL,
+  SignerBalanceService,
+  UNKNOWN_BALANCE,
+  WARN_THRESHOLD_LAMPORTS,
+} from "./signer-balance.service";
 
 /**
  * Minimal shape of the express.Response object used here. Inlined so we
@@ -16,13 +23,6 @@ import { PipelineService } from "../pipeline/pipeline.service";
 interface MinimalResponse {
   status(code: number): unknown;
 }
-import {
-  CRIT_THRESHOLD_LAMPORTS,
-  LAMPORTS_PER_SOL,
-  SignerBalanceService,
-  UNKNOWN_BALANCE,
-  WARN_THRESHOLD_LAMPORTS,
-} from "./signer-balance.service";
 
 /**
  * /health response shape. Stable wire format — Cloud Run startup probes,

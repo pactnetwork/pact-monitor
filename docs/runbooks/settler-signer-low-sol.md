@@ -19,7 +19,7 @@ Top up from the funding wallet listed below.
 One of the following is true:
 
 1. The Cloud Monitoring alert `settler-signer-sol-low` is firing
-   (gauge `custom.googleapis.com/pact/settler_signer_sol_lamports` <
+   (gauge `prometheus.googleapis.com/settler_signer_sol_lamports/gauge` <
    10_000_000 = 0.01 SOL for >5 min) — WARN.
 2. The Cloud Monitoring alert `settler-signer-sol-critical` is firing
    (same gauge < 3_000_000 = 0.003 SOL) — CRIT, paging.
@@ -78,10 +78,24 @@ Expected fields: `signer.lamports`, `signer.sol`, `signer.last_polled_at`,
 
 ### 3. Look at the gauge in Cloud Monitoring
 
-Metric Explorer → resource type `prometheus_target` (or
-`generic_node` depending on the prom collector setup) → metric
-`settler_signer_sol_lamports`. Filter by service
-`service_name = "pact-settler"`.
+Metric Explorer:
+
+- **Resource type:** `prometheus_target`
+- **Metric:** `prometheus.googleapis.com/settler_signer_sol_lamports/gauge`
+
+The full filter the alert policies use (see
+`devops/terraform-gcp/pact-network/alerts.tf`):
+
+```
+metric.type="prometheus.googleapis.com/settler_signer_sol_lamports/gauge"
+AND resource.type="prometheus_target"
+```
+
+Note: there is **no `service_name` filter** — the metric name itself is
+unique to the settler. `prometheus_target` resource labels are
+`project_id`, `location`, `cluster`, `namespace`, `job`, `instance`; if
+you need to scope further (e.g. multiple settler revisions), filter by
+`resource.label.job` or `resource.label.cluster`, not `service_name`.
 
 A gauge value of `-1` means the settler hasn't successfully fetched the
 balance yet (RPC failure at boot). That's its own incident — see
@@ -217,7 +231,7 @@ Owner: SRE. Target: post first-month operational data.
 | Project                             | `pact-network` (number `224627201825`)             |
 | Region                              | `asia-southeast1`                                  |
 | Service                             | Cloud Run `pact-settler`                           |
-| Metric                              | `settler_signer_sol_lamports`                      |
+| Metric                              | `prometheus.googleapis.com/settler_signer_sol_lamports/gauge` (resource type `prometheus_target`) |
 | WARN threshold                      | `10_000_000` lamports (0.01 SOL)                   |
 | CRIT threshold                      | `3_000_000` lamports (0.003 SOL)                   |
 | /health                             | HTTP 200 ok / 200 degraded / 503 unhealthy         |

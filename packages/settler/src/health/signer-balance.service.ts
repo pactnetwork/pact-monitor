@@ -137,6 +137,14 @@ export class SignerBalanceService implements OnModuleInit {
     } catch (err) {
       // RPC failure: keep the previous gauge value (alerts use a window so a
       // single missed poll won't trip them). Surface via /health for ops.
+      //
+      // Fail-closed by design: if this is the FIRST poll attempt and it fails
+      // (e.g. SOLANA_RPC_URL is misconfigured at boot), `_lamports` stays at
+      // UNKNOWN_BALANCE (-1), which causes `/health` to return HTTP 503. That
+      // is the desired behavior — when we cannot determine signer balance we
+      // must not accept settle traffic, because we have no evidence the
+      // signer can actually pay tx fees. The cron will retry every 5 minutes;
+      // once a poll succeeds, /health flips back to 200 automatically.
       this._lastError = (err as Error).message ?? String(err);
       this.logger.warn(
         `signer balance poll failed: ${this._lastError} (gauge unchanged)`,
