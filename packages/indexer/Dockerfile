@@ -1,6 +1,14 @@
 FROM node:22-slim AS builder
 WORKDIR /app
 
+# Prisma needs `openssl` (binary, for version detection) + libssl3 in BOTH stages.
+# Without it, Prisma defaults to the `debian-openssl-1.1.x` engine, which
+# libssl3-only Debian 12 (slim) cannot load. ca-certificates needed for
+# Prisma's optional unpkg.com fetch during engine selection.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends openssl ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
 # Install pnpm
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
@@ -25,6 +33,12 @@ RUN pnpm --filter @pact-network/indexer build
 
 FROM node:22-slim
 WORKDIR /app
+
+# Same openssl install as the builder stage — runtime needs the libssl3 +
+# openssl binary for Prisma's engine to load successfully.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends openssl ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
 
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
