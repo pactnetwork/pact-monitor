@@ -6,31 +6,42 @@
 # at runtime is too late.
 #
 # Pattern: mirrors packages/indexer/Dockerfile (debian-slim + openssl +
-# corepack pnpm + workspace manifests + filtered build).
+# corepack pnpm + workspace manifests + filtered build). Builds workspace
+# dep @pact-network/protocol-v1-client first because the dashboard imports
+# from it (lib/solana.ts).
 # -----------------------------------------------------------------------------
 FROM node:22-slim AS builder
 WORKDIR /app
 
-# openssl + ca-certificates kept for parity with indexer (Next.js itself
-# doesn't need them, but the workspace's other packages might be hoisted).
+# openssl + ca-certificates kept for parity with indexer.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends openssl ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
-# Workspace manifests
+# Workspace manifests — include protocol-v1-client (workspace dep)
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
 COPY packages/market-dashboard/package.json ./packages/market-dashboard/
+COPY packages/protocol-v1-client/package.json ./packages/protocol-v1-client/
 
-# Install deps for just the dashboard
-RUN pnpm install --frozen-lockfile --filter @pact-network/market-dashboard
+# Install deps for dashboard + workspace deps it pulls in
+RUN pnpm install --frozen-lockfile \
+  --filter @pact-network/market-dashboard \
+  --filter @pact-network/protocol-v1-client
 
-# Sources
+# tsconfig.base.json — required because protocol-v1-client/tsconfig.json
+# extends it. (Same pattern as packages/indexer/Dockerfile.)
+COPY tsconfig.base.json ./
+
+# Build protocol-v1-client first so the dashboard can import from its dist/
+COPY packages/protocol-v1-client/ ./packages/protocol-v1-client/
+RUN pnpm --filter @pact-network/protocol-v1-client build
+
+# Now the dashboard sources + the actual Next build
 COPY packages/market-dashboard/ ./packages/market-dashboard/
 
-# NEXT_PUBLIC_* build args — must arrive via `--build-arg` from the workflow.
-# Re-exposed as ENV so `next build` picks them up and bakes into the bundle.
+# NEXT_PUBLIC_* build args — supplied by the workflow (`--build-arg`).
 ARG NEXT_PUBLIC_INDEXER_URL
 ARG NEXT_PUBLIC_USDC_MINT
 ARG NEXT_PUBLIC_SOLANA_RPC
