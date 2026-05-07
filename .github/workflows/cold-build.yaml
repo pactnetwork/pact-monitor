@@ -24,12 +24,16 @@ on:
       - "pnpm-lock.yaml"
       - "packages/*/package.json"
       - "packages/*/tsconfig*.json"
+      - "packages/settler/**"
+      - "packages/**/health/**"
       - ".github/workflows/cold-build.yaml"
   push:
     branches:
       - develop
       - "feat/**"
       - "fix/**"
+      - "sre/**"
+      - "chore/**"
 
 concurrency:
   group: cold-build-${{ github.workflow }}-${{ github.ref }}
