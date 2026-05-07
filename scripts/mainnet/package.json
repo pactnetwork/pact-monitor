@@ -8,11 +8,15 @@
     "init": "pnpm run build:deps && tsx init-mainnet.ts",
     "init:dry": "pnpm run build:deps && DRY_RUN=1 tsx init-mainnet.ts",
     "pause": "pnpm run build:deps && tsx pause-protocol.ts",
-    "pause:dry": "pnpm run build:deps && DRY_RUN=1 tsx pause-protocol.ts"
+    "pause:dry": "pnpm run build:deps && DRY_RUN=1 tsx pause-protocol.ts",
+    "topup-settler": "pnpm run build:deps && tsx topup-settler.ts",
+    "topup-settler:dry": "pnpm run build:deps && tsx topup-settler.ts",
+    "typecheck": "pnpm run build:deps && tsc --noEmit"
   },
   "dependencies": {
     "@pact-network/protocol-v1-client": "workspace:*",
     "@solana/web3.js": "^1.95.8",
+    "bs58": "^6.0.0",
     "tsx": "^4.19.2"
   },
   "devDependencies": {
