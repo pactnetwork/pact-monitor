@@ -18,6 +18,7 @@ import { approveCommand, revokeCommand } from "./cmd/approve.ts";
 import { pauseCommand } from "./cmd/pause.ts";
 import { agentsShowCommand, agentsWatchCommand } from "./cmd/agents.ts";
 import { initCommand } from "./cmd/init.ts";
+import { payCommand } from "./cmd/pay.ts";
 
 const VERSION = "0.1.0";
 const DEFAULT_GATEWAY = process.env.PACT_GATEWAY_URL ?? "https://market.pactnetwork.io";
@@ -83,6 +84,9 @@ function resolveProjectOrDie(flag?: string): string {
 }
 
 const program = new Command();
+// Required so `pact pay <tool> [...args]` can pass --flags through to the
+// wrapped tool without commander trying to parse them as pact options.
+program.enablePositionalOptions();
 program
   .name("pact")
   .description("Insured paid API calls for AI agents")
@@ -226,6 +230,36 @@ program
       pubkey,
     });
     emit(env, Boolean(program.opts().json), Boolean(program.opts().quiet));
+  });
+
+program
+  .command("pay")
+  .description(
+    "Wrap a CLI tool (curl) so paid 402-gated APIs settle via the agent's SPL Approve allowance",
+  )
+  .argument("<tool>", "wrapped tool (currently: curl)")
+  .argument("[args...]", "arguments forwarded to the wrapped tool")
+  .allowUnknownOption(true)
+  .passThroughOptions(true)
+  .action(async (tool: string, args: string[]) => {
+    const project = resolveProjectOrDie(program.opts().project);
+    const result = await payCommand({
+      tool,
+      args,
+      configDir: configDirFor(project),
+      preferredNetwork: program.opts().cluster as string,
+    });
+    if (result.kind === "passthrough") {
+      // Replay the wrapped tool's output cleanly. stderr first (curl writes
+      // its progress / errors there), then the response body, then any -w
+      // writeout curl emitted on stdout. Don't wrap with the --json envelope
+      // — pact pay's contract is to be transparent on success.
+      if (result.stderr.byteLength > 0) process.stderr.write(result.stderr);
+      if (result.bodyBytes.byteLength > 0) process.stdout.write(result.bodyBytes);
+      if (result.stdout.byteLength > 0) process.stdout.write(result.stdout);
+      process.exit(result.exitCode);
+    }
+    emit(result.envelope, Boolean(program.opts().json), Boolean(program.opts().quiet));
   });
 
 program
