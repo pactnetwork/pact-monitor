@@ -22,6 +22,18 @@ export const heliusHandler: EndpointHandler = {
     // strip pact-specific query params
     upstreamUrl.searchParams.delete("pact_wallet");
     upstreamUrl.searchParams.delete("demo_breach");
+    // Helius authenticates via `?api-key=…`. The DB's upstreamBase column
+    // typically holds the bare host (no key) so the secret stays out of the
+    // database. Inject the key from the PACT_HELIUS_API_KEY env var (mounted
+    // from Secret Manager on Cloud Run) only if it isn't already on the
+    // upstream URL — operators can still pre-bake a different key into the
+    // DB row for testing or per-tenant routing.
+    if (!upstreamUrl.searchParams.has("api-key")) {
+      const heliusKey = process.env.PACT_HELIUS_API_KEY;
+      if (heliusKey) {
+        upstreamUrl.searchParams.set("api-key", heliusKey);
+      }
+    }
     const headers = buildUpstreamHeaders(req.headers, HELIUS_EXTRA_ALLOWED);
     return new Request(upstreamUrl.toString(), {
       method: req.method,
