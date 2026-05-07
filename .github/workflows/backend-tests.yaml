@@ -14,6 +14,8 @@ on:
       - main
     paths:
       - "packages/backend/**"
+      - "packages/settler/**"
+      - "packages/**/health/**"
       - "scripts/register-referrer.ts"
       - "scripts/register-referrer.test.ts"
       - "pnpm-lock.yaml"
@@ -25,6 +27,8 @@ on:
       - develop
       - "feat/**"
       - "fix/**"
+      - "sre/**"
+      - "chore/**"
 
 concurrency:
   group: backend-tests-${{ github.workflow }}-${{ github.ref }}
