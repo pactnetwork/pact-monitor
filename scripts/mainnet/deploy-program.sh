@@ -147,8 +147,8 @@ step "2/8  Checking repo + source"
 [[ -f "$LIB_RS" ]] \
   || die "lib.rs not found at $LIB_RS" "the pinocchio v1 program crate is missing"
 
-# Verify declare_id! is mainnet
-declared_id="$(grep -oP 'declare_id!\("[^"]+"\)' "$LIB_RS" | head -1 | grep -oP '"[^"]+"' | tr -d '"')"
+# Verify declare_id! is mainnet (portable sed — works on BSD/macOS + GNU)
+declared_id="$(sed -nE 's/.*declare_id!\("([^"]+)"\).*/\1/p' "$LIB_RS" | head -1)"
 if [[ "$declared_id" != "$MAINNET_PROGRAM_ID" ]]; then
   die "lib.rs declare_id! is '$declared_id', expected '$MAINNET_PROGRAM_ID'" \
       "you're on the wrong branch or build. checkout 'develop' and 'git pull'"
@@ -241,8 +241,8 @@ step "6/8  Checking if program is already deployed"
 
 # `solana program show` exits non-zero if the account doesn't exist
 if solana program show "$MAINNET_PROGRAM_ID" --url "$RPC_URL" >/tmp/pact-program-show.txt 2>&1; then
-  existing_authority="$(grep -i 'Authority' /tmp/pact-program-show.txt | awk '{print $NF}')"
-  existing_size="$(grep -i 'Data Length' /tmp/pact-program-show.txt | grep -oP '[0-9]+' | head -1)"
+  existing_authority="$(awk '/^Authority:/{print $2; exit}' /tmp/pact-program-show.txt)"
+  existing_size="$(awk '/^Data Length:/{print $3; exit}' /tmp/pact-program-show.txt)"
 
   if [[ "$existing_authority" != "$MAINNET_UPGRADE_AUTH" ]]; then
     die "program at $MAINNET_PROGRAM_ID exists with WRONG authority: $existing_authority" \
@@ -324,7 +324,7 @@ EOF
 fi
 
 # Capture deploy signature from output
-deploy_sig="$(grep -oP 'Signature: \K[A-Za-z0-9]+' /tmp/pact-deploy.log | head -1 || true)"
+deploy_sig="$(awk '/^Signature:/{print $2; exit}' /tmp/pact-deploy.log || true)"
 [[ -z "$deploy_sig" ]] && warn "couldn't parse deploy signature from output (deploy still may have succeeded — verify below)"
 
 echo
@@ -342,8 +342,8 @@ if ! solana program show "$MAINNET_PROGRAM_ID" --url "$RPC_URL" >/tmp/pact-verif
   die "post-deploy 'solana program show' failed" "the deploy may have landed; check Solana Explorer: https://explorer.solana.com/address/$MAINNET_PROGRAM_ID"
 fi
 
-verify_authority="$(grep -i 'Authority' /tmp/pact-verify.txt | awk '{print $NF}')"
-verify_size="$(grep -i 'Data Length' /tmp/pact-verify.txt | grep -oP '[0-9]+' | head -1)"
+verify_authority="$(awk '/^Authority:/{print $2; exit}' /tmp/pact-verify.txt)"
+verify_size="$(awk '/^Data Length:/{print $3; exit}' /tmp/pact-verify.txt)"
 
 [[ "$verify_authority" == "$MAINNET_UPGRADE_AUTH" ]] \
   || die "post-deploy authority check FAILED: $verify_authority != $MAINNET_UPGRADE_AUTH" \
