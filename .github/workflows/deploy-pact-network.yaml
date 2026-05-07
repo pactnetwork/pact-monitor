@@ -55,11 +55,11 @@ jobs:
             echo "wif_pool=wif-staging-apps-pool" >> $GITHUB_OUTPUT
             echo "wif_provider=wif-staging-apps-provider" >> $GITHUB_OUTPUT
           else
-            echo "project_id=pact-network-prod" >> $GITHUB_OUTPUT
-            # TODO: fill in real project_number after Rick creates pact-network-prod
-            echo "project_number=TODO_FILL_AFTER_PROJECT_CREATION" >> $GITHUB_OUTPUT
-            echo "wif_pool=wif-pact-network-prod-pool" >> $GITHUB_OUTPUT
-            echo "wif_provider=wif-pact-network-prod-provider" >> $GITHUB_OUTPUT
+            echo "project_id=pact-network" >> $GITHUB_OUTPUT
+            # Filled in 2026-05-07 — project pact-network (224627201825)
+            echo "project_number=224627201825" >> $GITHUB_OUTPUT
+            echo "wif_pool=wif-pact-network-pool" >> $GITHUB_OUTPUT
+            echo "wif_provider=wif-pact-network-provider" >> $GITHUB_OUTPUT
           fi
 
       - name: Resolve image URI
