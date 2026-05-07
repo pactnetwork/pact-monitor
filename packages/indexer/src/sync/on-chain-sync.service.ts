@@ -22,6 +22,23 @@ const DEFAULT_RPC_URL = "https://api.mainnet-beta.solana.com";
 const DEFAULT_PROGRAM_ID = PROGRAM_ID.toBase58();
 
 /**
+ * Default `upstreamBase` URL per known endpoint slug — used on FIRST CREATE
+ * only. The market-proxy's per-slug handler reads this column to resolve
+ * upstream requests; an empty value crashes the proxy with `Invalid URL`
+ * because `new URL("/path", "")` throws. API keys for upstreams that need
+ * them (e.g. Helius) are injected by the proxy via env vars and are NOT
+ * stored in the DB. Operators can override these defaults later via the
+ * ops UI; the sync's update path does not clobber them.
+ */
+const DEFAULT_UPSTREAM_BASE: Record<string, string> = {
+  helius: "https://mainnet.helius-rpc.com",
+  birdeye: "https://public-api.birdeye.so",
+  jupiter: "https://api.jup.ag",
+  elfa: "https://api.elfa.ai",
+  fal: "https://queue.fal.run",
+};
+
+/**
  * Reads all `EndpointConfig` PDAs from the on-chain V1 program and upserts
  * them into the indexer's Postgres `Endpoint` table.
  *
@@ -170,6 +187,13 @@ export class OnChainSyncService implements OnModuleInit {
     // the EndpointConfig PDA and are managed via a separate ops UI; we DO
     // NOT clobber an existing row's upstreamBase/displayName/logoUrl on
     // update, only the on-chain-derived fields.
+    //
+    // Default upstreamBase per slug: chosen so the market-proxy's
+    // per-slug handler (packages/market-proxy/src/endpoints/<slug>.ts)
+    // can resolve a request URL without operator intervention. API keys
+    // for upstreams that need them (e.g. Helius) are injected by the
+    // proxy via env vars, NOT stored in the DB.
+    const upstreamBase = DEFAULT_UPSTREAM_BASE[slug] ?? "";
     await this.prisma.endpoint.upsert({
       where: { slug },
       create: {
@@ -180,7 +204,7 @@ export class OnChainSyncService implements OnModuleInit {
         imputedCostLamports: BigInt(decoded.imputedCostLamports),
         exposureCapPerHourLamports: BigInt(decoded.exposureCapPerHourLamports),
         paused: decoded.paused,
-        upstreamBase: "",
+        upstreamBase,
         displayName: slug,
         registeredAt: now,
         lastUpdated: now,
