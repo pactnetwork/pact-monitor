@@ -11,28 +11,30 @@ expecting something Pact isn't.
 
 ## 1. This is not regulated insurance
 
-Pact Network is a parametric, on-chain protocol. It is **not** insurance in
-the legal sense — no insurer, no policy contract, no regulator, no guaranty
-fund, no FDIC-equivalent backstop. Nothing here is underwritten, rated, or
-licensed.
+Pact Network is a parametric, on-chain coverage protocol. It is **not**
+insurance in the legal sense — no insurer, no policy contract, no regulator,
+no guaranty fund, no FDIC-equivalent backstop. Nothing here is underwritten,
+rated, or licensed.
 
 A Solana program watches every API call you route through Pact. If a call
 breaches a pre-defined SLA, the program refunds you from a coverage pool.
-The protocol code is the policy. If you want to know what's covered, read
-the program.
+The protocol code defines the coverage rules. If you want to know what's
+covered, read the program.
 
 ## 2. No KYC, no regulatory protection, jurisdictional restrictions
 
 We don't collect KYC. The trade-off: no consumer-protection recourse
 through any regulator. If something goes wrong, no agency makes you whole.
 
-**Restricted jurisdictions:** Pact is not offered to persons in
-jurisdictions where parametric insurance protocols or unregistered
-token-denominated financial services are restricted. By connecting a
-wallet, you confirm your use does not violate local law.
-<!-- TODO(rick): finalize the restricted-jurisdictions list. At minimum
-decide on US persons, OFAC sanctioned countries, and any geos where
-parametric products require licensing. -->
+**Restricted users:** Pact is not offered to US persons or to persons
+located in OFAC-sanctioned jurisdictions (currently Cuba, Iran, North
+Korea, Syria, and the Crimea, Donetsk, and Luhansk regions of Ukraine).
+You must also be 18 or older. By connecting a wallet, you confirm you are
+not a restricted user and that your use does not violate local law.
+
+Enforcement at launch is disclaimer-only — we rely on your attestation in
+the connect modal rather than IP geofencing. We may add edge-level geo
+controls later if regulators surface concerns.
 
 ## 3. Smart contract risk
 
@@ -83,10 +85,10 @@ Stuck settlements show up in the dashboard's per-call history.
 
 ## 6. Network and upstream API risks
 
-Pact insures against per-call SLA breaches as defined by the protocol.
-That's it. We do **not** insure against Solana network outages, chain
-reorgs, upstream APIs going down or throttling, wallet compromise, key
-loss, signing-tool bugs, or RPC providers feeding bad data.
+Pact refunds per-call SLA breaches as defined by the protocol. That's it.
+The protocol does **not** cover Solana network outages, chain reorgs,
+upstream APIs going down or throttling, wallet compromise, key loss,
+signing-tool bugs, or RPC providers feeding bad data.
 
 If Solana is down, settlement is down. If your upstream is down, the SLA
 breach refund covers what the protocol says it covers — nothing more.
@@ -144,11 +146,12 @@ calls, connect a wallet. If not, don't.
 
 ## Contact
 
-For security disclosures and critical bugs:
-<!-- TODO(rick): insert contact email + PGP key fingerprint before public launch. -->
+For security disclosures and critical bugs, email
+<security@pactnetwork.io>. PGP key forthcoming — send unencrypted reports
+to this address until further notice.
 
 The protocol code is the source of truth — it lives at
-<https://github.com/solder-build/pact-monitor>. If this document and the
+<https://github.com/pactnetwork/pact-monitor>. If this document and the
 program disagree, the program wins.
 
 ---
