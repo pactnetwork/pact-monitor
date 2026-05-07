@@ -15,6 +15,7 @@ RUN corepack enable && corepack prepare pnpm@latest --activate
 # Copy workspace manifests
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
 COPY packages/db/package.json ./packages/db/
+COPY packages/protocol-v1-client/package.json ./packages/protocol-v1-client/
 COPY packages/indexer/package.json ./packages/indexer/
 
 # Install all workspace deps (frozen)
@@ -25,10 +26,13 @@ RUN pnpm install --frozen-lockfile
 # Prisma's generated types reference BigInt/Symbol/Map fail to compile)
 COPY tsconfig.base.json ./
 COPY packages/db/ ./packages/db/
+COPY packages/protocol-v1-client/ ./packages/protocol-v1-client/
 COPY packages/indexer/ ./packages/indexer/
 
-# Generate Prisma client + build db, then build indexer
+# Generate Prisma client + build db + build protocol-v1-client (chain-sync
+# imports from its dist/), then build indexer.
 RUN pnpm --filter @pact-network/db build
+RUN pnpm --filter @pact-network/protocol-v1-client build
 RUN pnpm --filter @pact-network/indexer build
 
 FROM node:22-slim
@@ -44,11 +48,13 @@ RUN corepack enable && corepack prepare pnpm@latest --activate
 
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
 COPY packages/db/package.json ./packages/db/
+COPY packages/protocol-v1-client/package.json ./packages/protocol-v1-client/
 COPY packages/indexer/package.json ./packages/indexer/
 
 RUN pnpm install --frozen-lockfile --prod
 
 COPY --from=builder /app/packages/db/dist ./packages/db/dist
+COPY --from=builder /app/packages/protocol-v1-client/dist ./packages/protocol-v1-client/dist
 COPY --from=builder /app/packages/indexer/dist ./packages/indexer/dist
 # Prisma engine for runtime
 COPY --from=builder /app/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/.prisma ./node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/.prisma
