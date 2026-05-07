@@ -4,10 +4,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "init": "tsx init-mainnet.ts",
-    "init:dry": "DRY_RUN=1 tsx init-mainnet.ts",
-    "pause": "tsx pause-protocol.ts",
-    "pause:dry": "DRY_RUN=1 tsx pause-protocol.ts"
+    "build:deps": "pnpm --filter @pact-network/protocol-v1-client run build",
+    "init": "pnpm run build:deps && tsx init-mainnet.ts",
+    "init:dry": "pnpm run build:deps && DRY_RUN=1 tsx init-mainnet.ts",
+    "pause": "pnpm run build:deps && tsx pause-protocol.ts",
+    "pause:dry": "pnpm run build:deps && DRY_RUN=1 tsx pause-protocol.ts"
   },
   "dependencies": {
     "@pact-network/protocol-v1-client": "workspace:*",
