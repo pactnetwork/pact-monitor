@@ -79,44 +79,29 @@ jobs:
 
       # Per-service env-var plumbing.
       #
-      # The deploy YAML originally relied on env vars surviving across
-      # `gcloud run deploy` calls (`Secret bindings (--set-secrets) are NOT
-      # in this workflow — they're applied once via gcloud post-`terraform
-      # apply` and persist`). That assumption was incomplete: any env var
-      # the SERVICE NEEDS that is NOT a secret (e.g. SOLANA_RPC_URL,
-      # PROGRAM_ID for the indexer) was never set anywhere — neither in
-      # terraform `env_vars`, nor in `--set-env-vars`, nor in
-      # `--update-env-vars` — so the indexer's chain-sync silently fell
-      # through to its in-code defaults at boot.
+      # Until this YAML, the deploy ran bare `gcloud run deploy` with no
+      # env-var flags, so any non-secret env var the service NEEDS (e.g.
+      # SOLANA_RPC_URL, PROGRAM_ID for the indexer) was never set —
+      # neither in terraform `env_vars`, nor in `--set-env-vars`, nor in
+      # `--update-env-vars`. Chain-sync silently fell through to its
+      # in-code default `https://api.mainnet-beta.solana.com`, which
+      # Cloud Run egress IPs get rate-limited on for `getProgramAccounts`,
+      # leaving the `Endpoint` table empty.
       #
-      # We now pass `--update-env-vars` per-service. `--update-env-vars`
-      # MERGES (does not replace) so it composes safely with any vars
-      # set by terraform / a future ops-time `gcloud run services update`.
+      # We use `--update-env-vars` (NOT `--env-vars-file` — that REPLACES
+      # all literal env vars and would clobber DATABASE_URL / any other
+      # vars set out-of-band post-`terraform apply`). `--update-env-vars`
+      # MERGES, preserving everything we don't name.
       #
-      # If a value here is sensitive enough to need a Secret, add it to
-      # `secrets_to_create` in `devops/terraform-gcp/pact-network/services.tf`
-      # and bind it via a follow-up `--set-secrets`.
-      # Per-service env-var plumbing via `--env-vars-file`.
-      #
-      # The pact-indexer reads SOLANA_RPC_URL + PROGRAM_ID via NestJS
-      # ConfigService (= process.env). Until this YAML they were never
-      # set anywhere — neither in terraform `env_vars` nor in
-      # `--set-env-vars` — so chain-sync silently fell through to its
-      # in-code defaults at boot, and `getProgramAccounts` against
-      # public `api.mainnet-beta.solana.com` from Cloud Run egress IPs
-      # returned 0 endpoints (rate-limited).
-      #
-      # `--env-vars-file` REPLACES all literal env vars on the service
-      # but does NOT touch secret bindings. The pact-indexer has no
-      # other literal env vars today (terraform `env_vars = {}`,
-      # secrets are bound via `--set-secrets` once post-apply); if a
-      # future PR adds another literal env var, also add it here or
-      # the next deploy will remove it.
+      # Values are passed via `^@^`-delimited custom-delimiter syntax so
+      # URLs with `:`, `=`, `&`, or `,` (e.g. Helius API key URLs) survive
+      # gcloud's default `,`-as-separator parsing.
+      #   ref: https://cloud.google.com/sdk/gcloud/reference/topic/escaping
       #
       # SOLANA_RPC_URL: prefer `PACT_INDEXER_RPC_URL` repo secret
-      # (Helius/Triton URL with embedded API key). Falls back to
-      # public mainnet-beta — which is rate-limited from Cloud Run
-      # egress and will likely keep returning 0 endpoints.
+      # (Helius/Triton URL with embedded API key). Falls back to public
+      # mainnet-beta — rate-limited from Cloud Run egress and likely to
+      # keep returning 0 endpoints.
       #
       # PROGRAM_ID: pinned mainnet program — set explicitly so a future
       # client-default flip can't silently re-target devnet.
@@ -130,15 +115,21 @@ jobs:
             if [ "$RPC_URL" = "https://api.mainnet-beta.solana.com" ]; then
               echo "::warning::PACT_INDEXER_RPC_URL secret not set — falling back to public mainnet-beta. Cloud Run egress is rate-limited there; chain-sync may return 0 endpoints. Set the secret to a Helius/Triton URL with API key."
             fi
-            # YAML quoting: double-quote both values so URLs with special
-            # chars (api keys with `:` or `=`) are preserved verbatim.
+            # `^@^` is gcloud's custom-delimiter form: the FIRST `@` is the
+            # delimiter, the rest is `KEY=VAL@KEY=VAL`. This avoids the
+            # `,` collision in URLs that contain commas.
+            ENVS="^@^SOLANA_RPC_URL=${RPC_URL}@PROGRAM_ID=5bCJcdWdKLJ7arrMVMFh3z99rQDxV785fnD9XGcr3xwc"
+            # Mask the URL in case the secret is set — we don't want it
+            # leaking into job logs via the next `--update-env-vars` echo.
+            echo "::add-mask::$RPC_URL"
+            # Multi-line-safe write to GITHUB_OUTPUT
             {
-              printf 'SOLANA_RPC_URL: "%s"\n' "$RPC_URL"
-              printf 'PROGRAM_ID: "5bCJcdWdKLJ7arrMVMFh3z99rQDxV785fnD9XGcr3xwc"\n'
-            } > /tmp/cloud-run-env.yaml
-            echo "file=/tmp/cloud-run-env.yaml" >> "$GITHUB_OUTPUT"
+              echo "envs<<__GHA_EOF__"
+              echo "$ENVS"
+              echo "__GHA_EOF__"
+            } >> "$GITHUB_OUTPUT"
           else
-            echo "file=" >> "$GITHUB_OUTPUT"
+            echo "envs=" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Deploy to Cloud Run
@@ -147,8 +138,8 @@ jobs:
           ARGS+=(--image "${{ steps.img.outputs.uri }}")
           ARGS+=(--region "${{ env.REGION }}")
           ARGS+=(--platform managed)
-          if [ -n "${{ steps.envvars.outputs.file }}" ]; then
-            ARGS+=(--env-vars-file "${{ steps.envvars.outputs.file }}")
+          if [ -n "${{ steps.envvars.outputs.envs }}" ]; then
+            ARGS+=(--update-env-vars "${{ steps.envvars.outputs.envs }}")
           fi
           gcloud run deploy "${{ inputs.service_name }}" "${ARGS[@]}"
 
