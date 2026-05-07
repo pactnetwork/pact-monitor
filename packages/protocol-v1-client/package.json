@@ -21,11 +21,10 @@
     "test:watch": "vitest",
     "coverage": "vitest run --coverage"
   },
-  "peerDependencies": {
-    "@solana/web3.js": "^1.95.0"
+  "dependencies": {
+    "@solana/web3.js": "^1.95.8"
   },
   "devDependencies": {
-    "@solana/web3.js": "^1.95.8",
     "@types/node": "^22.10.5",
     "@vitest/coverage-v8": "^3.0.4",
     "typescript": "^5.7.3",
