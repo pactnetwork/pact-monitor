@@ -32,6 +32,12 @@ Your USDC stays in your own associated token account (ATA). `pact approve <usdc>
 
 `pact balance` reports both ATA balance and currently-granted allowance plus an `eligible` flag mirroring what the program will see at debit time.
 
+## Admin: `pact pause`
+
+`pact pause` flips the protocol-wide kill switch — every subsequent `settle_batch` call returns `ProtocolPaused (6032)` until the same instruction is sent again with `paused = 0`. The signer must equal `ProtocolConfig.authority` on-chain.
+
+Usage requires `PACT_PRIVATE_KEY` to hold the authority's base58 secret key — the command refuses to fall back to the project wallet or to generate a new keypair. End-users do not run this; it exists for the protocol operator's incident-response runbook.
+
 ## Status taxonomy
 
 Every `--json` invocation returns `{ status, body, meta }`. Status is one of:

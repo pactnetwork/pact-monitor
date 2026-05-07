@@ -43,6 +43,7 @@ You may run `pact approve <amount>` automatically as long as `<amount> <= per_de
 - `pact agents show --json` — see recent calls + refunds
 - `pact approve <usdc> --json` — grant SPL Token allowance to SettlementAuthority
 - `pact revoke --json` — remove the allowance
+- `pact pause --json` — admin only; protocol kill switch. Requires `PACT_PRIVATE_KEY` to hold the ProtocolConfig.authority secret. Do NOT run unless the user is the protocol operator.
 
 ## Critical rules
 

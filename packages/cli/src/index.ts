@@ -15,6 +15,7 @@ import {
 import { runCommand } from "./cmd/run.ts";
 import { balanceCommand } from "./cmd/balance.ts";
 import { approveCommand, revokeCommand } from "./cmd/approve.ts";
+import { pauseCommand } from "./cmd/pause.ts";
 import { agentsShowCommand, agentsWatchCommand } from "./cmd/agents.ts";
 import { initCommand } from "./cmd/init.ts";
 
@@ -190,10 +191,17 @@ program
     emit(env, Boolean(program.opts().json), Boolean(program.opts().quiet));
   });
 
-// TODO: add `pact pause` admin command once
-// @pact-network/protocol-v1-client exposes buildPauseProtocolIx (Rick is
-// adding the program-side pause_protocol ix today; only buildPauseEndpointIx
-// exists in v1 client at this commit).
+program
+  .command("pause")
+  .description(
+    "Admin: pause the protocol kill switch (requires PACT_PRIVATE_KEY = ProtocolConfig.authority)",
+  )
+  .action(async () => {
+    const env = await pauseCommand({
+      rpcUrl: program.opts().rpc,
+    });
+    emit(env, Boolean(program.opts().json), Boolean(program.opts().quiet));
+  });
 
 program
   .command("agents")
