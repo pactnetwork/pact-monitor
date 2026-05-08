@@ -2,7 +2,6 @@
 import { Command, CommanderError } from "commander";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { readFileSync } from "node:fs";
 import { resolveProjectName } from "./lib/project.ts";
 import { detectMode, renderEnvelope } from "./lib/output.ts";
 import { exitCodeFor, buildInternalErrorEnvelope, type Envelope } from "./lib/envelope.ts";
@@ -19,6 +18,11 @@ import { pauseCommand } from "./cmd/pause.ts";
 import { agentsShowCommand, agentsWatchCommand } from "./cmd/agents.ts";
 import { initCommand } from "./cmd/init.ts";
 import { payCommand } from "./cmd/pay.ts";
+// Bundle skill assets into the compiled binary via Bun text imports.
+// readFileSync(import.meta.url) does not work with `bun build --compile`
+// because raw .md files are not embedded into the bunfs virtual filesystem.
+import skillSrc from "./skill/SKILL.md" with { type: "text" };
+import snippetSrc from "./skill/claude-md-snippet.md" with { type: "text" };
 
 const VERSION = "0.1.0";
 const DEFAULT_GATEWAY = process.env.PACT_GATEWAY_URL ?? "https://api.pactnetwork.io";
@@ -285,14 +289,6 @@ program
   .command("init")
   .description("Install Pact skill into this project")
   .action(async () => {
-    const skillSrc = readFileSync(
-      new URL("./skill/SKILL.md", import.meta.url),
-      "utf8",
-    );
-    const snippetSrc = readFileSync(
-      new URL("./skill/claude-md-snippet.md", import.meta.url),
-      "utf8",
-    );
     const env = await initCommand({
       cwd: process.cwd(),
       skillSrc,
