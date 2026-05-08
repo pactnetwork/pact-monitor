@@ -21,7 +21,7 @@ import { initCommand } from "./cmd/init.ts";
 import { payCommand } from "./cmd/pay.ts";
 
 const VERSION = "0.1.0";
-const DEFAULT_GATEWAY = process.env.PACT_GATEWAY_URL ?? "https://market.pactnetwork.io";
+const DEFAULT_GATEWAY = process.env.PACT_GATEWAY_URL ?? "https://api.pactnetwork.io";
 const DEFAULT_RPC = process.env.PACT_RPC_URL ?? "https://api.mainnet-beta.solana.com";
 // v0.1.0 is mainnet-only. Mainnet still requires PACT_MAINNET_ENABLED=1 as a
 // defensive speed-bump so first-invocation accidents can't route real USDC.

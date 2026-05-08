@@ -1,14 +1,14 @@
 ---
 name: pact
 version: 0.1.0
-description: Insured paid API calls for AI agents on Solana. Use INSTEAD of curl/fetch/Bash when calling these provider hostnames: api.helius.xyz, mainnet.helius-rpc.com, public-api.birdeye.so, quote-api.jup.ag, lite-api.jup.ag, api.elfa.ai, fal.run. Routes through market.pactnetwork.io for premium-billed insurance with auto-refund on upstream failure. v0.1.0 is MAINNET-ONLY and requires PACT_MAINNET_ENABLED=1. Use `pact pay curl <url>` to wrap any 402-gated x402 or MPP endpoint. Do NOT use for: localhost, your own server, free public APIs (jsonplaceholder, public RPCs without quotas), GET-by-static-CDN fetches.
+description: Insured paid API calls for AI agents on Solana. Use INSTEAD of curl/fetch/Bash when calling these provider hostnames: api.helius.xyz, mainnet.helius-rpc.com, public-api.birdeye.so, quote-api.jup.ag, lite-api.jup.ag, api.elfa.ai, fal.run. Routes through api.pactnetwork.io for premium-billed insurance with auto-refund on upstream failure. v0.1.0 is MAINNET-ONLY and requires PACT_MAINNET_ENABLED=1. Use `pact pay curl <url>` to wrap any 402-gated x402 or MPP endpoint. Do NOT use for: localhost, your own server, free public APIs (jsonplaceholder, public RPCs without quotas), GET-by-static-CDN fetches.
 ---
 
 # Pact — insured API calls for AI agents
 
 > **v0.1.0 — Mainnet only.** Real USDC. Closed beta gate: `PACT_MAINNET_ENABLED=1` must be set in the environment before any command runs.
 
-You have access to `pact`, a CLI that wraps API calls and insures them automatically. Calls go through Pact Network's gateway at `market.pactnetwork.io`; if the upstream fails an SLA, your agent's USDC is auto-refunded out of the per-endpoint coverage pool.
+You have access to `pact`, a CLI that wraps API calls and insures them automatically. Calls go through Pact Network's gateway at `api.pactnetwork.io`; if the upstream fails an SLA, your agent's USDC is auto-refunded out of the per-endpoint coverage pool.
 
 ## Quick start
 
@@ -44,7 +44,7 @@ ALWAYS pass `--json`. Parse `.status` first; never grep stdout.
 | `needs_funding`         | 10   | USDC ATA balance below estimated premium OR no allowance granted   | `pact approve <usdc>` if policy cap allows; else surface deposit URL from `.body.deposit_url`        |
 | `auto_deposit_capped`   | 11   | self-funding cap exhausted                                         | raise `per_deposit_max_usdc` / `session_total_max_usdc` in `~/.config/pact/<project>/policy.yaml` or wait for session reset |
 | `endpoint_paused`       | 12   | per-endpoint kill switch active                                    | pick another provider or wait                                                                        |
-| `no_provider`           | 20   | URL hostname is not a registered insured endpoint                  | use `--raw` for an uninsured call, or surface to user                                                |
+| `no_provider`           | 20   | endpoint not yet onboarded — terminal during private beta          | use `--raw` for an uninsured call, or request access from the Pact team. v0.1.0 has no auto-provision flow; manual onboarding only |
 | `discovery_unreachable` | 21   | gateway is down or unreachable                                     | surface and stop; do not loop                                                                        |
 | `signature_rejected`    | 30   | clock skew; signed request rejected by gateway                     | tell user to sync NTP (`sudo sntp -sS time.apple.com`)                                               |
 | `payment_failed`        | 31   | `pact pay` reached a 402 challenge but the retry was rejected      | inspect `.body.scheme` (`x402`/`mpp`) + `.body.reason`; verify the upstream is Pact-aware            |
@@ -81,6 +81,7 @@ Every command returns the same envelope: `{ status, body, meta? }`.
   Or wait until next session — `session_used_usdc` resets per CLI invocation.
 - **`endpoint_paused` → protocol- or endpoint-level kill switch is active.** Never auto-retry. Surface to the user; the operator will lift the pause.
 - **`payment_failed` from `pact pay` → upstream is not Pact-aware.** The verifier rejected the `pact-allowance` authorization. Log the resource URL and surface; do not loop.
+- **`no_provider` → new provider, manual onboarding.** v0.1.0 does not auto-provision endpoints. New upstreams need a handler module shipped in a proxy redeploy — request access via the Pact team during private beta.
 
 ## Custody model
 
@@ -105,7 +106,7 @@ pact pay --json curl -s https://x402.example/v1/data    # structured envelope
 
 ## Trust + private beta
 
-v0.1.0 runs against the live Pact Network mainnet program at `market.pactnetwork.io`. The protocol authority for the Treasury, settlement, and endpoint registration is currently held by the Pact Network founding team — see `docs/audits/2026-05-05-mainnet-readiness.md` for the open punch list (multisig rotation, third-party audit). The CLI surface here is private beta; reach the team in `#pact-network` on the Solder Discord, or open an issue at `github.com/pactnetwork/pact-monitor`.
+v0.1.0 runs against the live Pact Network mainnet program at `api.pactnetwork.io`. The protocol authority for the Treasury, settlement, and endpoint registration is currently held by the Pact Network founding team — see `docs/audits/2026-05-05-mainnet-readiness.md` for the open punch list (multisig rotation, third-party audit). The CLI surface here is private beta; reach the team in `#pact-network` on the Solder Discord, or open an issue at `github.com/pactnetwork/pact-monitor`.
 
 ## Critical rules
 

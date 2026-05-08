@@ -89,7 +89,7 @@ Project name is resolved from `--project`, `$PACT_PROJECT`, git repo, or cwd bas
 ## Env vars
 
 - `PACT_PRIVATE_KEY` — bypass disk wallet
-- `PACT_GATEWAY_URL` — override gateway (default `https://market.pactnetwork.io`)
+- `PACT_GATEWAY_URL` — override gateway (default `https://api.pactnetwork.io`)
 - `PACT_RPC_URL` — override Solana RPC (default `https://api.mainnet-beta.solana.com`)
 - `PACT_CLUSTER` — only `mainnet` is accepted; any other value is rejected at startup with a `client_error` envelope. v0.1.0 is mainnet-only — local devnet testing requires sed-replacing `constants.rs` and rebuilding the program per Rick's runbook.
 - `PACT_MAINNET_ENABLED=1` — required closed-beta gate. Any on-chain command (`balance`, `approve`, `revoke`, `<url>`) returns `client_error` until set, so a first-invocation accident cannot route real USDC through the production program.
