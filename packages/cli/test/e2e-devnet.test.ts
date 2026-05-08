@@ -29,7 +29,7 @@ describe("e2e devnet (against mock proxy)", () => {
     });
     app.all("/v1/birdeye/*", (c) => c.text("paused", 423));
     server = Bun.serve({ port: 0, fetch: app.fetch });
-    port = server.port;
+    port = server.port!;
   });
 
   afterAll(() => {

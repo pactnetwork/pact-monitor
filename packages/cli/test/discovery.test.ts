@@ -38,7 +38,7 @@ describe("discovery", () => {
     const app = new Hono();
     app.get("/.well-known/endpoints", (c) => c.json(SAMPLE));
     server = Bun.serve({ port: 0, fetch: app.fetch });
-    port = server.port;
+    port = server.port!;
   });
 
   afterEach(() => {

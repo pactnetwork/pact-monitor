@@ -14,7 +14,7 @@ describe("transport", () => {
     lastHeaders = {};
     const app = new Hono();
     app.all("/v1/helius/*", async (c) => {
-      lastHeaders = Object.fromEntries(c.req.raw.headers);
+      lastHeaders = Object.fromEntries(c.req.raw.headers.entries());
       const path = c.req.path;
       if (path.includes("/4xx")) return c.text("bad request", 400);
       if (path.includes("/with-call-id")) {
@@ -23,7 +23,7 @@ describe("transport", () => {
       return c.json({ ok: true });
     });
     server = Bun.serve({ port: 0, fetch: app.fetch });
-    port = server.port;
+    port = server.port!;
   });
 
   afterEach(() => server.stop());
@@ -166,7 +166,7 @@ describe("transport: 5xx retry", () => {
       });
     });
     server = Bun.serve({ port: 0, fetch: app.fetch });
-    port = server.port;
+    port = server.port!;
   });
 
   afterEach(() => server.stop());

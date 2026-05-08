@@ -29,7 +29,7 @@ describe("cmd/run", () => {
     app.get("/.well-known/endpoints", (c) => c.json(ENDPOINTS));
     app.all("/v1/helius/*", (c) => c.json({ ok: true, path: c.req.path }));
     server = Bun.serve({ port: 0, fetch: app.fetch });
-    port = server.port;
+    port = server.port!;
   });
 
   afterEach(() => {
@@ -128,7 +128,7 @@ describe("cmd/run: signature_rejected", () => {
       c.text("signature_rejected", 401, { "x-pact-error": "signature_rejected" }),
     );
     server = Bun.serve({ port: 0, fetch: app.fetch });
-    port = server.port;
+    port = server.port!;
   });
 
   afterEach(() => {

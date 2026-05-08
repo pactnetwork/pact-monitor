@@ -79,7 +79,6 @@ function resolveProjectOrDie(flag?: string): string {
       false,
     );
   }
-  // @ts-expect-error narrowed in branch above by emit() never-return
   return r.name;
 }
 

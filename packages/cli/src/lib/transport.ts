@@ -97,7 +97,7 @@ export async function signedRequest(opts: {
       });
       clearTimeout(timer);
       const responseBody = await resp.text();
-      const respHeaders = Object.fromEntries(resp.headers);
+      const respHeaders = Object.fromEntries(resp.headers.entries());
 
       // Don't retry 4xx
       if (resp.status >= 400 && resp.status < 500) {

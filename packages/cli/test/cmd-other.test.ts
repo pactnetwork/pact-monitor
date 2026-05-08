@@ -21,7 +21,7 @@ describe("cmd/agents", () => {
       }),
     );
     server = Bun.serve({ port: 0, fetch: app.fetch });
-    port = server.port;
+    port = server.port!;
   });
 
   afterEach(() => {
@@ -54,7 +54,7 @@ describe("cmd/agents: watch HTTP error", () => {
       c.text("Unauthorized", 401),
     );
     server = Bun.serve({ port: 0, fetch: app.fetch });
-    port = server.port;
+    port = server.port!;
   });
 
   afterEach(() => {

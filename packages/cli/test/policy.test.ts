@@ -54,7 +54,7 @@ describe("policy", () => {
       policy,
       requestedUsdc: 1.5,
     });
-    expect(r.allowed).toBe(false);
+    if (r.allowed) throw new Error("expected denied");
     expect(r.reason).toBe("per_deposit_exceeded");
   });
 
@@ -66,7 +66,7 @@ describe("policy", () => {
       policy,
       requestedUsdc: 1.0,
     });
-    expect(r.allowed).toBe(false);
+    if (r.allowed) throw new Error("expected denied");
     expect(r.reason).toBe("session_total_exceeded");
   });
 
@@ -78,7 +78,7 @@ describe("policy", () => {
       policy,
       requestedUsdc: 0.1,
     });
-    expect(r.allowed).toBe(false);
+    if (r.allowed) throw new Error("expected denied");
     expect(r.reason).toBe("env_disabled");
   });
 
