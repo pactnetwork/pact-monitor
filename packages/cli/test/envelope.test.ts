@@ -14,6 +14,9 @@ describe("envelope", () => {
       "discovery_unreachable",
       "signature_rejected",
       "needs_project_name",
+      "x402_payment_made",
+      "mpp_payment_made",
+      "payment_failed",
       "cli_internal_error",
     ]);
   });
@@ -29,6 +32,9 @@ describe("envelope", () => {
     expect(exitCodeFor("discovery_unreachable")).toBe(21);
     expect(exitCodeFor("signature_rejected")).toBe(30);
     expect(exitCodeFor("needs_project_name")).toBe(40);
+    expect(exitCodeFor("x402_payment_made")).toBe(0);
+    expect(exitCodeFor("mpp_payment_made")).toBe(0);
+    expect(exitCodeFor("payment_failed")).toBe(31);
     expect(exitCodeFor("cli_internal_error")).toBe(99);
   });
 

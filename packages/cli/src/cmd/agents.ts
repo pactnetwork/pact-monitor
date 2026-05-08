@@ -17,13 +17,17 @@ export async function agentsShowCommand(opts: {
   const url = `${opts.gatewayUrl.replace(/\/$/, "")}${path}`;
   const resp = await fetch(url);
   if (!resp.ok) {
+    // Map upstream HTTP class onto the envelope so --json consumers can
+    // distinguish a 404/403 (the agent may not have been seen yet) from a
+    // proxy outage. cli_internal_error stays reserved for unexpected throws.
+    const status = resp.status >= 500 ? "server_error" : "client_error";
     return {
-      status: "cli_internal_error",
-      body: { http_status: resp.status, url },
+      status,
+      body: { http_status: resp.status, url, pubkey },
     };
   }
   const body = await resp.json();
-  return { status: "ok", body };
+  return { status: "ok", body: { pubkey, ...(body as Record<string, unknown>) } };
 }
 
 export async function agentsWatchCommand(opts: {

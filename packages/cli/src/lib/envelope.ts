@@ -9,6 +9,10 @@ export const statuses = [
   "discovery_unreachable",
   "signature_rejected",
   "needs_project_name",
+  // pact pay outcomes — surface payment scheme + retry result through --json
+  "x402_payment_made",
+  "mpp_payment_made",
+  "payment_failed",
   "cli_internal_error",
 ] as const;
 
@@ -46,6 +50,12 @@ const exitCodeMap: Record<Status, number> = {
   discovery_unreachable: 21,
   signature_rejected: 30,
   needs_project_name: 40,
+  // x402/MPP retries that succeeded — exit 0; the wrapped tool's exit code is
+  // surfaced inside body.tool_exit_code so callers can chain on it.
+  x402_payment_made: 0,
+  mpp_payment_made: 0,
+  // pact pay reached a 402 challenge but the retry was rejected or unsupported.
+  payment_failed: 31,
   cli_internal_error: 99,
 };
 

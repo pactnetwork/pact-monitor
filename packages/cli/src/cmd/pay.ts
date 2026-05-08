@@ -37,6 +37,32 @@ export interface PayCommandInput {
   spawn?: SpawnFn;
 }
 
+/**
+ * Payment metadata attached to a passthrough result. When `kind` is `"none"`
+ * the wrapped tool completed without ever hitting a 402 (e.g. cached upstream,
+ * non-paid endpoint). When `kind` is `"x402"` or `"mpp"` we successfully signed
+ * a retry header and the upstream returned a 2xx; index.ts uses this to
+ * surface an `x402_payment_made` / `mpp_payment_made` envelope on --json.
+ */
+export type PaymentInfo =
+  | { kind: "none" }
+  | {
+      kind: "x402";
+      resource: string;
+      recipient: string;
+      amount: string;
+      asset: string;
+      network: string;
+    }
+  | {
+      kind: "mpp";
+      resource: string;
+      recipient: string;
+      amount: string;
+      asset: string;
+      network: string;
+    };
+
 export type PayCommandResult =
   | {
       kind: "passthrough";
@@ -44,6 +70,7 @@ export type PayCommandResult =
       stdout: Uint8Array;
       stderr: Uint8Array;
       bodyBytes: Uint8Array;
+      payment: PaymentInfo;
     }
   | {
       kind: "envelope";
@@ -115,6 +142,7 @@ export async function payCommand(
         stdout: first.stdout,
         stderr: first.stderr,
         bodyBytes: first.bodyBytes,
+        payment: { kind: "none" },
       };
 
     case "rejected":
@@ -177,7 +205,14 @@ async function handleX402Retry(
     `${header.name}: ${header.value}`,
   ]);
 
-  return finalizeRetry(second, first.resourceUrl);
+  return finalizeRetry(second, first.resourceUrl, {
+    kind: "x402",
+    resource: reqs.resource,
+    recipient: reqs.payTo,
+    amount: reqs.maxAmountRequired,
+    asset: reqs.asset,
+    network: reqs.network,
+  });
 }
 
 async function handleMppRetry(
@@ -216,12 +251,20 @@ async function handleMppRetry(
     `${header.name}: ${header.value}`,
   ]);
 
-  return finalizeRetry(second, first.resourceUrl);
+  return finalizeRetry(second, first.resourceUrl, {
+    kind: "mpp",
+    resource: first.resourceUrl,
+    recipient: c.charge.recipient,
+    amount: c.charge.amount,
+    asset: c.charge.currency,
+    network,
+  });
 }
 
 function finalizeRetry(
   outcome: RunOutcome,
   resourceUrl: string,
+  payment: PaymentInfo,
 ): PayCommandResult {
   switch (outcome.kind) {
     case "completed":
@@ -231,14 +274,16 @@ function finalizeRetry(
         stdout: outcome.stdout,
         stderr: outcome.stderr,
         bodyBytes: outcome.bodyBytes,
+        payment,
       };
     case "rejected":
       return {
         kind: "envelope",
-        envelope: makeEnvelope("client_error", {
+        envelope: makeEnvelope("payment_failed", {
           error: "payment_rejected",
           reason: outcome.reason,
           resource: resourceUrl,
+          scheme: payment.kind === "none" ? "unknown" : payment.kind,
         }),
       };
     case "tool_missing":
@@ -255,9 +300,10 @@ function finalizeRetry(
     case "unknown_402":
       return {
         kind: "envelope",
-        envelope: makeEnvelope("client_error", {
+        envelope: makeEnvelope("payment_failed", {
           error: "still_unpaid_after_retry",
           resource: resourceUrl,
+          scheme: payment.kind === "none" ? "unknown" : payment.kind,
           suggest:
             "verifier did not accept the pact-allowance authorization; check that the upstream is Pact-aware",
         }),

@@ -250,10 +250,25 @@ program
       preferredNetwork: program.opts().cluster as string,
     });
     if (result.kind === "passthrough") {
-      // Replay the wrapped tool's output cleanly. stderr first (curl writes
-      // its progress / errors there), then the response body, then any -w
-      // writeout curl emitted on stdout. Don't wrap with the --json envelope
-      // — pact pay's contract is to be transparent on success.
+      // --json consumers want a structured envelope describing the payment
+      // event; chain-callable scripts can inspect status + body and feed
+      // body.tool_exit_code into their own conditionals. Without --json we
+      // stay strictly transparent: pact pay's default contract is unchanged.
+      if (Boolean(program.opts().json) && result.payment.kind !== "none") {
+        const status =
+          result.payment.kind === "x402"
+            ? "x402_payment_made"
+            : "mpp_payment_made";
+        const env: Envelope = {
+          status,
+          body: {
+            tool_exit_code: result.exitCode,
+            response_body: new TextDecoder().decode(result.bodyBytes),
+            payment: result.payment,
+          },
+        };
+        emit(env, true, Boolean(program.opts().quiet));
+      }
       if (result.stderr.byteLength > 0) process.stderr.write(result.stderr);
       if (result.bodyBytes.byteLength > 0) process.stdout.write(result.bodyBytes);
       if (result.stdout.byteLength > 0) process.stdout.write(result.stdout);

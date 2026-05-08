@@ -138,6 +138,14 @@ describe("cmd/pay — end-to-end with real curl + mock upstream", () => {
         const parsed = JSON.parse(body);
         expect(parsed.ok).toBe(true);
         expect(parsed.sym).toBe("AAPL");
+        // payment metadata threaded through so --json can wrap into an
+        // x402_payment_made envelope at the index.ts layer.
+        expect(result.payment.kind).toBe("x402");
+        if (result.payment.kind === "x402") {
+          expect(result.payment.recipient).toBe(X402_REQS.payTo);
+          expect(result.payment.amount).toBe(X402_REQS.maxAmountRequired);
+          expect(result.payment.network).toBe("solana");
+        }
       }
       expect(mock.log.unauthenticated).toBe(1);
       expect(mock.log.paid).toBe(1);
@@ -166,7 +174,10 @@ describe("cmd/pay — end-to-end with real curl + mock upstream", () => {
         configDir: dir,
       });
       expect(result.kind).toBe("passthrough");
-      if (result.kind === "passthrough") expect(result.exitCode).toBe(0);
+      if (result.kind === "passthrough") {
+        expect(result.exitCode).toBe(0);
+        expect(result.payment.kind).toBe("mpp");
+      }
       expect(mock.log.unauthenticated).toBe(1);
       expect(mock.log.paid).toBe(1);
       expect(mock.log.lastAuthHeader).toMatch(
@@ -191,6 +202,8 @@ describe("cmd/pay — end-to-end with real curl + mock upstream", () => {
       if (result.kind === "passthrough") {
         expect(result.exitCode).toBe(0);
         expect(new TextDecoder().decode(result.bodyBytes)).toBe("ok");
+        // No 402 → payment metadata is "none"; --json stays transparent.
+        expect(result.payment.kind).toBe("none");
       }
     } finally {
       server.stop();
