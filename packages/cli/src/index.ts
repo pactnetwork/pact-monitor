@@ -238,9 +238,14 @@ program
   )
   .argument("<tool>", "wrapped tool (currently: curl)")
   .argument("[args...]", "arguments forwarded to the wrapped tool")
+  // Declare --json on pay (mirrors `run` and `balance`) so commander parses
+  // it before passThroughOptions hands the rest to the wrapped tool. Without
+  // this, `pact pay --json curl ...` treats `--json` as the wrapped tool.
+  .option("--json", "structured envelope to stdout")
   .allowUnknownOption(true)
   .passThroughOptions(true)
-  .action(async (tool: string, args: string[]) => {
+  .action(async (tool: string, args: string[], options) => {
+    const wantsJson = Boolean(options?.json) || Boolean(program.opts().json);
     const project = resolveProjectOrDie(program.opts().project);
     const result = await payCommand({
       tool,
@@ -253,7 +258,7 @@ program
       // event; chain-callable scripts can inspect status + body and feed
       // body.tool_exit_code into their own conditionals. Without --json we
       // stay strictly transparent: pact pay's default contract is unchanged.
-      if (Boolean(program.opts().json) && result.payment.kind !== "none") {
+      if (wantsJson && result.payment.kind !== "none") {
         const status =
           result.payment.kind === "x402"
             ? "x402_payment_made"
@@ -273,7 +278,7 @@ program
       if (result.stdout.byteLength > 0) process.stdout.write(result.stdout);
       process.exit(result.exitCode);
     }
-    emit(result.envelope, Boolean(program.opts().json), Boolean(program.opts().quiet));
+    emit(result.envelope, wantsJson, Boolean(program.opts().quiet));
   });
 
 program
