@@ -23,6 +23,23 @@ import {
 import { selectSolanaRequirements, type X402Challenge } from "../lib/x402.ts";
 import { isSessionChallenge, type MppChallenge } from "../lib/mpp.ts";
 import { makeEnvelope, type Envelope } from "../lib/envelope.ts";
+import { resolveClusterConfig } from "../lib/solana.ts";
+
+// Defense in depth: re-check the PACT_MAINNET_ENABLED gate at every entry that
+// could sign or retry a payment. balance/approve/run already gate via
+// resolveClusterConfig at point-of-use; pay also wraps an external tool, so
+// the gate has to live both at command entry AND in each retry handler so a
+// future refactor can't accidentally re-introduce a bypass.
+function gateEnvelope(): { kind: "envelope"; envelope: Envelope } | null {
+  const cfg = resolveClusterConfig();
+  if ("error" in cfg) {
+    return {
+      kind: "envelope",
+      envelope: makeEnvelope("client_error", { error: cfg.error }),
+    };
+  }
+  return null;
+}
 
 const SUPPORTED_TOOLS = ["curl"] as const;
 
@@ -109,6 +126,9 @@ function selectMppChallenge(challenges: MppChallenge[]): MppChallenge | null {
 export async function payCommand(
   input: PayCommandInput,
 ): Promise<PayCommandResult> {
+  const gate = gateEnvelope();
+  if (gate) return gate;
+
   if (!SUPPORTED_TOOLS.includes(input.tool as (typeof SUPPORTED_TOOLS)[number])) {
     return {
       kind: "envelope",
@@ -177,6 +197,9 @@ async function handleX402Retry(
   first: Extract<RunOutcome, { kind: "x402" }>,
   input: PayCommandInput,
 ): Promise<PayCommandResult> {
+  const gate = gateEnvelope();
+  if (gate) return gate;
+
   const challenge: X402Challenge = first.challenge;
   const preferred = clusterToX402Network(input.preferredNetwork);
   const reqs = selectSolanaRequirements(challenge, preferred);
@@ -219,6 +242,9 @@ async function handleMppRetry(
   first: Extract<RunOutcome, { kind: "mpp" }>,
   input: PayCommandInput,
 ): Promise<PayCommandResult> {
+  const gate = gateEnvelope();
+  if (gate) return gate;
+
   const c = selectMppChallenge(first.challenges);
   if (!c) {
     return {

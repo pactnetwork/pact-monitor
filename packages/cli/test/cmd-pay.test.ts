@@ -114,13 +114,20 @@ function startMppMock(port = 0): {
 
 describe("cmd/pay — end-to-end with real curl + mock upstream", () => {
   let dir: string;
+  const originalGate = process.env.PACT_MAINNET_ENABLED;
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "pact-pay-cmd-test-"));
+    // pay's mainnet-only gate fires at command entry; tests for the
+    // happy/curl-passthrough paths exercise the post-gate logic, so open it.
+    // The negative case lives in pay-mainnet-gate.test.ts.
+    process.env.PACT_MAINNET_ENABLED = "1";
   });
 
   afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
+    if (originalGate === undefined) delete process.env.PACT_MAINNET_ENABLED;
+    else process.env.PACT_MAINNET_ENABLED = originalGate;
   });
 
   test("happy path: x402 challenge → signed retry → 200", async () => {
