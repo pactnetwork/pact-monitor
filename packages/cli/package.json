@@ -8,9 +8,13 @@
   "files": ["dist", "README.md", "LICENSE"],
   "scripts": {
     "dev": "bun run src/index.ts",
+    "_build:deps": "pnpm --filter @pact-network/protocol-v1-client build",
+    "prebuild": "pnpm run _build:deps",
     "build": "bun build src/index.ts --compile --target=bun --outfile dist/pact",
     "build:matrix": "bash scripts/build-matrix.sh",
+    "pretest": "pnpm run _build:deps",
     "test": "bun test",
+    "pretypecheck": "pnpm run _build:deps",
     "typecheck": "tsc --noEmit",
     "lint": "echo 'lint not configured yet'"
   },
