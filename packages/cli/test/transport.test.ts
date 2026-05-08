@@ -102,6 +102,34 @@ describe("transport", () => {
     expect(res.attempts).toBe(1);
   });
 
+  test("defaults Accept-Encoding to gzip when caller did not set one", async () => {
+    const kp = Keypair.generate();
+    await signedRequest({
+      gatewayUrl: `http://localhost:${port}`,
+      slug: "helius",
+      upstreamPath: "/v0/balances",
+      method: "GET",
+      headers: {},
+      keypair: kp,
+      project: "x",
+    });
+    expect(lastHeaders["accept-encoding"]).toBe("gzip");
+  });
+
+  test("user-supplied Accept-Encoding overrides the gzip default", async () => {
+    const kp = Keypair.generate();
+    await signedRequest({
+      gatewayUrl: `http://localhost:${port}`,
+      slug: "helius",
+      upstreamPath: "/v0/balances",
+      method: "GET",
+      headers: { "accept-encoding": "identity" },
+      keypair: kp,
+      project: "x",
+    });
+    expect(lastHeaders["accept-encoding"]).toBe("identity");
+  });
+
   test("strips user-supplied authorization headers", async () => {
     const kp = Keypair.generate();
     await signedRequest({

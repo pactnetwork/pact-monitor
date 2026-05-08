@@ -77,7 +77,18 @@ export async function signedRequest(opts: {
       opts.keypair.secretKey,
     );
 
+    // Bun's compiled-binary fetch advertises `Accept-Encoding: br, gzip, ...`
+    // by default and trips a BrotliDecompressionError on some
+    // cloudflare-fronted upstreams (birdeye, helius). The Accept-Encoding
+    // propagates through the gateway to the upstream, so forcing `gzip` here
+    // means brotli is never advertised and the upstream returns gzip — which
+    // Bun decompresses fine. Users can still override with --header
+    // "Accept-Encoding: identity" (or any other value) to opt out.
+    const userSetAcceptEncoding = Object.keys(cleanedHeaders).some(
+      (k) => k.toLowerCase() === "accept-encoding",
+    );
     const allHeaders: Record<string, string> = {
+      ...(userSetAcceptEncoding ? {} : { "accept-encoding": "gzip" }),
       ...cleanedHeaders,
       "x-pact-agent": opts.keypair.publicKey.toBase58(),
       "x-pact-timestamp": String(ts),
