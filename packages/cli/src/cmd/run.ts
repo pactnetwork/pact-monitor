@@ -45,7 +45,12 @@ export async function runCommand(opts: RunOpts): Promise<Envelope> {
       if (r.reason === "no_provider") {
         return {
           status: "no_provider",
-          body: { hostname: r.hostname, suggest: "use --raw for an uninsured call" },
+          body: {
+            hostname: r.hostname,
+            reason:
+              "Endpoint not yet onboarded. Request access via the Pact team — v0.1.0 has no auto-provision flow.",
+            suggest: "use --raw for an uninsured call",
+          },
         };
       }
       return {
