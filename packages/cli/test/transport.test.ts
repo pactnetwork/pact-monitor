@@ -102,7 +102,10 @@ describe("transport", () => {
     expect(res.attempts).toBe(1);
   });
 
-  test("defaults Accept-Encoding to gzip when caller did not set one", async () => {
+  test("defaults Accept-Encoding to identity-only when caller did not set one", async () => {
+    // Regression: the market gateway buffers/decodes upstream bodies but
+    // re-emits the upstream's Content-Encoding header. Any non-identity
+    // Accept-Encoding here causes Bun's fetch to ZlibError on the response.
     const kp = Keypair.generate();
     await signedRequest({
       gatewayUrl: `http://localhost:${port}`,
@@ -113,7 +116,11 @@ describe("transport", () => {
       keypair: kp,
       project: "x",
     });
-    expect(lastHeaders["accept-encoding"]).toBe("gzip");
+    expect(lastHeaders["accept-encoding"]).toBe("identity;q=1, *;q=0");
+    // No compression codings advertised — RFC 9110 §12.5.3.
+    expect(lastHeaders["accept-encoding"]).not.toContain("gzip");
+    expect(lastHeaders["accept-encoding"]).not.toContain("br");
+    expect(lastHeaders["accept-encoding"]).not.toContain("deflate");
   });
 
   test("user-supplied Accept-Encoding overrides the gzip default", async () => {
@@ -172,6 +179,84 @@ describe("transport", () => {
       project: "x",
     });
     expect(res.callId).toBeNull();
+  });
+});
+
+// Regression: simulate the broken-gateway response path. The real market
+// gateway buffers upstream bodies (Bun auto-decompresses) but forwards the
+// upstream's Content-Encoding header alongside the now-plaintext body.
+// Bun's fetch on this side will ZlibError unless the request advertised an
+// Accept-Encoding the upstream would have answered with identity.
+describe("transport: broken-gateway Content-Encoding mismatch", () => {
+  let server: ReturnType<typeof Bun.serve>;
+  let port: number;
+
+  beforeEach(() => {
+    const app = new Hono();
+    app.all("/v1/birdeye/*", (c) => {
+      const accept = (c.req.header("accept-encoding") ?? "").toLowerCase();
+      // Mimic the real bug: only attach a stale Content-Encoding when the
+      // client claimed to accept compression. With strict identity, the
+      // upstream would have skipped compression entirely so the gateway
+      // has nothing stale to forward.
+      const acceptsCompression =
+        accept.includes("gzip") ||
+        accept.includes("br") ||
+        accept.includes("deflate");
+      if (acceptsCompression) {
+        return new Response('{"ok":true}', {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+            "content-encoding": "gzip",
+          },
+        });
+      }
+      return new Response('{"ok":true}', {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    server = Bun.serve({ port: 0, fetch: app.fetch });
+    port = server.port!;
+  });
+
+  afterEach(() => server.stop());
+
+  test("default Accept-Encoding survives broken gateway", async () => {
+    const kp = Keypair.generate();
+    const res = await signedRequest({
+      gatewayUrl: `http://localhost:${port}`,
+      slug: "birdeye",
+      upstreamPath: "/defi/price",
+      method: "GET",
+      headers: {},
+      keypair: kp,
+      project: "x",
+    });
+    expect(res.status).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({ ok: true });
+  });
+
+  test("user-supplied gzip Accept-Encoding hits ZlibError (proves we need identity default)", async () => {
+    const kp = Keypair.generate();
+    let threw: unknown = null;
+    try {
+      await signedRequest({
+        gatewayUrl: `http://localhost:${port}`,
+        slug: "birdeye",
+        upstreamPath: "/defi/price",
+        method: "GET",
+        headers: { "accept-encoding": "gzip" },
+        keypair: kp,
+        project: "x",
+        maxRetries: 0,
+      });
+    } catch (err) {
+      threw = err;
+    }
+    expect(threw).toBeInstanceOf(Error);
+    expect(String((threw as Error).message)).toMatch(/ZlibError/i);
   });
 });
 

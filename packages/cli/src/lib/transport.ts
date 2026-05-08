@@ -77,18 +77,25 @@ export async function signedRequest(opts: {
       opts.keypair.secretKey,
     );
 
-    // Bun's compiled-binary fetch advertises `Accept-Encoding: br, gzip, ...`
-    // by default and trips a BrotliDecompressionError on some
-    // cloudflare-fronted upstreams (birdeye, helius). The Accept-Encoding
-    // propagates through the gateway to the upstream, so forcing `gzip` here
-    // means brotli is never advertised and the upstream returns gzip — which
-    // Bun decompresses fine. Users can still override with --header
-    // "Accept-Encoding: identity" (or any other value) to opt out.
+    // The market gateway buffers upstream responses (Bun's fetch
+    // auto-decompresses) but re-emits the upstream's original
+    // `Content-Encoding` header alongside an already-decoded body. Whatever
+    // we send for `Accept-Encoding`, if the upstream compresses, the gateway
+    // forwards plaintext labelled `Content-Encoding: gzip` (or br) and Bun's
+    // fetch on this side blows up with ZlibError / BrotliDecompressionError.
+    //
+    // Until the gateway strips Content-Encoding after buffering, the only
+    // robust client-side mitigation is to ask the upstream for no encoding
+    // at all. `identity;q=1, *;q=0` is the canonical "uncompressed only"
+    // value (RFC 9110 §12.5.3); Cloudflare-fronted upstreams (birdeye,
+    // helius) honour it. Users can still override with --header.
     const userSetAcceptEncoding = Object.keys(cleanedHeaders).some(
       (k) => k.toLowerCase() === "accept-encoding",
     );
     const allHeaders: Record<string, string> = {
-      ...(userSetAcceptEncoding ? {} : { "accept-encoding": "gzip" }),
+      ...(userSetAcceptEncoding
+        ? {}
+        : { "accept-encoding": "identity;q=1, *;q=0" }),
       ...cleanedHeaders,
       "x-pact-agent": opts.keypair.publicKey.toBase58(),
       "x-pact-timestamp": String(ts),
