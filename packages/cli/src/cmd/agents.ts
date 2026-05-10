@@ -5,16 +5,12 @@ export async function agentsShowCommand(opts: {
   configDir: string;
   gatewayUrl: string;
   pubkey?: string;
-  callId?: string;
 }): Promise<Envelope> {
   let pubkey = opts.pubkey;
   if (!pubkey) {
     pubkey = loadOrCreateWallet({ configDir: opts.configDir }).keypair.publicKey.toBase58();
   }
-  const path = opts.callId
-    ? `/v1/agents/${pubkey}/calls/${opts.callId}`
-    : `/v1/agents/${pubkey}`;
-  const url = `${opts.gatewayUrl.replace(/\/$/, "")}${path}`;
+  const url = `${opts.gatewayUrl.replace(/\/$/, "")}/v1/agents/${pubkey}`;
   const resp = await fetch(url);
   if (!resp.ok) {
     // Map upstream HTTP class onto the envelope so --json consumers can
