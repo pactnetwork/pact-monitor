@@ -128,9 +128,12 @@ jobs:
           git config user.name "github-actions[bot]"
           git tag -a "$TAG" -m "$NAME@$VERSION"
           git push origin "$TAG"
+          # Single-line --notes via $'...' so the literal newline embeds in the
+          # release body without breaking the YAML block scalar. The previous
+          # form put a column-0 line inside `run: |`, terminating the scalar
+          # and producing a startup_failure (0 jobs, 0s).
+          NOTES=$'Published to npm: https://www.npmjs.com/package/'"${NAME}"'/v/'"${VERSION}"$'\n\nPlatform: linux-x64 (Bun-compiled standalone binary). macOS/Windows users see the workflow file for the multi-platform follow-up plan.'
           gh release create "$TAG" \
             --title "$NAME@$VERSION" \
-            --notes "Published to npm: https://www.npmjs.com/package/${NAME}/v/${VERSION}
-
-Platform: linux-x64 (Bun-compiled standalone binary). macOS/Windows users see the workflow file for the multi-platform follow-up plan." \
+            --notes "$NOTES" \
             --target "$GITHUB_SHA"
