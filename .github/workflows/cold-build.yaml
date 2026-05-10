@@ -61,6 +61,11 @@ jobs:
           node-version: "20"
           cache: pnpm
 
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
       - name: Install workspace deps
         run: pnpm install --frozen-lockfile
 

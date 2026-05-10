@@ -5,7 +5,7 @@ import { SiteHeader } from "@/components/site-header";
 
 export const metadata: Metadata = {
   title: "Pact Market Dashboard",
-  description: "Parametric API insurance for Solana agents",
+  description: "Parametric API coverage for Solana agents",
 };
 
 export default function RootLayout({
