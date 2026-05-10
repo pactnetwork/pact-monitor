@@ -126,13 +126,17 @@ function selectMppChallenge(challenges: MppChallenge[]): MppChallenge | null {
 export async function payCommand(
   input: PayCommandInput,
 ): Promise<PayCommandResult> {
-  const gate = gateEnvelope();
-  if (gate) return gate;
-
+  // Validate the wrapped tool BEFORE the mainnet gate. Unsupported tools
+  // (e.g. `pact pay wget …`) never reach a signing path, so they don't
+  // need the gate's defense-in-depth speed-bump — but they DO need to
+  // exit non-zero so shell chains like `pact pay wgett … && next-step`
+  // stop on a typo regardless of whether PACT_MAINNET_ENABLED is set.
+  // Gating before this check meant the unsupported_tool exit code (50)
+  // only fired when mainnet was already enabled (codex review on PR #131).
   if (!SUPPORTED_TOOLS.includes(input.tool as (typeof SUPPORTED_TOOLS)[number])) {
     return {
       kind: "envelope",
-      envelope: makeEnvelope("client_error", {
+      envelope: makeEnvelope("unsupported_tool", {
         error: "unsupported_tool",
         tool: input.tool,
         supported: SUPPORTED_TOOLS,
@@ -142,13 +146,16 @@ export async function payCommand(
     };
   }
 
+  const gate = gateEnvelope();
+  if (gate) return gate;
+
   const first = await runWrappedTool(input.tool, input.args, input.spawn);
 
   switch (first.kind) {
     case "tool_missing":
       return {
         kind: "envelope",
-        envelope: makeEnvelope("client_error", {
+        envelope: makeEnvelope("tool_missing", {
           error: "tool_missing",
           tool: first.tool,
           suggest: `install ${first.tool} (e.g. \`brew install ${first.tool}\`)`,
@@ -316,7 +323,7 @@ function finalizeRetry(
       // Should be unreachable — the first call would already have bailed.
       return {
         kind: "envelope",
-        envelope: makeEnvelope("client_error", {
+        envelope: makeEnvelope("tool_missing", {
           error: "tool_missing",
           tool: outcome.tool,
         }),
