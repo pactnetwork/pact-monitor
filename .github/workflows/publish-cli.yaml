@@ -1,0 +1,136 @@
+name: Publish @q3labs/pact-cli
+
+# Publishes the pact-cli binary to npm on every push to main that touches
+# `packages/cli/**`, mirroring the publish-monitor / publish-insurance
+# pattern (path-gated, version-monotonic, idempotent on re-runs).
+#
+# IMPORTANT — platform: bun build --compile produces a binary for the
+# runner's platform. ubuntu-latest yields bun-linux-x64. Mac/Windows
+# users who `npm install -g @q3labs/pact-cli` will get a Linux binary
+# they cannot execute. The closed-beta gate (PACT_MAINNET_ENABLED=1) and
+# the docs already point users at running this in Linux automation, but
+# multi-platform packaging (esbuild-style optionalDependencies for
+# @q3labs/pact-cli-{linux-x64,darwin-arm64,...}) is a follow-up if we
+# want first-class macOS/Windows install.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "packages/cli/**"
+      - "packages/protocol-v1-client/**"
+      - ".github/workflows/publish-cli.yaml"
+  workflow_dispatch:
+
+concurrency:
+  group: publish-cli
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: "https://registry.npmjs.org"
+          cache: "pnpm"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Test
+        run: pnpm --filter @q3labs/pact-cli test
+
+      - name: Build
+        run: pnpm --filter @q3labs/pact-cli build
+
+      - name: Verify dist/pact is present and executable
+        working-directory: packages/cli
+        run: |
+          set -euo pipefail
+          if [ ! -f dist/pact ]; then
+            echo "::error::dist/pact missing after build"
+            exit 1
+          fi
+          # Bun compile already sets +x, but assert it explicitly so the
+          # npm tarball can never ship a non-executable bin entry.
+          chmod +x dist/pact
+          if [ ! -x dist/pact ]; then
+            echo "::error::dist/pact is not executable after chmod"
+            exit 1
+          fi
+          # Smoke: the binary at minimum responds to --version without crashing.
+          ./dist/pact --version
+          echo "dist/pact: $(stat -c '%a %n' dist/pact)"
+
+      - name: Check if version already published
+        id: check
+        working-directory: packages/cli
+        run: |
+          set -euo pipefail
+          VERSION=$(node -p "require('./package.json').version")
+          NAME=$(node -p "require('./package.json').name")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+
+          # Monotonicity guard: block a downgrade republish (publishing
+          # 0.1.2 after 0.1.3 was released would silently regress consumers
+          # on the "latest" tag). Runs before the idempotency check so a
+          # rolled-back package.json cannot smuggle a downgrade through the
+          # "skip if equal" path.
+          LATEST_NPM=$(npm view "$NAME" version 2>/dev/null || echo "")
+          if [ -n "$LATEST_NPM" ]; then
+            if npx --yes semver "$LATEST_NPM" -r ">$VERSION" > /dev/null 2>&1; then
+              echo "::error::Refusing to publish $NAME@$VERSION: npm latest is $LATEST_NPM (strictly greater). Bump package.json above $LATEST_NPM to proceed."
+              exit 1
+            fi
+          fi
+
+          if npm view "$NAME@$VERSION" version > /dev/null 2>&1; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::$NAME@$VERSION already on npm — skipping publish."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Will publish $NAME@$VERSION."
+          fi
+
+      - name: Publish to npm
+        if: steps.check.outputs.skip == 'false'
+        working-directory: packages/cli
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: pnpm publish --access public --provenance --no-git-checks
+
+      - name: Tag and release
+        if: steps.check.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NAME: ${{ steps.check.outputs.name }}
+          VERSION: ${{ steps.check.outputs.version }}
+        run: |
+          set -euo pipefail
+          TAG="cli-v${VERSION}"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git tag -a "$TAG" -m "$NAME@$VERSION"
+          git push origin "$TAG"
+          gh release create "$TAG" \
+            --title "$NAME@$VERSION" \
+            --notes "Published to npm: https://www.npmjs.com/package/${NAME}/v/${VERSION}
+
+Platform: linux-x64 (Bun-compiled standalone binary). macOS/Windows users see the workflow file for the multi-platform follow-up plan." \
+            --target "$GITHUB_SHA"
