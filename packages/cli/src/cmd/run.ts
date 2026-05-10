@@ -22,6 +22,16 @@ export interface RunOpts {
 }
 
 export async function runCommand(opts: RunOpts): Promise<Envelope> {
+  // --raw is a true direct upstream call: no discovery, no balance check, no
+  // gateway, no Pact signing, no premium. The user is calling whatever URL
+  // they passed, uninsured, with their own headers/method/body. The mainnet
+  // gate (PACT_MAINNET_ENABLED=1) still fires upstream of this function via
+  // validateClusterStrict in src/index.ts at commander parse time, so a
+  // raw call without the gate set never reaches this branch.
+  if (opts.raw) {
+    return rawDirectCall(opts);
+  }
+
   let endpoints;
   try {
     endpoints = await fetchEndpoints({
@@ -35,33 +45,31 @@ export async function runCommand(opts: RunOpts): Promise<Envelope> {
     };
   }
 
-  let slug = "raw";
-  let upstreamPath = new URL(opts.url).pathname + new URL(opts.url).search;
+  let slug: string;
+  let upstreamPath: string;
   let provider: { premiumBps: number } | null = null;
 
-  if (!opts.raw) {
-    const r = resolveSlug({ url: opts.url, endpoints: endpoints.endpoints });
-    if (!r.ok) {
-      if (r.reason === "no_provider") {
-        return {
-          status: "no_provider",
-          body: {
-            hostname: r.hostname,
-            reason:
-              "Endpoint not yet onboarded. Request access via the Pact team — v0.1.0 has no auto-provision flow.",
-            suggest: "use --raw for an uninsured call",
-          },
-        };
-      }
+  const r = resolveSlug({ url: opts.url, endpoints: endpoints.endpoints });
+  if (!r.ok) {
+    if (r.reason === "no_provider") {
       return {
-        status: "endpoint_paused",
-        body: { hostname: r.hostname },
+        status: "no_provider",
+        body: {
+          hostname: r.hostname,
+          reason:
+            "Endpoint not yet onboarded. Request access via the Pact team — v0.1.0 has no auto-provision flow.",
+          suggest: "use --raw for an uninsured call",
+        },
       };
     }
-    slug = r.slug;
-    upstreamPath = r.upstreamPath;
-    provider = endpoints.endpoints.find((e: { slug: string }) => e.slug === r.slug) ?? null;
+    return {
+      status: "endpoint_paused",
+      body: { hostname: r.hostname },
+    };
   }
+  slug = r.slug;
+  upstreamPath = r.upstreamPath;
+  provider = endpoints.endpoints.find((e: { slug: string }) => e.slug === r.slug) ?? null;
 
   const wallet = loadOrCreateWallet({ configDir: opts.configDir });
 
@@ -130,11 +138,12 @@ export async function runCommand(opts: RunOpts): Promise<Envelope> {
     };
   }
 
-  // Cache-invalidating retry on 404/410/423 with a Pact-* header
+  // Cache-invalidating retry on 404/410/423 with a Pact-* header. Note:
+  // --raw early-returns above and never reaches this path.
   if (
     (resp.status === 404 && resp.body.includes("unknown_slug")) ||
     resp.status === 410 ||
-    (resp.status === 423 && !opts.raw)
+    resp.status === 423
   ) {
     invalidateCache(opts.configDir);
     if (resp.status === 423) {
@@ -201,6 +210,85 @@ function buildEnvelope(
       premium_usdc: 0.0001,
       tx_signature: null,
       settlement_eta_sec: 8,
+    },
+  };
+}
+
+// --raw: direct upstream fetch, uninsured. No discovery, no balance check,
+// no Pact gateway, no Pact signing headers, no premium. The user's URL is
+// called as-is with their headers/method/body. Outcome envelope mirrors the
+// gateway path (ok / client_error / server_error) so --json consumers see
+// the same shape, with call_id_source="local_fallback" because there's no
+// gateway to assign a call id and slug="raw" to indicate the bypass.
+async function rawDirectCall(opts: RunOpts): Promise<Envelope> {
+  // Defense-in-depth: re-check the closed-beta gate at point-of-use. Commander's
+  // --cluster validator only fires when the user passes --cluster explicitly;
+  // a bare `pact --raw <url>` defaults to "mainnet" without coercion, so the
+  // gate must be re-checked here. Mirrors the same call resolveClusterConfig()
+  // does on the gateway path. (Earlier codex review on PR #64 flagged the
+  // analogous gap in pact pay; this closes the same hole for --raw.)
+  const cfg = resolveClusterConfig();
+  if ("error" in cfg) {
+    return { status: "client_error", body: { error: cfg.error } };
+  }
+
+  const timeoutMs = opts.timeoutMs ?? 30000;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  const startedAt = Date.now();
+
+  let status: number;
+  let bodyText: string;
+  try {
+    const resp = await fetch(opts.url, {
+      method: opts.method,
+      headers: opts.headers,
+      body: opts.body && opts.body.length > 0 ? opts.body : undefined,
+      signal: ctrl.signal,
+    });
+    clearTimeout(timer);
+    status = resp.status;
+    bodyText = await resp.text();
+  } catch (err) {
+    clearTimeout(timer);
+    return {
+      status: "server_error",
+      body: { error: (err as Error).message, url: opts.url, raw: true },
+      meta: {
+        slug: "raw",
+        call_id: `call_${randomUUID()}`,
+        call_id_source: "local_fallback",
+        latency_ms: Date.now() - startedAt,
+        outcome: "server_error",
+        tx_signature: null,
+        raw: true,
+      },
+    };
+  }
+
+  let outcome: Outcome;
+  if (status >= 200 && status < 300) outcome = "ok";
+  else if (status >= 400 && status < 500) outcome = "client_error";
+  else outcome = "server_error";
+
+  let parsedBody: unknown = bodyText;
+  try {
+    parsedBody = JSON.parse(bodyText);
+  } catch {
+    /* keep raw text */
+  }
+
+  return {
+    status: outcome,
+    body: parsedBody,
+    meta: {
+      slug: "raw",
+      call_id: `call_${randomUUID()}`,
+      call_id_source: "local_fallback",
+      latency_ms: Date.now() - startedAt,
+      outcome,
+      tx_signature: null,
+      raw: true,
     },
   };
 }

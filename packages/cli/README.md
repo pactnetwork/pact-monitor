@@ -27,6 +27,10 @@ pact agents show
 pact pay curl https://api.example.com  # wrap any tool through 402 challenges
 ```
 
+## `--raw` (uninsured direct call)
+
+Passing `--raw` calls the upstream URL directly, bypassing the gateway: no discovery, no balance check, no Pact signing headers, no premium debited, no refund on failure. The mainnet gate (`PACT_MAINNET_ENABLED=1`) still applies because cluster validation runs at every invocation. Use `--raw` only when the upstream is not yet onboarded (`no_provider`) or for one-off probes; the per-call envelope reports `meta.slug = "raw"`, `meta.call_id_source = "local_fallback"`, and `meta.raw = true`.
+
 ## Custody model
 
 Your USDC stays in your own associated token account (ATA). `pact approve <usdc>` issues an SPL Token `Approve` ix that authorizes the protocol's `SettlementAuthority` PDA to debit up to `<usdc>` lamports during settlement. `pact approve` does **not** move funds — fund your mainnet USDC ATA externally (bridge or transfer in).

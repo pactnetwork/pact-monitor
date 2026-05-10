@@ -131,7 +131,10 @@ program
   .option("--method <m>", "HTTP method", "GET")
   .option("--header <h...>", "HTTP header (repeatable)")
   .option("-d, --data <body>", "request body")
-  .option("--raw", "skip slug rewriting (uninsured)")
+  .option(
+    "--raw",
+    "call the upstream URL directly, uninsured (no gateway, no Pact signing, no premium)",
+  )
   .option("--timeout <sec>", "timeout seconds (positive integer)", parsePositiveInt, 30)
   .action(async (url, options) => {
     if (!url) {

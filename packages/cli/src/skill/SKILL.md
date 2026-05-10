@@ -44,7 +44,7 @@ ALWAYS pass `--json`. Parse `.status` first; never grep stdout.
 | `needs_funding`         | 10   | USDC ATA balance below estimated premium OR no allowance granted   | `pact approve <usdc>` if policy cap allows; else surface deposit URL from `.body.deposit_url`        |
 | `auto_deposit_capped`   | 11   | self-funding cap exhausted                                         | raise `per_deposit_max_usdc` / `session_total_max_usdc` in `~/.config/pact/<project>/policy.yaml` or wait for session reset |
 | `endpoint_paused`       | 12   | per-endpoint kill switch active                                    | pick another provider or wait                                                                        |
-| `no_provider`           | 20   | endpoint not yet onboarded — terminal during private beta          | use `--raw` for an uninsured call, or request access from the Pact team. v0.1.0 has no auto-provision flow; manual onboarding only |
+| `no_provider`           | 20   | endpoint not yet onboarded — terminal during private beta          | use `--raw` for an uninsured direct call (no gateway, no Pact signing, no premium), or request access from the Pact team. v0.1.0 has no auto-provision flow; manual onboarding only |
 | `discovery_unreachable` | 21   | gateway is down or unreachable                                     | surface and stop; do not loop                                                                        |
 | `signature_rejected`    | 30   | clock skew; signed request rejected by gateway                     | tell user to sync NTP (`sudo sntp -sS time.apple.com`)                                               |
 | `payment_failed`        | 31   | `pact pay` reached a 402 challenge but the retry was rejected      | inspect `.body.scheme` (`x402`/`mpp`) + `.body.reason`; verify the upstream is Pact-aware            |
@@ -112,6 +112,6 @@ v0.1.0 runs against the live Pact Network mainnet program at `api.pactnetwork.io
 
 1. NEVER use `curl`, `fetch`, or `http` clients directly for the hostnames listed in the description above — they bypass insurance.
 2. NEVER store the wallet private key in code or commits. It lives at `~/.config/pact/<project>/wallet.json` and is auto-generated on first run.
-3. NEVER pass `--raw` unless the user explicitly asks for an uninsured call.
+3. NEVER pass `--raw` unless the user explicitly asks for an uninsured call. `--raw` bypasses the gateway entirely and calls the upstream URL directly with the user's headers/method/body — no discovery, no balance check, no Pact signing, no premium, no refund. The closed-beta gate (`PACT_MAINNET_ENABLED=1`) still applies because the cluster validator runs at every CLI invocation.
 4. NEVER set `PACT_MAINNET_ENABLED=1` for an automated agent without the user's explicit consent — the gate is intentional friction.
 5. If asked "what did Pact cost", run `pact agents show --json` and summarize `.body`.
