@@ -383,6 +383,86 @@ describe("cmd/pay — end-to-end with real curl + mock upstream", () => {
     });
   });
 
+  // Codex review on PR #131: pact pay wget … must exit 50 even when the
+  // mainnet gate is closed, because shell chains like `pact pay wgett &&
+  // next-step` should stop on a typo regardless of PACT_MAINNET_ENABLED.
+  // Pre-fix, payCommand() ran gateEnvelope() before SUPPORTED_TOOLS, so
+  // unsupported_tool only fired when mainnet was already enabled.
+  describe("unsupported_tool gating order (codex review on PR #131)", () => {
+    const CLI_DIR = join(import.meta.dir, "..");
+
+    async function runCliClosedGate(
+      args: string[],
+    ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+      const cliDir = mkdtempSync(join(tmpdir(), "pact-cmd-pay-cli-closed-"));
+      try {
+        // Strip PACT_MAINNET_ENABLED from the inherited env so the gate is
+        // closed by default — exactly the production-default state codex
+        // reproduced.
+        const { PACT_MAINNET_ENABLED: _drop, ...envWithoutGate } = process.env;
+        const proc = Bun.spawn({
+          cmd: ["bun", "run", "src/index.ts", ...args],
+          cwd: CLI_DIR,
+          env: {
+            ...envWithoutGate,
+            HOME: cliDir,
+            XDG_CONFIG_HOME: cliDir,
+          },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([
+          new Response(proc.stdout).text(),
+          new Response(proc.stderr).text(),
+          proc.exited,
+        ]);
+        return { stdout, stderr, exitCode };
+      } finally {
+        rmSync(cliDir, { recursive: true, force: true });
+      }
+    }
+
+    test("pact pay wget exits 50 with unsupported_tool even when mainnet gate is closed", async () => {
+      const { stdout, exitCode } = await runCliClosedGate([
+        "--json",
+        "--project",
+        "audit-test",
+        "pay",
+        "wget",
+        "https://example.com",
+      ]);
+      const env = JSON.parse(stdout.trim()) as {
+        status: string;
+        body: { error: string; tool: string };
+      };
+      expect(env.status).toBe("unsupported_tool");
+      expect(env.body.error).toBe("unsupported_tool");
+      expect(env.body.tool).toBe("wget");
+      expect(exitCode).toBe(50);
+    });
+
+    test("pact pay curl with closed gate still returns the gate envelope (gate fires after tool validation)", async () => {
+      // Closed gate + supported tool → gate fires, exit code is 0 (gate
+      // envelope status is client_error which deliberately maps to 0 to
+      // preserve the rest of the CLI's envelope-first contract).
+      const { stdout, exitCode } = await runCliClosedGate([
+        "--json",
+        "--project",
+        "audit-test",
+        "pay",
+        "curl",
+        "https://example.com",
+      ]);
+      const env = JSON.parse(stdout.trim()) as {
+        status: string;
+        body: { error: string };
+      };
+      expect(env.status).toBe("client_error");
+      expect(env.body.error).toContain("PACT_MAINNET_ENABLED");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   test("payment rejection body surfaces payment_rejected envelope", async () => {
     const app = new Hono();
     app.all("*", () =>
