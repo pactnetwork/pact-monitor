@@ -110,7 +110,17 @@ describe("/v1/calls/:id", () => {
     // re-route). Path-traversal probes like ../etc/passwd never reach the
     // handler because Hono routes them elsewhere — that's defense in depth,
     // and the mockPg assertion below covers it.
-    const malformed = ["not-a-uuid", "5XyGGyazg6rGJU3Hjkrx1PDM1rBE3FraRnMauSR46rW1", "abc"];
+    const malformed = [
+      "not-a-uuid",
+      "5XyGGyazg6rGJU3Hjkrx1PDM1rBE3FraRnMauSR46rW1",
+      "abc",
+      // Canonical UUID shape but version=1 (third group starts with 1) —
+      // the route now enforces v4.
+      "11111111-2222-1333-8444-555555555555",
+      // Canonical UUID v4 shape but RFC 4122 variant byte is invalid
+      // (fourth group starts with c, not 8/9/a/b).
+      "11111111-2222-4333-c444-555555555555",
+    ];
     for (const id of malformed) {
       const res = await app.request(`/v1/calls/${id}`);
       expect(res.status, `id=${id}`).toBe(400);

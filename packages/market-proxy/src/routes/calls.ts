@@ -24,10 +24,13 @@ interface CallWire {
   }>;
 }
 
-// callId is a UUIDv4 produced by @pact-network/wrap. We accept the canonical
-// 8-4-4-4-12 hex format as the shape gate; anything else short-circuits to a
-// 400 so a stray pubkey or arbitrary string can't trigger DB load.
-const CALL_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// callId is a UUIDv4 produced by @pact-network/wrap. The shape gate enforces
+// version=4 (third group starts with `4`) and the RFC 4122 variant bits
+// (fourth group starts with 8/9/a/b). Anything else short-circuits to a 400
+// so a stray pubkey, lower-version UUID, or arbitrary string can't trigger
+// DB load.
+const CALL_ID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export async function callsRoute(c: Context): Promise<Response> {
   const callId = c.req.param("id") ?? "";
