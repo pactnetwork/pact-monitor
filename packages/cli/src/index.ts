@@ -16,6 +16,7 @@ import { balanceCommand } from "./cmd/balance.ts";
 import { approveCommand, revokeCommand } from "./cmd/approve.ts";
 import { pauseCommand } from "./cmd/pause.ts";
 import { agentsShowCommand, agentsWatchCommand } from "./cmd/agents.ts";
+import { callsShowCommand } from "./cmd/calls.ts";
 import { initCommand } from "./cmd/init.ts";
 import { payCommand } from "./cmd/pay.ts";
 // Bundle skill assets into the compiled binary via Bun text imports.
@@ -212,9 +213,9 @@ program
 
 program
   .command("agents")
-  .description("Inspect an agent's calls and balance")
+  .description("Inspect an agent's wallet (balance + allowance)")
   .argument("[subcommand]", "show|watch", "show")
-  .argument("[pubkey]", "pubkey or call_id (defaults to this project's agent)")
+  .argument("[pubkey]", "wallet pubkey (defaults to this project's agent)")
   .option("--watch", "stream live events (SSE)")
   .action(async (subcommand: string, pubkey: string | undefined, options) => {
     const project = resolveProjectOrDie(program.opts().project);
@@ -231,6 +232,34 @@ program
       configDir: configDirFor(project),
       gatewayUrl: program.opts().gateway,
       pubkey,
+    });
+    emit(env, Boolean(program.opts().json), Boolean(program.opts().quiet));
+  });
+
+program
+  .command("calls")
+  .description("Inspect a single insured call by its UUID")
+  .argument("[subcommand]", "show", "show")
+  .argument("<call_id>", "UUIDv4 returned in X-Pact-Call-Id on a wrapped call")
+  .action(async (subcommand: string, callId: string) => {
+    if (subcommand !== "show") {
+      emit(
+        {
+          status: "client_error",
+          body: {
+            error: "unknown_subcommand",
+            subcommand,
+            message: "calls subcommand must be 'show'",
+          },
+        },
+        Boolean(program.opts().json),
+        Boolean(program.opts().quiet),
+      );
+      return;
+    }
+    const env = await callsShowCommand({
+      gatewayUrl: program.opts().gateway,
+      callId,
     });
     emit(env, Boolean(program.opts().json), Boolean(program.opts().quiet));
   });
