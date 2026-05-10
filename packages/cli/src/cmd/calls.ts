@@ -1,8 +1,11 @@
 import type { Envelope } from "../lib/envelope.ts";
 
-// callId is a UUIDv4 produced by @pact-network/wrap. Validate the shape
-// client-side so a typo doesn't burn a network round-trip.
-const CALL_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// callId is a UUIDv4 produced by @pact-network/wrap. The local validator
+// enforces version=4 (third group starts with `4`) and the RFC 4122 variant
+// bits (fourth group starts with 8/9/a/b) so a typo, a v1/v3/v5 UUID, or a
+// stray pubkey doesn't burn a network round-trip.
+const CALL_ID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export async function callsShowCommand(opts: {
   gatewayUrl: string;

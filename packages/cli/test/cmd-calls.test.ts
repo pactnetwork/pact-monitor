@@ -81,4 +81,25 @@ describe("cmd/calls show", () => {
     expect(body.error).toBe("invalid_call_id");
     expect(body.message).toContain("pact agents show");
   });
+
+  test("rejects canonical-shaped UUIDs that aren't v4", async () => {
+    // Wrong server URL — if the validator misses, the fetch fails.
+    // v1: third group starts with `1`.
+    const v1 = await callsShowCommand({
+      gatewayUrl: "http://localhost:1",
+      callId: "11111111-2222-1333-8444-555555555555",
+    });
+    expect(v1.status).toBe("client_error");
+    expect((v1.body as { error: string }).error).toBe("invalid_call_id");
+
+    // v4 shape but invalid RFC 4122 variant byte (`c`, not 8/9/a/b).
+    const badVariant = await callsShowCommand({
+      gatewayUrl: "http://localhost:1",
+      callId: "11111111-2222-4333-c444-555555555555",
+    });
+    expect(badVariant.status).toBe("client_error");
+    expect((badVariant.body as { error: string }).error).toBe(
+      "invalid_call_id",
+    );
+  });
 });
