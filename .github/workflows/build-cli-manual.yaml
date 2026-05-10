@@ -1,0 +1,151 @@
+name: Build @q3labs/pact-cli (manual)
+
+# Manual-dispatch build for the pact-cli binary. Produces a Bun-compiled
+# standalone executable from any ref the operator picks, smokes it, and
+# uploads it as a GitHub Actions artifact. Does NOT publish to npm —
+# that lives in publish-cli.yaml and only fires on main pushes.
+#
+# Use cases:
+#   - QA wants a binary from a feature branch without merging
+#   - Reproduce a build at a specific commit/tag for incident triage
+#   - Verify the build pipeline before promoting to publish-cli
+#   - One-off cross-platform smoke (set runner via the `runner` input)
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref (branch/tag/sha) to build from"
+        required: false
+        default: ""
+        type: string
+      runner:
+        description: "Runner OS — controls the binary's target platform"
+        required: false
+        default: "ubuntu-latest"
+        type: choice
+        options:
+          - ubuntu-latest
+          - macos-latest
+          - macos-13
+          - windows-latest
+      retention_days:
+        description: "How long to keep the artifact (1-90 days)"
+        required: false
+        default: "14"
+        type: string
+
+concurrency:
+  # Per-ref so two operators dispatching against different branches do
+  # not cancel each other; same-ref re-dispatch cancels the in-flight
+  # build (the operator clearly meant the new attempt to win).
+  group: build-cli-manual-${{ github.event.inputs.ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build pact-cli on ${{ inputs.runner }}
+    runs-on: ${{ inputs.runner }}
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Empty string means "default ref" (the branch the workflow was
+          # dispatched against). Anything non-empty is taken verbatim.
+          ref: ${{ github.event.inputs.ref || github.ref }}
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "pnpm"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Test
+        run: pnpm --filter @q3labs/pact-cli test
+
+      - name: Typecheck
+        run: pnpm --filter @q3labs/pact-cli typecheck
+
+      - name: Build
+        run: pnpm --filter @q3labs/pact-cli build
+
+      - name: Verify dist/pact is present and executable
+        shell: bash
+        working-directory: packages/cli
+        run: |
+          set -euo pipefail
+          # Bun emits dist/pact on POSIX; on Windows it emits dist/pact.exe.
+          BIN="dist/pact"
+          if [ ! -f "$BIN" ] && [ -f "dist/pact.exe" ]; then BIN="dist/pact.exe"; fi
+          if [ ! -f "$BIN" ]; then
+            echo "::error::neither dist/pact nor dist/pact.exe present after build"
+            exit 1
+          fi
+          # POSIX runners: assert +x. Windows: skip the executable bit
+          # check (NTFS doesn't carry one and Bun produces a real .exe).
+          if [ "${RUNNER_OS:-}" != "Windows" ]; then
+            chmod +x "$BIN"
+            test -x "$BIN" || { echo "::error::$BIN not executable after chmod"; exit 1; }
+          fi
+          # Smoke: the binary at minimum responds to --version.
+          "./$BIN" --version
+          echo "::notice::built $BIN ($(wc -c < "$BIN") bytes) on ${RUNNER_OS:-unknown}"
+
+      - name: Compute artifact name
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          REF_INPUT='${{ github.event.inputs.ref }}'
+          # Sanitise the ref so it's a safe artifact-name component
+          # (alphanumerics, dot, dash, underscore only).
+          if [ -z "$REF_INPUT" ]; then
+            SAFE_REF=$(echo "${GITHUB_REF#refs/heads/}" | tr -c 'A-Za-z0-9._-' '_')
+          else
+            SAFE_REF=$(echo "$REF_INPUT" | tr -c 'A-Za-z0-9._-' '_')
+          fi
+          SHORT_SHA=$(echo "$GITHUB_SHA" | cut -c1-7)
+          OS_TAG=$(echo "${{ inputs.runner }}" | tr -c 'A-Za-z0-9._-' '_')
+          NAME="pact-cli-${OS_TAG}-${SAFE_REF}-${SHORT_SHA}"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "::notice::artifact name: $NAME"
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.meta.outputs.name }}
+          path: |
+            packages/cli/dist/pact
+            packages/cli/dist/pact.exe
+          if-no-files-found: error
+          retention-days: ${{ inputs.retention_days }}
+
+      - name: Summary
+        shell: bash
+        run: |
+          {
+            echo "## pact-cli manual build"
+            echo ""
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Ref | \`${{ github.event.inputs.ref || github.ref }}\` |"
+            echo "| Commit | \`$GITHUB_SHA\` |"
+            echo "| Runner | \`${{ inputs.runner }}\` |"
+            echo "| Artifact | \`${{ steps.meta.outputs.name }}\` |"
+            echo "| Retention | ${{ inputs.retention_days }} days |"
+            echo ""
+            echo "Download from the **Artifacts** section of this run."
+            echo ""
+            echo "_This workflow does NOT publish to npm. See \`publish-cli.yaml\` for the auto-publish path on main pushes._"
+          } >> "$GITHUB_STEP_SUMMARY"
