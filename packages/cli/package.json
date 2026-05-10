@@ -1,0 +1,45 @@
+{
+  "name": "@q3labs/pact-cli",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "pact": "dist/pact"
+  },
+  "files": ["dist", "README.md", "LICENSE"],
+  "scripts": {
+    "dev": "bun run src/index.ts",
+    "_build:deps": "pnpm --filter @pact-network/protocol-v1-client build",
+    "prebuild": "pnpm run _build:deps",
+    "build": "bun build src/index.ts --compile --target=bun --outfile dist/pact",
+    "build:matrix": "bash scripts/build-matrix.sh",
+    "pretest": "pnpm run _build:deps",
+    "test": "bun test",
+    "pretypecheck": "pnpm run _build:deps",
+    "typecheck": "tsc --noEmit",
+    "lint": "echo 'lint not configured yet'"
+  },
+  "dependencies": {
+    "@pact-network/protocol-v1-client": "workspace:*",
+    "@q3labs/pact-monitor": "workspace:*",
+    "@solana/kit": "^2.0.0",
+    "@solana/web3.js": "^1.95.0",
+    "tweetnacl": "^1.0.3",
+    "bs58": "^6.0.0",
+    "commander": "^12.0.0",
+    "js-yaml": "^4.1.0",
+    "chalk": "^5.3.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": ["pact-network", "solana", "cli", "ai-agent", "x402"],
+  "license": "MIT",
+  "author": "Pact Network",
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^20.0.0",
+    "hono": "^4.0.0",
+    "typescript": "^5.4.0"
+  }
+}

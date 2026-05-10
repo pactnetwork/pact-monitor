@@ -26,6 +26,13 @@ export class EndpointRegistry {
     return this.cache.get(slug);
   }
 
+  async getAll(): Promise<EndpointRow[]> {
+    if (Date.now() - this.loadedAt > this.TTL_MS) {
+      await this.reload();
+    }
+    return Array.from(this.cache.values());
+  }
+
   get size(): number {
     return this.cache.size;
   }

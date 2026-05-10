@@ -4,13 +4,17 @@ import { initContext } from "./lib/context.js";
 import { healthRoute, setHealthDeps } from "./routes/health.js";
 import { proxyRoute } from "./routes/proxy.js";
 import { agentsRoute } from "./routes/agents.js";
+import { callsRoute } from "./routes/calls.js";
 import { adminRoute } from "./routes/admin.js";
+import { wellKnownEndpointsRoute } from "./routes/well-known.js";
 import { env } from "./env.js";
 
 const app = new Hono();
 
 app.get("/health", healthRoute);
+app.get("/.well-known/endpoints", wellKnownEndpointsRoute);
 app.get("/v1/agents/:pubkey", agentsRoute);
+app.get("/v1/calls/:id", callsRoute);
 app.all("/v1/:slug/*", proxyRoute);
 app.post("/admin/reload-endpoints", adminRoute);
 
