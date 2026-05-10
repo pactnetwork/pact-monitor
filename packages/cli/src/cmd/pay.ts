@@ -132,7 +132,7 @@ export async function payCommand(
   if (!SUPPORTED_TOOLS.includes(input.tool as (typeof SUPPORTED_TOOLS)[number])) {
     return {
       kind: "envelope",
-      envelope: makeEnvelope("client_error", {
+      envelope: makeEnvelope("unsupported_tool", {
         error: "unsupported_tool",
         tool: input.tool,
         supported: SUPPORTED_TOOLS,
@@ -148,7 +148,7 @@ export async function payCommand(
     case "tool_missing":
       return {
         kind: "envelope",
-        envelope: makeEnvelope("client_error", {
+        envelope: makeEnvelope("tool_missing", {
           error: "tool_missing",
           tool: first.tool,
           suggest: `install ${first.tool} (e.g. \`brew install ${first.tool}\`)`,
@@ -316,7 +316,7 @@ function finalizeRetry(
       // Should be unreachable — the first call would already have bailed.
       return {
         kind: "envelope",
-        envelope: makeEnvelope("client_error", {
+        envelope: makeEnvelope("tool_missing", {
           error: "tool_missing",
           tool: outcome.tool,
         }),

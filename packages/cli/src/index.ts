@@ -258,15 +258,24 @@ program
       preferredNetwork: program.opts().cluster as string,
     });
     if (result.kind === "passthrough") {
-      // --json consumers want a structured envelope describing the payment
-      // event; chain-callable scripts can inspect status + body and feed
-      // body.tool_exit_code into their own conditionals. Without --json we
-      // stay strictly transparent: pact pay's default contract is unchanged.
-      if (wantsJson && result.payment.kind !== "none") {
-        const status =
+      // --json consumers want a structured envelope on every passthrough —
+      // including the no-402 path — so pipelines like `pact --json pay curl …
+      // | jq` never receive raw bytes. Without --json we stay strictly
+      // transparent: pact pay's default contract is unchanged (raw bytes
+      // through stdout/stderr, wrapped tool's exit code wins).
+      if (wantsJson) {
+        // Inline the JSON write + process.exit here instead of going through
+        // emit(), because emit() exits via exitCodeFor(env.status) which
+        // would clobber the wrapped tool's exit code. Passthrough's contract
+        // is "the wrapped tool's exit code wins" — preserve that even on
+        // --json by surfacing it inside body.tool_exit_code while exiting
+        // the parent process with the same code.
+        const status: Envelope["status"] =
           result.payment.kind === "x402"
             ? "x402_payment_made"
-            : "mpp_payment_made";
+            : result.payment.kind === "mpp"
+              ? "mpp_payment_made"
+              : "ok";
         const env: Envelope = {
           status,
           body: {
@@ -275,7 +284,8 @@ program
             payment: result.payment,
           },
         };
-        emit(env, true, Boolean(program.opts().quiet));
+        process.stdout.write(JSON.stringify(env) + "\n");
+        process.exit(result.exitCode);
       }
       if (result.stderr.byteLength > 0) process.stderr.write(result.stderr);
       if (result.bodyBytes.byteLength > 0) process.stdout.write(result.bodyBytes);

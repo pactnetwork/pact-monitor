@@ -13,6 +13,12 @@ export const statuses = [
   "x402_payment_made",
   "mpp_payment_made",
   "payment_failed",
+  // pact pay-specific failure modes that must exit non-zero so shell chains
+  // (`pact pay … && next-step`) stop on tool problems. These deliberately do
+  // not reuse `client_error` (which maps to exit 0 to preserve the
+  // envelope-first contract for the rest of the CLI).
+  "unsupported_tool",
+  "tool_missing",
   "cli_internal_error",
 ] as const;
 
@@ -56,6 +62,11 @@ const exitCodeMap: Record<Status, number> = {
   mpp_payment_made: 0,
   // pact pay reached a 402 challenge but the retry was rejected or unsupported.
   payment_failed: 31,
+  // pact pay invoked with a tool we don't wrap yet (e.g. wget) — non-zero so
+  // shell chains stop instead of silently continuing.
+  unsupported_tool: 50,
+  // pact pay's wrapped tool isn't on PATH (e.g. curl uninstalled).
+  tool_missing: 51,
   cli_internal_error: 99,
 };
 

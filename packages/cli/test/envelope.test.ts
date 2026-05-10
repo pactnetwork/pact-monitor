@@ -17,6 +17,8 @@ describe("envelope", () => {
       "x402_payment_made",
       "mpp_payment_made",
       "payment_failed",
+      "unsupported_tool",
+      "tool_missing",
       "cli_internal_error",
     ]);
   });
@@ -35,6 +37,8 @@ describe("envelope", () => {
     expect(exitCodeFor("x402_payment_made")).toBe(0);
     expect(exitCodeFor("mpp_payment_made")).toBe(0);
     expect(exitCodeFor("payment_failed")).toBe(31);
+    expect(exitCodeFor("unsupported_tool")).toBe(50);
+    expect(exitCodeFor("tool_missing")).toBe(51);
     expect(exitCodeFor("cli_internal_error")).toBe(99);
   });
 
