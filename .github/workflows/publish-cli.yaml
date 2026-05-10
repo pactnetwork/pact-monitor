@@ -31,8 +31,13 @@ jobs:
     name: Publish to npm
     runs-on: ubuntu-latest
     permissions:
+      # id-token: write is only needed for `npm publish --provenance`. We
+      # had to drop --provenance because the source repo is private and
+      # npm rejects sigstore provenance bundles from private repos
+      # ("Unsupported GitHub Actions source repository visibility:
+      # 'private'"). Restore id-token: write the same time you re-add
+      # --provenance below — see the TODO on the publish step.
       contents: write
-      id-token: write
     steps:
       - uses: actions/checkout@v4
 
@@ -113,7 +118,15 @@ jobs:
         working-directory: packages/cli
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: pnpm publish --access public --provenance --no-git-checks
+        # TODO(repo-public): re-add `--provenance` and restore the
+        # `id-token: write` permission above once pactnetwork/pact-monitor
+        # goes public. npm rejects provenance bundles from private repos:
+        #   "Error verifying sigstore provenance bundle: Unsupported
+        #    GitHub Actions source repository visibility: 'private'."
+        # publish-monitor.yaml and publish-insurance.yaml carry the same
+        # flag and will hit the same wall the next time they fire — flag
+        # them when you flip this back.
+        run: pnpm publish --access public --no-git-checks
 
       - name: Tag and release
         if: steps.check.outputs.skip == 'false'
