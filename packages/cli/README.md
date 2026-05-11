@@ -64,6 +64,12 @@ v0.1.0 supports `curl` only. Other tools (`wget`, `http` (HTTPie), `claude`,
 `codex`) are explicit non-MVP and return a `client_error` envelope so
 callers can detect the gap programmatically.
 
+The closed `PACT_MAINNET_ENABLED` gate that protects the other on-chain
+commands is bypassed for `pact pay` when argv contains one of pay's
+documented non-mainnet flags (`--sandbox`, `--dev`, `--local`); those
+flows route to a local Surfpool / hosted sandbox and carry zero
+mainnet exposure.
+
 ## Admin: `pact pause`
 
 `pact pause` flips the protocol-wide kill switch — every subsequent `settle_batch` call returns `ProtocolPaused (6032)` until the same instruction is sent again with `paused = 0`. The signer must equal `ProtocolConfig.authority` on-chain.

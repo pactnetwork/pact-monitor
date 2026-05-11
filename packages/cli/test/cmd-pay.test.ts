@@ -87,6 +87,36 @@ describe("pact pay: mainnet gate", () => {
       expect(body.error).toContain("PACT_MAINNET_ENABLED");
     }
   });
+
+  for (const flag of ["--sandbox", "--dev", "--local"] as const) {
+    test(`closed gate is bypassed when argv contains ${flag} (pay's non-mainnet flag)`, async () => {
+      let spawned = false;
+      const result = await payCommand({
+        args: [flag, "curl", "https://debugger.pay.sh/mpp/quote/AAPL"],
+        pay: async () => {
+          spawned = true;
+          return { exitCode: 0, stdout: enc("status=200"), stderr: enc("") };
+        },
+        emitSummary: false,
+      });
+      expect(spawned).toBe(true);
+      expect(result.kind).toBe("passthrough");
+    });
+  }
+
+  test("a non-mainnet flag appearing after `--` does NOT bypass the gate", async () => {
+    let spawned = false;
+    const result = await payCommand({
+      args: ["curl", "--", "--sandbox", "https://example.com"],
+      pay: async () => {
+        spawned = true;
+        return { exitCode: 0, stdout: enc(""), stderr: enc("") };
+      },
+      emitSummary: false,
+    });
+    expect(spawned).toBe(false);
+    expect(result.kind).toBe("envelope");
+  });
 });
 
 // ----------------------------------------------------------------------
