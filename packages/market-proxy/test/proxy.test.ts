@@ -284,6 +284,76 @@ describe("proxy route (wrap-based)", () => {
     expect(resp.headers.get("server")).toBeNull();
   });
 
+  // Issue #158: the CLI transmits the agent pubkey in the `x-pact-agent`
+  // header. The proxy must enter the insured branch on header alone, not
+  // require the legacy `pact_wallet` query param.
+  test("x-pact-agent header enters the insured wrap path (no query param)", async () => {
+    const app = makeApp();
+    const body = JSON.stringify({
+      jsonrpc: "2.0",
+      method: "getAccountInfo",
+      params: [],
+    });
+    const resp = await app.request("/v1/helius/", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-pact-agent": "wallet-from-header",
+      },
+      body,
+    });
+    expect(resp.status).toBe(200);
+    expect(resp.headers.get("X-Pact-Outcome")).toBe("ok");
+    expect(resp.headers.get("X-Pact-Premium")).toBe("500");
+    expect(resp.headers.get("X-Pact-Call-Id")).toBeTruthy();
+    // Allow the fire-and-forget sink publish to flush.
+    await new Promise((r) => setImmediate(r));
+    expect(memorySink.events.length).toBe(1);
+    expect(memorySink.events[0].agentPubkey).toBe("wallet-from-header");
+  });
+
+  // Back-compat: the dashboard demo path still uses `pact_wallet=...` query
+  // param. That surface must keep working until it migrates.
+  test("pact_wallet query param remains supported (back-compat)", async () => {
+    const app = makeApp();
+    const body = JSON.stringify({
+      jsonrpc: "2.0",
+      method: "getAccountInfo",
+      params: [],
+    });
+    const resp = await app.request("/v1/helius/?pact_wallet=legacy-wallet", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    });
+    expect(resp.status).toBe(200);
+    expect(resp.headers.get("X-Pact-Outcome")).toBe("ok");
+    await new Promise((r) => setImmediate(r));
+    expect(memorySink.events[0].agentPubkey).toBe("legacy-wallet");
+  });
+
+  // If both are present, the header wins. The CLI is the source of truth
+  // for an authenticated identity; the query param is the legacy surface.
+  test("x-pact-agent header takes precedence over pact_wallet query param", async () => {
+    const app = makeApp();
+    const body = JSON.stringify({
+      jsonrpc: "2.0",
+      method: "getAccountInfo",
+      params: [],
+    });
+    const resp = await app.request("/v1/helius/?pact_wallet=legacy-wallet", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-pact-agent": "header-wallet",
+      },
+      body,
+    });
+    expect(resp.status).toBe(200);
+    await new Promise((r) => setImmediate(r));
+    expect(memorySink.events[0].agentPubkey).toBe("header-wallet");
+  });
+
   test("force-breach mode forces a latency_breach classification", async () => {
     const ctx = getContext() as any;
     ctx.demoAllowlist.has.mockResolvedValue(true);

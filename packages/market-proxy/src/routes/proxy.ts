@@ -3,8 +3,9 @@
 // On every request:
 //   1. Resolve endpoint config from registry (slug, premium, SLA, etc.).
 //   2. Pick the per-provider handler (URL rewriter + insurability check).
-//   3. If the request isn't insurable, OR the agent didn't supply
-//      `pact_wallet`, passthrough without invoking wrap.
+//   3. If the request isn't insurable, OR the agent didn't supply an
+//      identity (`x-pact-agent` header, falling back to the legacy
+//      `pact_wallet` query param), passthrough without invoking wrap.
 //   4. Otherwise, look up the per-provider Classifier (composed with
 //      `defaultClassifier` from @pact-network/wrap) and call `wrapFetch`.
 //      wrap handles balance check, timing, classification, sink publish,
@@ -38,11 +39,16 @@ export async function proxyRoute(c: Context): Promise<Response> {
     return c.json({ error: "no handler for endpoint" }, 501);
   }
 
-  const pactWallet = c.req.query("pact_wallet");
+  // Agent identity: the CLI transmits the agent pubkey in the `x-pact-agent`
+  // header alongside its signed payload (see packages/cli/src/lib/transport.ts).
+  // The dashboard demo path still uses the `pact_wallet` query param, which we
+  // keep as a fallback for backwards compatibility until that surface migrates.
+  const pactWallet =
+    c.req.header("x-pact-agent") ?? c.req.query("pact_wallet");
   const demoBreach = c.req.query("demo_breach") === "1";
 
   // -----------------------------------------------------------------------
-  // Uninsured passthrough — no `pact_wallet`. We still rewrite the URL via
+  // Uninsured passthrough — no agent identity. We still rewrite the URL via
   // the per-endpoint handler but skip wrap entirely so no premium is
   // charged and no event is published.
   // -----------------------------------------------------------------------
