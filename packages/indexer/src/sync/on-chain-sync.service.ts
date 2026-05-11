@@ -36,6 +36,9 @@ const DEFAULT_UPSTREAM_BASE: Record<string, string> = {
   jupiter: "https://api.jup.ag",
   elfa: "https://api.elfa.ai",
   fal: "https://queue.fal.run",
+  // Demo upstream — `pact-dummy-upstream` behind https://dummy.pactnetwork.io.
+  // Used by the premium-coverage MVP; see docs/premium-coverage-mvp.md.
+  dummy: "https://dummy.pactnetwork.io",
 };
 
 /**
