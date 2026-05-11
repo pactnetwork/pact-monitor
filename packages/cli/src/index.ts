@@ -305,7 +305,9 @@ program
                 ? "payment_failed"
                 : result.outcome === "client_error"
                   ? "client_error"
-                  : "server_error",
+                  : result.outcome === "tool_error"
+                    ? "tool_error"
+                    : "server_error",
           body: {
             tool_exit_code: result.exitCode,
             classifier: result.outcome,

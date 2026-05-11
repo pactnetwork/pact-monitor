@@ -88,7 +88,8 @@ export type Outcome =
   | "success"
   | "server_error"   // upstream returned 5xx after payment succeeded
   | "client_error"   // upstream returned 4xx after payment succeeded (incl. 422)
-  | "payment_failed"; // payment leg itself never settled
+  | "payment_failed" // payment leg itself never settled
+  | "tool_error";    // pay spawned, no payment attempted, wrapped tool exited non-zero
 
 export interface PaymentSummary {
   attempted: boolean;       // did pay try to pay at all?
@@ -232,6 +233,18 @@ export function classifyPayResult(input: ClassifyInput): ClassifyResult {
       payment: { attempted, signed: effectivelySigned, amount, asset },
       upstreamStatus: null,
       reason: `pay exit ${input.payExitCode} after signed payment (no status hint)`,
+    };
+  } else if (!attempted && input.payExitCode !== 0) {
+    // pay spawned the wrapped tool, the tool exited non-zero, and no
+    // payment was ever attempted (no 402 challenge encountered). Don't
+    // mask this as success — surface it as a tool_error so callers
+    // reading the envelope can distinguish "free call succeeded" from
+    // "wrapped tool failed".
+    return {
+      outcome: "tool_error",
+      payment: { attempted, signed, amount, asset },
+      upstreamStatus,
+      reason: `wrapped tool exited ${input.payExitCode}`,
     };
   }
 

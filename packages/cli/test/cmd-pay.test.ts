@@ -87,6 +87,36 @@ describe("pact pay: mainnet gate", () => {
       expect(body.error).toContain("PACT_MAINNET_ENABLED");
     }
   });
+
+  for (const flag of ["--sandbox", "--dev", "--local"] as const) {
+    test(`closed gate is bypassed when argv contains ${flag} (pay's non-mainnet flag)`, async () => {
+      let spawned = false;
+      const result = await payCommand({
+        args: [flag, "curl", "https://debugger.pay.sh/mpp/quote/AAPL"],
+        pay: async () => {
+          spawned = true;
+          return { exitCode: 0, stdout: enc("status=200"), stderr: enc("") };
+        },
+        emitSummary: false,
+      });
+      expect(spawned).toBe(true);
+      expect(result.kind).toBe("passthrough");
+    });
+  }
+
+  test("a non-mainnet flag appearing after `--` does NOT bypass the gate", async () => {
+    let spawned = false;
+    const result = await payCommand({
+      args: ["curl", "--", "--sandbox", "https://example.com"],
+      pay: async () => {
+        spawned = true;
+        return { exitCode: 0, stdout: enc(""), stderr: enc("") };
+      },
+      emitSummary: false,
+    });
+    expect(spawned).toBe(false);
+    expect(result.kind).toBe("envelope");
+  });
 });
 
 // ----------------------------------------------------------------------
@@ -234,6 +264,28 @@ describe("pact pay: passthrough (gate open)", () => {
     expect(summary.text).toContain("classifier: success");
   });
 
+  test("wrapped tool exits non-zero with no payment attempted → tool_error outcome (passthrough)", async () => {
+    const summary = new BufStream();
+    const result = await payCommand({
+      args: ["wget", "http://example.com"],
+      pay: fakePay({
+        exitCode: 1,
+        stdout: "",
+        stderr: "",
+      }),
+      summaryStream: summary,
+    });
+    expect(result.kind).toBe("passthrough");
+    if (result.kind === "passthrough") {
+      expect(result.outcome).toBe("tool_error");
+      expect(result.exitCode).toBe(1);
+      expect(result.payment.attempted).toBe(false);
+      expect(result.reason).toContain("1");
+    }
+    expect(summary.text).toContain("classifier: tool_error");
+    expect(summary.text).toContain("no charge");
+  });
+
   test("pay binary not on PATH surfaces tool_missing envelope", async () => {
     const result = await payCommand({
       args: ["curl", "https://example.com"],
@@ -254,6 +306,42 @@ describe("pact pay: passthrough (gate open)", () => {
       expect(body.tool).toBe("pay");
       expect(body.suggest).toContain("solana-foundation/pay");
     }
+  });
+
+  test("first-run probe: no provisioned accounts → warning written and pay still spawned", async () => {
+    const summary = new BufStream();
+    const probeOrder: string[] = [];
+    await payCommand({
+      args: ["curl", "https://example.com"],
+      probe: async () => {
+        probeOrder.push("probe");
+        return { initialized: false };
+      },
+      pay: async () => {
+        probeOrder.push("pay");
+        return { exitCode: 0, stdout: enc("ok status=200"), stderr: enc("") };
+      },
+      summaryStream: summary,
+    });
+    expect(probeOrder).toEqual(["probe", "pay"]);
+    expect(summary.text).toContain("pay.sh has not been initialized");
+    expect(summary.text).toContain("Touch ID");
+    expect(summary.text).toContain("solana-foundation/pay#setup");
+  });
+
+  test("first-run probe: initialized host suppresses the warning", async () => {
+    const summary = new BufStream();
+    await payCommand({
+      args: ["curl", "https://example.com"],
+      probe: async () => ({ initialized: true }),
+      pay: fakePay({
+        exitCode: 0,
+        stdout: "ok status=200",
+        stderr: "",
+      }),
+      summaryStream: summary,
+    });
+    expect(summary.text).not.toContain("pay.sh has not been initialized");
   });
 
   test("emitSummary=false suppresses the [pact] summary block", async () => {
@@ -318,6 +406,13 @@ describe("classifyPayResult", () => {
       stdoutText: "",
       stderrText: PAY_VERBOSE_SUCCESS,
       expect: "server_error",
+    },
+    {
+      name: "no payment attempted + non-zero exit + no status hint → tool_error",
+      payExitCode: 1,
+      stdoutText: "",
+      stderrText: "",
+      expect: "tool_error",
     },
   ];
 
