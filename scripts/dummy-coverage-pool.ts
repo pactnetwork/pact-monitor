@@ -79,6 +79,12 @@
  *   # for real (devnet):
  *   ... pnpm exec tsx scripts/dummy-coverage-pool.ts --confirm
  *
+ *   # for real (MAINNET — operator path; ~1 USDC into the `dummy` coverage pool):
+ *   PACT_PRIVATE_KEY=<protocol-authority keypair> \
+ *   PACT_RPC_URL="https://mainnet.helius-rpc.com/?api-key=..." \
+ *   PROGRAM_ID=<mainnet-program-id> USDC_MINT=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v \
+ *     pnpm exec tsx scripts/dummy-coverage-pool.ts --mainnet --confirm
+ *
  * Verify afterward:
  *   solana account <coveragePool PDA> --url $PACT_RPC_URL          # endpoint_slug = "dummy", current_balance > 0
  *   solana account <endpointConfig PDA> --url $PACT_RPC_URL        # paused = 0, flat_premium_lamports = 1000
@@ -129,6 +135,8 @@ const DEFAULT_POOL_VAULT_KEYPAIR = resolvePath(
 );
 
 const CONFIRM = process.argv.includes("--confirm");
+const ALLOW_MAINNET =
+  process.env.ALLOW_MAINNET === "1" || process.argv.includes("--mainnet");
 
 // ---------------------------------------------------------------------------
 // Keypair / env helpers
@@ -238,8 +246,8 @@ async function main(): Promise<void> {
   console.log("");
 
   if (/mainnet/i.test(rpcUrl) || usdcMint.equals(new PublicKey("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"))) {
-    if (process.env.ALLOW_MAINNET !== "1") {
-      throw new Error("Refusing to run against mainnet for the MVP. Set ALLOW_MAINNET=1 to override (you almost certainly should not).");
+    if (!ALLOW_MAINNET) {
+      throw new Error("Refusing to run against mainnet without the mainnet override. Pass --mainnet (or set ALLOW_MAINNET=1) — and re-read what this does before you do.");
     }
   }
 

@@ -40,9 +40,13 @@
 export const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 // Solana mainnet CAIP-2-ish chain id (used by x402's solana facilitators).
 export const SOLANA_NETWORK = "solana";
-// Arbitrary demo recipient pubkey (a system-program-ish looking address).
-// Not a real treasury — this server takes no payments.
-export const DEMO_PAY_TO = "PactDemoUpstreamPayTo1111111111111111111111";
+// Demo x402 recipient pubkey. Override with the DUMMY_X402_PAY_TO env var
+// (e.g. on the Vercel project) to point mainnet `pact pay` payments at a real
+// treasury you control. The default below is a valid 32-byte Solana pubkey but
+// is NOT controlled by anyone — fine for `--sandbox` (localnet, fake USDC);
+// for a MAINNET demo, set DUMMY_X402_PAY_TO to a recoverable address first.
+export const DEMO_PAY_TO =
+  process.env.DUMMY_X402_PAY_TO ?? "PactDemoUpstreamPayTo1111111111111111111111";
 // Atomic USDC units. 5000 / 1e6 = 0.005 USDC.
 export const DEMO_MAX_AMOUNT_REQUIRED = "5000";
 
