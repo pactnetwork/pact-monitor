@@ -7,6 +7,7 @@ import { agentsRoute } from "./routes/agents.js";
 import { callsRoute } from "./routes/calls.js";
 import { adminRoute } from "./routes/admin.js";
 import { wellKnownEndpointsRoute } from "./routes/well-known.js";
+import { verifyPactSignature } from "./middleware/verify-signature.js";
 import { env } from "./env.js";
 
 const app = new Hono();
@@ -15,6 +16,10 @@ app.get("/health", healthRoute);
 app.get("/.well-known/endpoints", wellKnownEndpointsRoute);
 app.get("/v1/agents/:pubkey", agentsRoute);
 app.get("/v1/calls/:id", callsRoute);
+// verifyPactSignature is a no-op when no x-pact-agent header is present
+// (e.g. dashboard demo via ?pact_wallet=...); otherwise it enforces a
+// valid ed25519 signature before the request reaches proxyRoute.
+app.use("/v1/:slug/*", verifyPactSignature());
 app.all("/v1/:slug/*", proxyRoute);
 app.post("/admin/reload-endpoints", adminRoute);
 

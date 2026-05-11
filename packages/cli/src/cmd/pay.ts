@@ -27,7 +27,13 @@
 
 import { makeEnvelope, type Envelope } from "../lib/envelope.ts";
 import { resolveClusterConfig } from "../lib/solana.ts";
-import { runPay, withVerboseFlag, type PayShellFn } from "../lib/pay-shell.ts";
+import {
+  runPay,
+  withVerboseFlag,
+  DEFAULT_PAY_PROBE,
+  type PayShellFn,
+  type PayProbeFn,
+} from "../lib/pay-shell.ts";
 import {
   classifyPayResult,
   type Outcome,
@@ -48,14 +54,38 @@ function gateEnvelope(): { kind: "envelope"; envelope: Envelope } | null {
   return null;
 }
 
+// pay's documented non-mainnet flags (verified vs `pay --help` against
+// solana-foundation/pay 0.16.0, 2026-05-11):
+//
+//   --sandbox  force network=localnet, hosted Surfpool RPC
+//   --dev      hidden alias for --sandbox
+//   --local    force network=localnet, localhost Surfpool RPC
+//
+// When any of these appear in the argv pact forwards to pay, the call
+// has zero mainnet exposure and the closed PACT_MAINNET_ENABLED gate
+// should not block it. The check stops at "--" so a wrapped tool's own
+// `--sandbox` argument (e.g. `pact pay curl --sandbox http://...`)
+// cannot bypass the gate by accident.
+const PAY_NON_MAINNET_FLAGS = new Set(["--sandbox", "--dev", "--local"]);
+function argvTargetsNonMainnet(args: string[]): boolean {
+  for (const arg of args) {
+    if (arg === "--") return false;
+    if (PAY_NON_MAINNET_FLAGS.has(arg)) return true;
+  }
+  return false;
+}
+
 export interface PayCommandInput {
   args: string[];           // verbatim argv after `pact pay`, e.g. ["curl", "-s", "https://…"]
   pay?: PayShellFn;         // test override
+  probe?: PayProbeFn;       // test override for the first-run probe
   // Whether to emit the [pact] summary block to stderr at the end. The
   // default is true. --quiet mode (handled in index.ts) sets this false.
   emitSummary?: boolean;
   // Where to write the summary lines (default: process.stderr). Tests
-  // capture into a buffer to assert content.
+  // capture into a buffer to assert content. The first-run pay-setup
+  // warning is also written through this stream so tests can assert
+  // on it without grabbing process.stderr.
   summaryStream?: { write(s: string): unknown };
 }
 
@@ -91,8 +121,42 @@ export async function payCommand(
 
   // 2. Mainnet gate. Runs before the pay binary check so a closed gate
   //    short-circuits cleanly even on hosts without pay installed.
-  const gate = gateEnvelope();
-  if (gate) return gate;
+  //    Bypassed when pay's argv contains a documented non-mainnet flag
+  //    (--sandbox / --dev / --local): such calls route to localnet via
+  //    pay's own machinery and carry zero mainnet exposure, so the gate
+  //    would be overly conservative.
+  if (!argvTargetsNonMainnet(input.args)) {
+    const gate = gateEnvelope();
+    if (gate) return gate;
+  }
+
+  // 2b. First-run pay-setup warning. On macOS, pay's first invocation
+  //     pops a Touch ID prompt asking the user to authorize provisioning
+  //     a Solana keypair into the Keychain. Surfacing a one-line heads-up
+  //     before we spawn pay turns an unexpected biometric prompt into an
+  //     expected one. Probe errors are swallowed inside the probe itself
+  //     so this branch can never block the main flow.
+  //
+  //     The default probe is skipped when the caller injected a fake pay
+  //     binary (i.e. tests) to keep the harness hermetic; tests that
+  //     specifically exercise the first-run warning pass an explicit
+  //     `probe` override.
+  if (input.emitSummary !== false) {
+    const probe =
+      input.probe ?? (input.pay === undefined ? DEFAULT_PAY_PROBE : null);
+    if (probe) {
+      const { initialized } = await probe();
+      if (!initialized) {
+        const out = input.summaryStream ?? process.stderr;
+        out.write(
+          "[pact] pay.sh has not been initialized on this host. The first " +
+            "invocation will prompt for Touch ID to provision a Solana keypair " +
+            "into your macOS Keychain. See " +
+            "https://github.com/solana-foundation/pay#setup for details.\n",
+        );
+      }
+    }
+  }
 
   // 3. Spawn pay. The runner tee's stdout/stderr to the user's terminal
   //    in real time AND captures buffers for the classifier. We prepend
@@ -184,6 +248,10 @@ function writePactSummary(
     case "payment_failed":
       lines.push(`${tag} classifier: payment_failed  (${reason || "pay exit non-zero"})`);
       lines.push(`${tag} (no charge — pay's payment leg never settled)`);
+      break;
+    case "tool_error":
+      lines.push(`${tag} classifier: tool_error  (${reason || "wrapped tool exit non-zero"})`);
+      lines.push(`${tag} (no charge — wrapped tool failed before any 402 challenge)`);
       break;
   }
 

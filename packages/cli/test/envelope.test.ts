@@ -19,6 +19,7 @@ describe("envelope", () => {
       "payment_failed",
       "unsupported_tool",
       "tool_missing",
+      "tool_error",
       "cli_internal_error",
     ]);
   });
@@ -39,6 +40,7 @@ describe("envelope", () => {
     expect(exitCodeFor("payment_failed")).toBe(31);
     expect(exitCodeFor("unsupported_tool")).toBe(50);
     expect(exitCodeFor("tool_missing")).toBe(51);
+    expect(exitCodeFor("tool_error")).toBe(0);
     expect(exitCodeFor("cli_internal_error")).toBe(99);
   });
 
