@@ -25,7 +25,7 @@ import { payCommand } from "./cmd/pay.ts";
 import skillSrc from "./skill/SKILL.md" with { type: "text" };
 import snippetSrc from "./skill/claude-md-snippet.md" with { type: "text" };
 
-const VERSION = "0.1.0";
+const VERSION = "0.2.0";
 const DEFAULT_GATEWAY = process.env.PACT_GATEWAY_URL ?? "https://api.pactnetwork.io";
 const DEFAULT_RPC = process.env.PACT_RPC_URL ?? "https://api.mainnet-beta.solana.com";
 // v0.1.0 is mainnet-only. Mainnet still requires PACT_MAINNET_ENABLED=1 as a
@@ -270,61 +270,58 @@ program
 program
   .command("pay")
   .description(
-    "Wrap a CLI tool (curl) so paid 402-gated APIs settle via the agent's SPL Approve allowance",
+    "Wrap solana-foundation/pay with Pact protection coverage (classifier + chargebacks)",
   )
-  .argument("<tool>", "wrapped tool (currently: curl)")
-  .argument("[args...]", "arguments forwarded to the wrapped tool")
+  .argument("[args...]", "arguments forwarded verbatim to `pay`")
   // Declare --json on pay (mirrors `run` and `balance`) so commander parses
-  // it before passThroughOptions hands the rest to the wrapped tool. Without
-  // this, `pact pay --json curl ...` treats `--json` as the wrapped tool.
-  .option("--json", "structured envelope to stdout")
+  // it before passThroughOptions hands the rest to pay. Without this,
+  // `pact pay --json curl ...` would forward `--json` as a pay argument.
+  .option("--json", "structured envelope to stdout (suppresses raw passthrough)")
   .allowUnknownOption(true)
   .passThroughOptions(true)
-  .action(async (tool: string, args: string[], options) => {
+  .action(async (args: string[], options) => {
     const wantsJson = Boolean(options?.json) || Boolean(program.opts().json);
-    const project = resolveProjectOrDie(program.opts().project);
+    const isQuiet = Boolean(program.opts().quiet);
     const result = await payCommand({
-      tool,
       args,
-      configDir: configDirFor(project),
-      preferredNetwork: program.opts().cluster as string,
+      // In --json mode we suppress the [pact] stderr lines so the
+      // structured envelope is the only thing a consumer needs to read.
+      // In passthrough mode the lines go to stderr alongside pay's own
+      // verbose output. Same for --quiet.
+      emitSummary: !wantsJson && !isQuiet,
     });
+
     if (result.kind === "passthrough") {
-      // --json consumers want a structured envelope on every passthrough —
-      // including the no-402 path — so pipelines like `pact --json pay curl …
-      // | jq` never receive raw bytes. Without --json we stay strictly
-      // transparent: pact pay's default contract is unchanged (raw bytes
-      // through stdout/stderr, wrapped tool's exit code wins).
+      // Passthrough's contract: the wrapped tool's exit code wins. In
+      // --json mode we still surface the classifier + payment summary
+      // inside a structured envelope (status = classifier outcome) but
+      // exit with pay's exit code, not the envelope-status mapping.
       if (wantsJson) {
-        // Inline the JSON write + process.exit here instead of going through
-        // emit(), because emit() exits via exitCodeFor(env.status) which
-        // would clobber the wrapped tool's exit code. Passthrough's contract
-        // is "the wrapped tool's exit code wins" — preserve that even on
-        // --json by surfacing it inside body.tool_exit_code while exiting
-        // the parent process with the same code.
-        const status: Envelope["status"] =
-          result.payment.kind === "x402"
-            ? "x402_payment_made"
-            : result.payment.kind === "mpp"
-              ? "mpp_payment_made"
-              : "ok";
         const env: Envelope = {
-          status,
+          status:
+            result.outcome === "success"
+              ? "ok"
+              : result.outcome === "payment_failed"
+                ? "payment_failed"
+                : result.outcome === "client_error"
+                  ? "client_error"
+                  : "server_error",
           body: {
             tool_exit_code: result.exitCode,
-            response_body: new TextDecoder().decode(result.bodyBytes),
+            classifier: result.outcome,
+            upstream_status: result.upstreamStatus,
+            reason: result.reason,
             payment: result.payment,
           },
         };
         process.stdout.write(JSON.stringify(env) + "\n");
         process.exit(result.exitCode);
       }
-      if (result.stderr.byteLength > 0) process.stderr.write(result.stderr);
-      if (result.bodyBytes.byteLength > 0) process.stdout.write(result.bodyBytes);
-      if (result.stdout.byteLength > 0) process.stdout.write(result.stdout);
+      // Default passthrough: pay's stdout/stderr already went directly
+      // to the user via the tee. Just exit with pay's code.
       process.exit(result.exitCode);
     }
-    emit(result.envelope, wantsJson, Boolean(program.opts().quiet));
+    emit(result.envelope, wantsJson, isQuiet);
   });
 
 program
