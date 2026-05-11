@@ -278,6 +278,25 @@ Why not "fund refunds from the agent's allowance too": the agent's allowance is 
 
 For the *very first* MVP cut, to avoid a combinatorial explosion of synthetic-slug pools, start with **one shared `pay:default` launch pool** (slug `pay-default`, ≤ 16 chars) covering all pay.sh-covered calls, with a conservative hourly cap. Split into per-target pools once volume justifies it (the on-chain model already supports it — it's just more `register_endpoint` calls).
 
+> **Demo-honesty note — key alignment for the "net cost $0.000 on a failed call" story.**
+> The pitch is: on a covered failure the agent is debited the premium *and* refunded
+> the call's imputed cost, so a failed paid call costs the agent ≈$0.000 net. For
+> that story to be *honest* in a live demo, the wallet the premium is debited from
+> (and the wallet the refund returns to) must be the **same key that actually paid
+> the merchant** — i.e. `pay`'s Keychain account, the one `pay` settles the x402/MPP
+> payment from. But the side-call sends the **pact wallet** pubkey as `agent` (it's
+> the one with the `pact approve` allowance and the one the gateway-path auth uses),
+> which is a *different* key than `pay`'s by default. So out of the box: the premium
+> is debited from the pact wallet and the refund returns to the pact wallet, **not**
+> to where the USDC actually left. No code change fixes this — the CLI correctly
+> sends the allowance-holding wallet as `agent`. The **demo setup** just has to align
+> the keys: run `pact approve` from the *same* key `pay` uses to settle (point
+> `pact init` / `PACT_PRIVATE_KEY` at `pay`'s Keychain key, or vice versa). Then the
+> premium debit, the refund credit, and the merchant payment all hit one wallet and
+> the "net $0.000" claim holds end-to-end. (A future option (b): have `pact pay`
+> extract `pay`'s `signer=…` pubkey and send it as a separate `paymentSignerPubkey`
+> so the facilitator could cross-check / route — out of scope here.)
+
 ### B.3 What new code is needed, by package
 
 #### `packages/cli` — `pact pay` → register

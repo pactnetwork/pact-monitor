@@ -199,6 +199,8 @@ describe("facilitator app", () => {
       premiumFunding: string;
       refundFunding: string;
       disclosure: string;
+      unverifiedReceiptsAccepted: boolean;
+      unverifiedDisclosure: string;
     };
     expect(json.model).toBe("side-call");
     expect(json.supportedSchemes).toEqual(["x402", "mpp"]);
@@ -210,6 +212,8 @@ describe("facilitator app", () => {
     expect(json.premiumFunding).toBe("agent_allowance");
     expect(json.refundFunding).toBe("pact_subsidised_launch_pool");
     expect(json.disclosure).toMatch(/subsidised/i);
+    expect(json.unverifiedReceiptsAccepted).toBe(true);
+    expect(json.unverifiedDisclosure).toMatch(/exposure cap/i);
   });
 
   test("GET /.well-known/pay-coverage — uses DB row when present", async () => {
@@ -246,6 +250,7 @@ describe("facilitator app", () => {
     expect(json.outcome).toBe("server_error");
     expect(json.observedPaymentBaseUnits).toBe("1000000");
     expect(json.reason).toBeNull();
+    expect((json as { verified: boolean }).verified).toBe(true);
     expect(json.coverageId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
 
     expect(publisher.events).toHaveLength(1);
@@ -260,7 +265,122 @@ describe("facilitator app", () => {
     expect(ev.resource).toBe(RESOURCE);
     expect(ev.callId).toBe(json.coverageId);
     expect(ev.coverageId).toBe(json.coverageId);
+    expect(ev.verified).toBe(true);
     expect(ev.latencyMs).toBe(1840);
+  });
+
+  test("register WITHOUT payee+paymentSignature (pay.sh degrade mode) — verified:false, settlement_pending, event published with payee:null + verified:false", async () => {
+    // pay 0.16.0 logs neither the merchant address nor the settle tx sig, so
+    // `pact pay` sends both ABSENT. The facilitator must accept this.
+    const body: Record<string, unknown> = {
+      agent: AGENT,
+      resource: RESOURCE,
+      scheme: "x402",
+      amountBaseUnits: "1000000",
+      asset: USDC,
+      verdict: "server_error",
+      latencyMs: 1840,
+    };
+    // build a signed request from a hand-rolled body (signedRegisterRequest
+    // always includes payee/paymentSignature, so we sign manually here)
+    const json = JSON.stringify(body);
+    const ts = Date.now();
+    const nonce = bs58.encode(randomBytes(16));
+    const path = "/v1/coverage/register";
+    const payload = `v1\nPOST\n${path}\n${ts}\n${nonce}\n${createHash("sha256").update(json, "utf8").digest("hex")}`;
+    const sig = nacl.sign.detached(new TextEncoder().encode(payload), agentKp.secretKey);
+    const req = new Request(`http://local${path}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-pact-agent": AGENT,
+        "x-pact-timestamp": String(ts),
+        "x-pact-nonce": nonce,
+        "x-pact-signature": bs58.encode(sig),
+      },
+      body: json,
+    });
+    const res = await app.request(req);
+    expect(res.status).toBe(200);
+    const out = (await res.json()) as {
+      coverageId: string;
+      status: string;
+      verified: boolean;
+      premiumBaseUnits: string;
+      refundBaseUnits: string;
+      observedPaymentBaseUnits: string | null;
+      outcome: string;
+    };
+    expect(out.status).toBe("settlement_pending");
+    expect(out.verified).toBe(false);
+    expect(out.premiumBaseUnits).toBe("1000");
+    expect(out.refundBaseUnits).toBe("1000000");
+    expect(out.observedPaymentBaseUnits).toBeNull();
+    expect(out.outcome).toBe("server_error");
+    expect(out.coverageId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+
+    expect(publisher.events).toHaveLength(1);
+    const ev: PaySettlementEvent = publisher.events[0];
+    expect(ev.source).toBe("pay.sh");
+    expect(ev.verified).toBe(false);
+    expect(ev.payee).toBeNull();
+    expect(ev.resource).toBe(RESOURCE);
+    expect(ev.endpointSlug).toBe("pay-default");
+    expect(ev.callId).toBe(out.coverageId);
+    expect(ev.coverageId).toBe(out.coverageId);
+  });
+
+  test("register with ONLY paymentSignature (no payee) — still unverified path (verified:false)", async () => {
+    // verification needs BOTH; one alone is treated as the unverified case.
+    const res = await app.request(
+      signedRegisterRequest({ payee: undefined } as Record<string, unknown>),
+    );
+    expect(res.status).toBe(200);
+    const out = (await res.json()) as { status: string; verified: boolean };
+    expect(out.status).toBe("settlement_pending");
+    expect(out.verified).toBe(false);
+    expect(publisher.events).toHaveLength(1);
+    expect(publisher.events[0].verified).toBe(false);
+    expect(publisher.events[0].payee).toBeNull();
+  });
+
+  test("register WITH both payee+paymentSignature (valid) — verified:true, verifyPayment called", async () => {
+    const { verifyPayment } = (await import("../src/lib/payment-verify.js")) as unknown as {
+      verifyPayment: ReturnType<typeof vi.fn>;
+    };
+    verifyPayment.mockClear();
+    const res = await app.request(signedRegisterRequest());
+    expect(res.status).toBe(200);
+    const out = (await res.json()) as {
+      status: string;
+      verified: boolean;
+      observedPaymentBaseUnits: string;
+    };
+    expect(out.status).toBe("settlement_pending");
+    expect(out.verified).toBe(true);
+    expect(out.observedPaymentBaseUnits).toBe("1000000");
+    expect(verifyPayment).toHaveBeenCalledTimes(1);
+    expect(publisher.events).toHaveLength(1);
+    expect(publisher.events[0].verified).toBe(true);
+    expect(publisher.events[0].payee).toBe(PAYEE);
+  });
+
+  test("register: malformed payee WHEN PRESENT → rejected (bad_payee, verified:false)", async () => {
+    const res = await app.request(signedRegisterRequest({ payee: "not-a-pubkey-$$$" }));
+    expect(res.status).toBe(400);
+    const out = (await res.json()) as { code: string; status: string; verified: boolean };
+    expect(out.code).toBe("bad_payee");
+    expect(out.status).toBe("rejected");
+    expect(out.verified).toBe(false);
+    expect(publisher.events).toHaveLength(0);
+  });
+
+  test("register: malformed paymentSignature WHEN PRESENT → rejected (bad_payment_signature)", async () => {
+    const res = await app.request(signedRegisterRequest({ paymentSignature: "tooshort" }));
+    expect(res.status).toBe(400);
+    const out = (await res.json()) as { code: string; verified: boolean };
+    expect(out.code).toBe("bad_payment_signature");
+    expect(out.verified).toBe(false);
   });
 
   test("register happy path (success verdict) — premium charged, refund 0", async () => {
@@ -408,13 +528,20 @@ describe("facilitator app", () => {
     expect(((await res.json()) as { code: string }).code).toBe("bad_amount");
   });
 
-  test("GET /v1/coverage/:id — no row yet → settlement_pending", async () => {
+  test("GET /v1/coverage/:id — no row yet → settlement_pending (+ callId / settleBatchSignature aliases)", async () => {
     const id = "11111111-2222-4333-8444-555555555555";
     const res = await app.request(`/v1/coverage/${id}`);
     expect(res.status).toBe(200);
-    const json = (await res.json()) as { coverageId: string; status: string; settled: boolean };
+    const json = (await res.json()) as {
+      coverageId: string; callId: string; status: string; settled: boolean;
+      settleBatchSignature: string | null; settlementSignature: string | null;
+    };
     expect(json.status).toBe("settlement_pending");
     expect(json.settled).toBe(false);
+    expect(json.callId).toBe(id);
+    expect(json.coverageId).toBe(id);
+    expect(json.settleBatchSignature).toBeNull();
+    expect(json.settlementSignature).toBeNull();
   });
 
   test("GET /v1/coverage/:id — row exists → settled with signature + payee/resource", async () => {
@@ -438,11 +565,15 @@ describe("facilitator app", () => {
     const res = await app.request(`/v1/coverage/${id}`);
     expect(res.status).toBe(200);
     const json = (await res.json()) as {
-      status: string; settled: boolean; settlementSignature: string; source: string; payee: string; resource: string; breach: boolean;
+      status: string; settled: boolean; settlementSignature: string; settleBatchSignature: string;
+      callId: string; coverageId: string; source: string; payee: string; resource: string; breach: boolean;
     };
     expect(json.status).toBe("settled");
     expect(json.settled).toBe(true);
     expect(json.settlementSignature).toMatch(/^[1-9A-HJ-NP-Za-km-z]+$/);
+    expect(json.settleBatchSignature).toBe(json.settlementSignature);
+    expect(json.callId).toBe(id);
+    expect(json.coverageId).toBe(id);
     expect(json.source).toBe("pay.sh");
     expect(json.payee).toBe(PAYEE);
     expect(json.resource).toBe(RESOURCE);

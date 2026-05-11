@@ -24,7 +24,7 @@
 // therefore returns `uncovered` for those and still records the receipt for
 // analytics (no Pub/Sub event published — there's nothing to settle).
 
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import type { Outcome } from "@pact-network/wrap";
 
 export type Verdict =
@@ -162,6 +162,25 @@ export function deriveCoverageId(args: {
     .digest();
   const b = Uint8Array.from(h.subarray(0, 16));
   // Force the UUIDv4 version/variant nibbles.
+  b[6] = (b[6] & 0x0f) | 0x40; // version 4
+  b[8] = (b[8] & 0x3f) | 0x80; // variant 10xx
+  const hex = Buffer.from(b).toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+/**
+ * Mint a fresh, random coverage id with the SAME UUIDv4 shape `deriveCoverageId`
+ * produces (version nibble = 4, variant nibble ∈ 8/9/a/b) — but from
+ * `crypto.randomBytes(16)` instead of a payment hash. Used when the register
+ * call carries no `paymentSignature` (the "unverified" / degrade mode): there's
+ * nothing to derive a deterministic dedup key from, so each call gets a new id.
+ *
+ * NOTE: unverified registrations are therefore NOT idempotent — re-running
+ * `pact pay` is a different payment anyway, so a fresh id each time is correct.
+ */
+export function randomCoverageId(): string {
+  const b = Uint8Array.from(randomBytes(16));
+  // Force the UUIDv4 version/variant nibbles (same as deriveCoverageId).
   b[6] = (b[6] & 0x0f) | 0x40; // version 4
   b[8] = (b[8] & 0x3f) | 0x80; // variant 10xx
   const hex = Buffer.from(b).toString("hex");

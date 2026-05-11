@@ -58,5 +58,15 @@ export async function wellKnownPayCoverageRoute(c: Context): Promise<Response> {
     // How a covered call settles: the same Pub/Sub -> settler -> settle_batch
     // machinery the gateway path uses (source: "pay.sh").
     settlement: "onchain_settle_batch_via_shared_settler",
+    // Degrade mode: `pay 0.16.0` doesn't expose the merchant address or the
+    // settle tx signature, so `pact pay` registers receipts WITHOUT `payee` /
+    // `paymentSignature`. We accept those ("unverified" mode) — the on-chain
+    // hourly exposure cap (and the per-call imputed-cost ceiling) bounds abuse.
+    unverifiedReceiptsAccepted: true,
+    unverifiedDisclosure:
+      "`pay 0.16.0` doesn't expose the settle tx signature (or the merchant " +
+      "address), so registrations are accepted on the agent's signed word; " +
+      "abuse is bounded by the on-chain hourly exposure cap; on-chain receipt " +
+      "verification is a planned hardening once `pay` exposes the signature.",
   });
 }
