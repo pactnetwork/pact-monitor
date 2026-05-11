@@ -39,6 +39,14 @@ const DEFAULT_UPSTREAM_BASE: Record<string, string> = {
   // Demo upstream — `pact-dummy-upstream` behind https://dummy.pactnetwork.io.
   // Used by the premium-coverage MVP; see docs/premium-coverage-mvp.md.
   dummy: "https://dummy.pactnetwork.io",
+  // Synthetic coverage-pool slug for pay.sh-covered calls (no real upstream —
+  // pay.sh calls settle directly with the merchant and the receipt is
+  // registered side-band via facilitator.pact.network; the on-chain
+  // EndpointConfig exists purely so a CoveragePool can hang off it). The
+  // sentinel just keeps the non-nullable `upstreamBase` column non-empty so
+  // the market-proxy's `new URL(...)` never sees `""`. See
+  // packages/facilitator/ + docs/premium-coverage-mvp.md Part B.
+  "pay-default": "https://facilitator.pact.network/pay-default",
 };
 
 /**
