@@ -18,14 +18,15 @@ import { pauseCommand } from "./cmd/pause.ts";
 import { agentsShowCommand, agentsWatchCommand } from "./cmd/agents.ts";
 import { callsShowCommand } from "./cmd/calls.ts";
 import { initCommand } from "./cmd/init.ts";
-import { payCommand } from "./cmd/pay.ts";
+import { payCommand, coverageMeta } from "./cmd/pay.ts";
+import { payCoverageStatusCommand } from "./cmd/pay-coverage.ts";
 // Bundle skill assets into the compiled binary via Bun text imports.
 // readFileSync(import.meta.url) does not work with `bun build --compile`
 // because raw .md files are not embedded into the bunfs virtual filesystem.
 import skillSrc from "./skill/SKILL.md" with { type: "text" };
 import snippetSrc from "./skill/claude-md-snippet.md" with { type: "text" };
 
-const VERSION = "0.2.2";
+const VERSION = "0.2.3";
 const DEFAULT_GATEWAY = process.env.PACT_GATEWAY_URL ?? "https://api.pactnetwork.io";
 const DEFAULT_RPC = process.env.PACT_RPC_URL ?? "https://api.mainnet-beta.solana.com";
 // v0.1.0 is mainnet-only. Mainnet still requires PACT_MAINNET_ENABLED=1 as a
@@ -270,18 +271,59 @@ program
 program
   .command("pay")
   .description(
-    "Wrap solana-foundation/pay with Pact protection coverage (classifier + chargebacks)",
+    "Wrap solana-foundation/pay with Pact protection coverage (classifier + facilitator coverage registration)",
   )
-  .argument("[args...]", "arguments forwarded verbatim to `pay`")
+  .argument("[args...]", "arguments forwarded verbatim to `pay` (or `coverage <id>` to check a coverage registration)")
   // Declare --json on pay (mirrors `run` and `balance`) so commander parses
   // it before passThroughOptions hands the rest to pay. Without this,
   // `pact pay --json curl ...` would forward `--json` as a pay argument.
   .option("--json", "structured envelope to stdout (suppresses raw passthrough)")
+  // --no-coverage: skip the facilitator side-call entirely. The call
+  // still happens and pay still settles with the merchant; Pact just
+  // doesn't record/price/refund coverage for it. Commander parses this
+  // as `options.coverage === false` (negated boolean).
+  .option("--no-coverage", "skip the facilitator coverage registration side-call")
   .allowUnknownOption(true)
   .passThroughOptions(true)
   .action(async (args: string[], options) => {
     const wantsJson = Boolean(options?.json) || Boolean(program.opts().json);
     const isQuiet = Boolean(program.opts().quiet);
+
+    // `pact pay coverage <id>` — a pay-coverage status lookup, not a
+    // wrapped-tool invocation. Recognised when the first positional is
+    // exactly "coverage".
+    if (args.length >= 1 && args[0] === "coverage") {
+      const coverageId = args[1];
+      if (!coverageId) {
+        emit(
+          {
+            status: "client_error",
+            body: {
+              error: "missing_coverage_id",
+              message: "usage: pact pay coverage <coverageId>",
+            },
+          },
+          wantsJson,
+          isQuiet,
+        );
+        return;
+      }
+      const env = await payCoverageStatusCommand({ coverageId });
+      emit(env, wantsJson, isQuiet);
+      return;
+    }
+
+    // Resolve the project (best-effort) so we can locate the pact
+    // wallet that signs the facilitator side-call. `pact pay` works
+    // without a project today; if resolution fails we just skip
+    // coverage registration (the [pact] line says so).
+    const proj = resolveProjectName({
+      flag: program.opts().project,
+      cwd: process.cwd(),
+    });
+    const projectName = proj.ok ? proj.name : undefined;
+    const configDir = projectName ? configDirFor(projectName) : undefined;
+
     const result = await payCommand({
       args,
       // In --json mode we suppress the [pact] stderr lines so the
@@ -289,6 +331,10 @@ program
       // In passthrough mode the lines go to stderr alongside pay's own
       // verbose output. Same for --quiet.
       emitSummary: !wantsJson && !isQuiet,
+      // Commander negated boolean: `--no-coverage` → options.coverage === false.
+      noCoverage: options?.coverage === false,
+      configDir,
+      project: projectName,
     });
 
     if (result.kind === "passthrough") {
@@ -297,6 +343,7 @@ program
       // inside a structured envelope (status = classifier outcome) but
       // exit with pay's exit code, not the envelope-status mapping.
       if (wantsJson) {
+        const meta = coverageMeta(result.coverage);
         const env: Envelope = {
           status:
             result.outcome === "success"
@@ -315,6 +362,7 @@ program
             reason: result.reason,
             payment: result.payment,
           },
+          ...(meta ? { meta: { coverage: meta } } : {}),
         };
         process.stdout.write(JSON.stringify(env) + "\n");
         process.exit(result.exitCode);
