@@ -16,6 +16,7 @@
  *         premiumLamports: <bigint string>,
  *         refundLamports:  <bigint string>,
  *         latencyMs, outcome, ts, settledAt, signature,
+ *         source?, payee?, resource?,   // pay.sh-covered calls carry these
  *         shares: [
  *           { kind: 0|1|2, pubkey, amountLamports: <bigint string> },
  *           ...
@@ -69,6 +70,14 @@ export class IndexerPusherService {
         refundLamports: String(d["refundLamports"] ?? "0"),
         latencyMs: d["latencyMs"] as number,
         outcome: (d["outcome"] as string | undefined) ?? "ok",
+        // Pass through `source` (and, for pay.sh-covered calls, `payee` /
+        // `resource`) so the indexer can tag the Call row. Gateway-path events
+        // carry no `source` today; pay.sh events from facilitator.pact.network
+        // carry source: "pay.sh" + payee + resource. Absent keys → undefined →
+        // omitted from the JSON → indexer stores NULL.
+        source: d["source"] as string | undefined,
+        payee: d["payee"] as string | undefined,
+        resource: d["resource"] as string | undefined,
         ts: d["ts"] as string | undefined,
         settledAt,
         signature,

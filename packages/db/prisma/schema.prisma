@@ -49,6 +49,11 @@ model Call {
   breach          Boolean
   breachReason    String?  @db.VarChar(16)
   source          String?  @db.VarChar(32)
+  // pay.sh-covered calls only (source = "pay.sh"): the merchant pubkey the
+  // agent paid and the URL/resource that was paid for. NULL for gateway-path
+  // calls. See packages/facilitator/ + docs/premium-coverage-mvp.md Part B.
+  payee           String?  @db.VarChar(44)
+  resource        String?
   ts              DateTime
   settledAt       DateTime
   signature       String   @db.VarChar(88)

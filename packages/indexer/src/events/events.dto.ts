@@ -48,6 +48,10 @@ export interface WrapCallEventDto {
   latencyMs: number;
   outcome: SettlementOutcome;
   source?: string;
+  /** pay.sh-covered calls only: merchant pubkey the agent paid (bs58). */
+  payee?: string;
+  /** pay.sh-covered calls only: the URL/resource that was paid for. */
+  resource?: string;
   ts: string;
   settledAt: string;
   signature: string;
