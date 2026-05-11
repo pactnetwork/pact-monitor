@@ -62,6 +62,12 @@ classifier verdict (`success` / `server_error` / `client_error` /
 `payment_failed` / `tool_error`), the payment amount + asset when one
 was attempted, and an SLA-policy hint when the upstream returned a 5xx.
 
+The closed `PACT_MAINNET_ENABLED` gate that protects the other on-chain
+commands is bypassed for `pact pay` when argv contains one of pay's
+documented non-mainnet flags (`--sandbox`, `--dev`, `--local`); those
+flows route to a local Surfpool / hosted sandbox and carry zero
+mainnet exposure.
+
 ## Admin: `pact pause`
 
 `pact pause` flips the protocol-wide kill switch — every subsequent `settle_batch` call returns `ProtocolPaused (6032)` until the same instruction is sent again with `paused = 0`. The signer must equal `ProtocolConfig.authority` on-chain.
