@@ -273,6 +273,94 @@ describe("pact pay: passthrough (gate open)", () => {
 });
 
 // ----------------------------------------------------------------------
+// Verbose-flag injection (#157)
+//
+// pay 0.16.0 emits its x402/MPP tracing only when -v is passed. Without
+// it the classifier sees empty stderr and reports payment.attempted=false
+// even when pay actually settled. pact pay must inject -v before the
+// wrapped tool, unless the user explicitly asked for quiet output.
+// ----------------------------------------------------------------------
+
+describe("pact pay: verbose-flag injection (#157)", () => {
+  let saved: string | undefined;
+  beforeEach(() => {
+    saved = process.env.PACT_MAINNET_ENABLED;
+    process.env.PACT_MAINNET_ENABLED = "1";
+  });
+  afterEach(() => {
+    if (saved !== undefined) process.env.PACT_MAINNET_ENABLED = saved;
+    else delete process.env.PACT_MAINNET_ENABLED;
+  });
+
+  function capturingPay(): { fn: PayShellFn; captured: string[][] } {
+    const captured: string[][] = [];
+    const fn: PayShellFn = async (args) => {
+      captured.push(args);
+      return { exitCode: 0, stdout: enc(""), stderr: enc("") };
+    };
+    return { fn, captured };
+  }
+
+  test("default invocation prepends -v before wrapped tool", async () => {
+    const { fn, captured } = capturingPay();
+    await payCommand({
+      args: ["curl", "-s", "https://example.com"],
+      pay: fn,
+      emitSummary: false,
+    });
+    expect(captured.length).toBe(1);
+    expect(captured[0]).toEqual(["-v", "curl", "-s", "https://example.com"]);
+  });
+
+  test("--quiet at head suppresses injection (passed through to pay)", async () => {
+    const { fn, captured } = capturingPay();
+    await payCommand({
+      args: ["--quiet", "curl", "https://example.com"],
+      pay: fn,
+      emitSummary: false,
+    });
+    expect(captured[0]).toEqual(["--quiet", "curl", "https://example.com"]);
+  });
+
+  test("-q short form suppresses injection", async () => {
+    const { fn, captured } = capturingPay();
+    await payCommand({
+      args: ["-q", "curl", "https://example.com"],
+      pay: fn,
+      emitSummary: false,
+    });
+    expect(captured[0]).toEqual(["-q", "curl", "https://example.com"]);
+  });
+
+  test("--silent variant suppresses injection", async () => {
+    const { fn, captured } = capturingPay();
+    await payCommand({
+      args: ["--silent", "curl", "https://example.com"],
+      pay: fn,
+      emitSummary: false,
+    });
+    expect(captured[0]).toEqual(["--silent", "curl", "https://example.com"]);
+  });
+
+  test("--silent on the wrapped tool (after curl) does NOT suppress -v", async () => {
+    // Only pay-side flags (those before the first non-flag arg) opt out.
+    // `curl --silent` is a curl flag, not a pact-pay quiet request.
+    const { fn, captured } = capturingPay();
+    await payCommand({
+      args: ["curl", "--silent", "https://example.com"],
+      pay: fn,
+      emitSummary: false,
+    });
+    expect(captured[0]).toEqual([
+      "-v",
+      "curl",
+      "--silent",
+      "https://example.com",
+    ]);
+  });
+});
+
+// ----------------------------------------------------------------------
 // Classifier unit tests — isolated, no command shell
 // ----------------------------------------------------------------------
 
