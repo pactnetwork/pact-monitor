@@ -279,12 +279,51 @@ should show the `pay-default` pool with `configSource: "db"` and the seeded valu
 
 ---
 
+## 6c. Register modes — verified vs. unverified (degrade mode)
+
+`POST /v1/coverage/register` accepts a receipt **with or without** `payee` +
+`paymentSignature`:
+
+- **Verified mode** — body carries BOTH `payee` (merchant bs58 pubkey) AND
+  `paymentSignature` (the settle tx sig). The facilitator confirms on-chain (via
+  `getParsedTransaction` + pre/post token-balance delta) that the tx moved
+  >= `amountBaseUnits` of the USDC mint into a token account owned by `payee`,
+  then proceeds. `coverageId` is deterministic (hash of `payee‖resource‖
+  paymentSignature`) — re-registering the same payment is idempotent.
+  Response/event field `verified: true`.
+
+- **Unverified mode** (degrade mode) — either field absent. `pay 0.16.0` never
+  logs the merchant address or the settle tx sig, so `pact pay` sends both
+  absent today — meaning **every `pact pay` registration lands here**. The
+  facilitator skips on-chain verification, treats `payee` as `null` everywhere
+  (response, Pub/Sub event, `Call.payee` column — already nullable from
+  migration `20260511000000_call_payee_resource`), mints a fresh random
+  UUIDv4-shaped `coverageId` (unverified registrations aren't idempotent), and
+  otherwise proceeds exactly as the verified path: allowance check, premium/
+  refund math, **publishes a SettlementEvent**, drives an on-chain
+  `settle_batch`. Response/event field `verified: false`.
+
+  A *present-but-malformed* `payee` / `paymentSignature` is still rejected
+  (`bad_payee` / `bad_payment_signature`) — only *absent* is OK.
+
+**The bound on unverified mode** is the on-chain `pay-default` pool config —
+nothing else: the per-call refund ceiling (`imputed_cost_lamports`, $1.00) and
+the **hourly exposure cap** (`exposure_cap_per_hour_lamports`, $5.00/hr), both
+clamped by `settle_batch`. There is no extra per-call haircut for unverified
+receipts. On-chain receipt verification (re-deriving `payee` from the resource +
+checking the settle tx) is a planned hardening once `pay` exposes the signature.
+`/.well-known/pay-coverage` advertises this via
+`"unverifiedReceiptsAccepted": true` + `"unverifiedDisclosure"`.
+
+---
+
 ## 7. Verify end-to-end
 
 ```bash
 # 1. liveness + metadata
 curl -s https://facilitator.pact.network/health
 curl -s https://facilitator.pact.network/.well-known/pay-coverage | jq
+# expect, among other fields: "unverifiedReceiptsAccepted": true, "unverifiedDisclosure": "..."
 
 # 2. an unsigned register call is rejected (auth required)
 curl -si -X POST https://facilitator.pact.network/v1/coverage/register \
@@ -293,9 +332,13 @@ curl -si -X POST https://facilitator.pact.network/v1/coverage/register \
 
 # 3. a real end-to-end flow (devnet/staging recommended first): run a `pact pay`
 #    against an x402 merchant once the CLI side (cli-facilitator-wiring PR) is
-#    live, then `GET /v1/coverage/<coverageId>` — it returns settlement_pending
-#    immediately, then `settled` with the settle_batch tx signature once the
-#    settler processes the Pub/Sub event. Open https://solscan.io/tx/<sig>.
+#    live. With pay 0.16.0 the register call lands in UNVERIFIED mode
+#    (response `verified:false`, `payee:null`) — that's expected; it still
+#    settles on-chain. Then `GET /v1/coverage/<coverageId>` — it returns
+#    settlement_pending immediately (with `callId` == `coverageId` and
+#    `settleBatchSignature: null`), then `settled` with `settleBatchSignature`
+#    (alias of `settlementSignature`) once the settler processes the Pub/Sub
+#    event. Open https://solscan.io/tx/<sig>.
 ```
 
 If `curl` against the bare `*.run.app` URL works but the custom domain doesn't:

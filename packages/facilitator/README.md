@@ -24,18 +24,25 @@ POST /v1/coverage/register
    ▼  facilitator:
    │   1. verify the ed25519 envelope (replay-protected, ±30s skew)            [middleware]
    │   2. cross-check x-pact-agent == body.agent
-   │   3. verify `paymentSignature` on-chain: a confirmed tx that moved
+   │   3. IF the receipt carries BOTH `payee` + `paymentSignature` ("verified" mode):
+   │      verify `paymentSignature` on-chain — a confirmed tx that moved
    │      ≥ amountBaseUnits of `asset` (must be the network USDC mint) into an
-   │      account owned by `payee`  (pre/post token-balance delta — robust to
-   │      transfer / transferChecked / CPI'd transfers)
+   │      account owned by `payee` (pre/post token-balance delta — robust to
+   │      transfer / transferChecked / CPI'd transfers). IF EITHER is absent
+   │      ("unverified" / degrade mode — `pay 0.16.0` doesn't expose them):
+   │      skip on-chain verification, treat `payee` as null, `verified` = false.
+   │      Abuse in this mode is bounded by the on-chain hourly exposure cap.
    │   4. map (payee, resource) → coverage-pool slug   (MVP: always `pay-default`)
    │   5. read the pool's flat premium / imputed refund from Postgres (env fallback)
    │   6. check the agent's `pact approve` allowance covers the premium
    │   7. compute premium + (possibly 0) refund from the verdict
    │   8. publish a SettlementEvent onto the SAME Pub/Sub topic the market-proxy
-   │      uses, with source: "pay.sh", endpointSlug: "pay-default", callId =
-   │      deterministic hash of (payee, resource, paymentSignature)             ──┐
-   │   9. respond { coverageId, status, premiumBaseUnits, refundBaseUnits, reason } │
+   │      uses, with source: "pay.sh", endpointSlug: "pay-default", verified,
+   │      payee (null in unverified mode), callId = deterministic hash of
+   │      (payee, resource, paymentSignature) when verified / a fresh random   ──┐
+   │      UUIDv4-shaped id when unverified                                        │
+   │   9. respond { coverageId, status, premiumBaseUnits, refundBaseUnits,        │
+   │      reason, verified, ... }                                                 │
    ▼                                                                               │
    ── async, seconds later ─────────────────────────────────────────────────────── │
                                                                                    ▼
@@ -50,6 +57,29 @@ POST /v1/coverage/register
        (source = "pay.sh", payee, resource).
 ```
 
+## Register modes — verified vs. unverified (degrade mode)
+
+`POST /v1/coverage/register` accepts a receipt in two modes:
+
+| | **verified** | **unverified** (degrade mode) |
+|---|---|---|
+| trigger | `payee` AND `paymentSignature` both present in the body | either (or both) absent — `pay 0.16.0` never logs the merchant address or the settle tx sig, so `pact pay` sends both absent |
+| on-chain check | `verifyPayment()` confirms a finalised tx moved >= `amountBaseUnits` of `asset` into a token account owned by `payee` | **none** — accepted on the agent's ed25519-signed word |
+| `payee` downstream | the supplied merchant pubkey | `null` (in the response, the Pub/Sub event, and the `Call` row) |
+| `coverageId` | deterministic — `uuidv4Shaped(sha256(payee + resource + paymentSignature))`; re-registering the same payment is idempotent (the on-chain `CallRecord` PDA dedups too) | a fresh random UUIDv4-shaped id each call — unverified registrations are **not** idempotent (re-running `pact pay` is a different payment anyway) |
+| `verified` in the response / event | `true` | `false` |
+| `observedPaymentBaseUnits` | the chain-observed transfer delta | `null` |
+
+**What bounds abuse in unverified mode:** the *same* on-chain controls as the
+verified path — the `pay-default` pool's per-call refund ceiling
+(`imputedCostLamports`, $1/call) and its on-chain **hourly exposure cap**
+(`exposureCapPerHourLamports`, $5/hr), both enforced by `settle_batch`. An
+unverified `verified:false` registration **still publishes a SettlementEvent and
+still drives an on-chain `settle_batch`** — there is no extra per-call haircut
+for unverified receipts; the on-chain caps are the bound. On-chain receipt
+verification (re-deriving `payee` + checking the settle tx) is a planned
+hardening once `pay` exposes the signature in its trace.
+
 ## Routes
 
 | method | path | purpose |
@@ -63,29 +93,37 @@ POST /v1/coverage/register
 
 ```jsonc
 {
-  "agent": "<bs58 Solana pubkey>",          // MUST equal the x-pact-agent header
-  "payee": "<bs58 merchant wallet pubkey>",  // OWNER of the receiving token account
-  "resource": "<the URL/resource paid for>", // non-empty, ≤2048 chars
-  "scheme": "x402" | "mpp",
-  "paymentSignature": "<bs58 Solana tx signature `pay` submitted>",
-  "amountBaseUnits": "<integer string — USDC base units the agent paid>",
-  "asset": "<bs58 USDC mint — must match the facilitator's configured USDC_MINT>",
-  "verdict": "success" | "ok" | "latency_breach" | "server_error" | "network_error" | "client_error" | "payment_failed",
-  "latencyMs": 1840                          // optional; defaults to 0
+  "agent": "<bs58 Solana pubkey>",          // REQUIRED — MUST equal the x-pact-agent header
+  "resource": "<the URL/resource paid for>", // REQUIRED — non-empty, <=2048 chars
+  "scheme": "x402" | "mpp",                   // REQUIRED
+  "amountBaseUnits": "<integer string — USDC base units the agent paid>",  // REQUIRED, > 0
+  "asset": "<bs58 USDC mint — must match the facilitator's configured USDC_MINT>",  // REQUIRED
+  "verdict": "success" | "ok" | "latency_breach" | "server_error" | "network_error" | "client_error" | "payment_failed",  // REQUIRED
+  // ---- OPTIONAL — both must be present to trigger on-chain verification ----
+  "payee": "<bs58 merchant wallet pubkey>",  // OPTIONAL — OWNER of the receiving token account. Absent => unverified mode.
+  "paymentSignature": "<bs58 Solana tx signature `pay` submitted>",  // OPTIONAL — absent => unverified mode.
+  // ---- OPTIONAL extras ----
+  "latencyMs": 1840                          // OPTIONAL; defaults to 0
   // extra fields (upstreamStatus, reason, ...) are accepted and ignored
 }
 ```
+
+`payee` / `paymentSignature` are **optional on the wire** — when *present* they
+must be a valid bs58 pubkey / tx signature respectively (a *present-and-malformed*
+value is rejected with `bad_payee` / `bad_payment_signature`); when *absent* the
+receipt is processed in **unverified mode** (see "Register modes" above). `pay
+0.16.0` exposes neither, so `pact pay` sends both absent today.
 
 Headers (same as the gateway path — see `packages/cli/src/lib/transport.ts`):
 `x-pact-agent`, `x-pact-timestamp` (ms since epoch), `x-pact-nonce` (bs58),
 `x-pact-signature` (bs58 ed25519 sig over `v1\nPOST\n/v1/coverage/register\n<ts>\n<nonce>\n<sha256(body)hex>`).
 (`x-pact-project` is **not** required here.)
 
-### `POST /v1/coverage/register` — response (always HTTP 200 on a well-formed, authenticated, payment-verified request)
+### `POST /v1/coverage/register` — response (always HTTP 200 on a well-formed, authenticated request that either verified on-chain or was accepted in unverified mode)
 
 ```jsonc
 {
-  "coverageId": "<UUIDv4-shaped, deterministic from the payment>",
+  "coverageId": "<UUIDv4-shaped — deterministic from the payment when verified; random when unverified>",
   "status": "settlement_pending" | "uncovered",
   "premiumBaseUnits": "<integer string>",       // 0 when uncovered
   "refundBaseUnits": "<integer string>",        // on a covered breach: == amountBaseUnits, capped at the pool's
@@ -93,18 +131,41 @@ Headers (same as the gateway path — see `packages/cli/src/lib/transport.ts`):
                                                 //   the pool's hourly exposure cap.) Always <= amountBaseUnits.
   "reason": null | "no_allowance" | "insufficient_balance" | "allowance_check_unavailable"
             | "not_covered_outcome" | "pool_paused",
+  "verified": true | false,                     // did the facilitator verify the payment on-chain? false in degrade mode.
   // present only when status == "settlement_pending":
   "poolSlug": "pay-default",
   "outcome": "ok" | "latency_breach" | "server_error" | "network_error",
-  "observedPaymentBaseUnits": "<integer string — what chain says the payee received>"
+  "observedPaymentBaseUnits": "<integer string — what chain says the payee received>" | null  // null in unverified mode
 }
 ```
 
 On a malformed / unauthenticated / payment-unverifiable request:
-HTTP 400 / 401 / 422 with `{ "coverageId": null, "status": "rejected", "reason": "...", "code": "..." }`.
+HTTP 400 / 401 / 422 with `{ "coverageId": null, "status": "rejected", "reason": "...", "code": "...", "verified": false }`.
 
-`coverageId` is deterministic — re-registering the same payment yields the same
-id (idempotent; the on-chain `CallRecord` PDA dedups it too).
+`coverageId` is deterministic in **verified** mode — re-registering the same
+payment yields the same id (idempotent; the on-chain `CallRecord` PDA dedups it
+too). In **unverified** mode it's a fresh random UUIDv4-shaped id per call.
+
+### `GET /v1/coverage/:id` — response
+
+```jsonc
+// before the settler's settle_batch lands + the indexer ingests it:
+{ "coverageId": "<id>", "callId": "<id>", "status": "settlement_pending", "settled": false,
+  "settleBatchSignature": null, "settlementSignature": null }
+
+// once settled:
+{ "coverageId": "<id>", "callId": "<id>", "status": "settled", "settled": true,
+  "agentPubkey": "...", "poolSlug": "pay-default",
+  "premiumBaseUnits": "...", "refundBaseUnits": "...", "latencyMs": 0,
+  "breach": true | false, "breachReason": "...",
+  "source": "pay.sh", "payee": "<bs58>" | null, "resource": "<url>",
+  "ts": "<ISO8601>", "settledAt": "<ISO8601>",
+  "settlementSignature": "<bs58 settle_batch tx sig>",
+  "settleBatchSignature": "<bs58 settle_batch tx sig>" }  // alias of settlementSignature
+```
+
+(`callId` is an alias for `coverageId`; `settleBatchSignature` is an alias for
+`settlementSignature` — both added for clients that key off those names.)
 
 ## Env
 
@@ -143,5 +204,5 @@ Cloud Run → map `facilitator.pact.network` → DNS CNAME → bootstrap the
 
 - `docs/premium-coverage-mvp.md` — the design (Part B is this service).
 - `packages/market-proxy/` — the gateway path (`api.pactnetwork.io/v1/<slug>/*`); this service mirrors its conventions.
-- `packages/settler/` — consumes the shared Pub/Sub topic and drives `settle_batch`. Unchanged except a one-line `source` propagation in `indexer-pusher.service.ts`.
+- `packages/settler/` — consumes the shared Pub/Sub topic and drives `settle_batch`. Forwards `source` / `payee` / `resource` from the event to the indexer untouched (a null `payee` rides along fine — `Call.payee` is nullable; absent → `undefined` → omitted from JSON → indexer stores `NULL`). `verified` is carried on the Pub/Sub event for observability; the settler doesn't forward it (the indexer doesn't store it today).
 - `scripts/pay-default-bootstrap.ts` — registers the `pay-default` endpoint on-chain + funds its pool.

@@ -6,9 +6,15 @@
 //   1. (middleware) verifies the ed25519 envelope over the canonical payload
 //      (same scheme as the gateway) — done before this handler runs.
 //   2. cross-checks the verified agent against the JSON `agent` field.
-//   3. verifies `paymentSignature` on-chain: a confirmed tx that moved >=
-//      `amountBaseUnits` of `asset` (must be the network USDC mint) into an
-//      account owned by `payee`.
+//   3. IF the receipt carries BOTH `payee` and `paymentSignature` ("verified"
+//      mode): verifies `paymentSignature` on-chain — a confirmed tx that moved
+//      >= `amountBaseUnits` of `asset` (must be the network USDC mint) into an
+//      account owned by `payee`. IF EITHER is absent ("unverified" / degrade
+//      mode — `pay 0.16.0` never logs the merchant address or the settle tx
+//      sig, so `pact pay` sends those fields absent): skips on-chain
+//      verification, treats `payee` as null, and `verified` is false. Abuse in
+//      this mode is bounded by the on-chain hourly exposure cap (and the
+//      per-call imputed-cost ceiling), not by receipt verification.
 //   4. maps `(payee, resource)` -> a coverage-pool slug (MVP: always `pay-default`).
 //   5. reads the pool's premium / imputed-refund config (Postgres, env fallback).
 //   6. checks the agent's `pact approve` allowance covers the premium.
@@ -22,7 +28,9 @@
 // Pub/Sub event is in flight there's no DB row yet (status:
 // "settlement_pending"); once the settler's settle_batch lands and the indexer
 // ingests it, the `Call` row appears (with source: "pay.sh") and we surface it
-// (status: "settled") with the settle_batch tx signature.
+// (status: "settled") with the settle_batch tx signature. The response carries
+// `callId` (an alias for `coverageId`) and `settleBatchSignature` (an alias for
+// `settlementSignature`, null until settled) for clients that key off those.
 
 import type { Context } from "hono";
 import bs58 from "bs58";
@@ -31,6 +39,7 @@ import { readPoolConfig } from "../lib/pool-config.js";
 import {
   computeCoverage,
   deriveCoverageId,
+  randomCoverageId,
   isKnownVerdict,
   poolSlugFor,
   verdictToOutcome,
@@ -56,10 +65,21 @@ const USDC_MINTS = new Set([
 
 interface RegisterBody {
   agent: string;
-  payee: string;
+  /**
+   * Merchant wallet pubkey (bs58). OPTIONAL — `pay 0.16.0` never logs the
+   * merchant address, so `pact pay` sends this absent. Absent => unverified
+   * mode (no on-chain check; `payee` treated as null downstream).
+   */
+  payee?: string;
   resource: string;
   scheme: string;
-  paymentSignature: string;
+  /**
+   * Solana tx signature `pay` submitted (bs58). OPTIONAL — `pay 0.16.0` never
+   * logs the settle tx sig, so `pact pay` sends this absent. Absent => unverified
+   * mode. Verification requires BOTH `payee` and `paymentSignature`; if only one
+   * is present we still treat the receipt as unverified.
+   */
+  paymentSignature?: string;
   amountBaseUnits: string;
   asset: string;
   verdict: string;
@@ -70,7 +90,7 @@ interface RegisterBody {
 
 function bad(c: Context, code: string, reason: string, status = 400): Response {
   return c.json(
-    { coverageId: null, status: "rejected", reason, code },
+    { coverageId: null, status: "rejected", reason, code, verified: false },
     status as 400 | 401 | 422 | 502,
   );
 }
@@ -109,8 +129,28 @@ export async function registerCoverageRoute(c: Context): Promise<Response> {
   } catch {
     return bad(c, "bad_agent", "agent pubkey is not valid base58");
   }
-  if (typeof body.payee !== "string" || !SOL_PUBKEY_RE.test(body.payee)) {
-    return bad(c, "bad_payee", "payee must be a base58 Solana pubkey");
+  // `payee` and `paymentSignature` are OPTIONAL on the wire (pay 0.16.0 doesn't
+  // expose them). Reject ONLY if present-and-malformed — absent is fine and
+  // means "unverified mode" (handled below).
+  const payeePresent =
+    body.payee !== undefined && body.payee !== null && body.payee !== "";
+  if (payeePresent) {
+    if (typeof body.payee !== "string" || !SOL_PUBKEY_RE.test(body.payee)) {
+      return bad(c, "bad_payee", "payee, when present, must be a base58 Solana pubkey");
+    }
+  }
+  const paymentSigPresent =
+    body.paymentSignature !== undefined &&
+    body.paymentSignature !== null &&
+    body.paymentSignature !== "";
+  if (paymentSigPresent) {
+    if (typeof body.paymentSignature !== "string" || !SOL_SIG_RE.test(body.paymentSignature)) {
+      return bad(
+        c,
+        "bad_payment_signature",
+        "paymentSignature, when present, must be a base58 Solana tx signature",
+      );
+    }
   }
   if (typeof body.resource !== "string" || body.resource.length === 0 || body.resource.length > 2048) {
     return bad(c, "bad_resource", "resource must be a non-empty string (<=2048 chars)");
@@ -118,9 +158,11 @@ export async function registerCoverageRoute(c: Context): Promise<Response> {
   if (body.scheme !== "x402" && body.scheme !== "mpp") {
     return bad(c, "bad_scheme", 'scheme must be "x402" or "mpp"');
   }
-  if (typeof body.paymentSignature !== "string" || !SOL_SIG_RE.test(body.paymentSignature)) {
-    return bad(c, "bad_payment_signature", "paymentSignature must be a base58 Solana tx signature");
-  }
+  // Verification needs BOTH the merchant address and the settle tx sig.
+  const verified = payeePresent && paymentSigPresent;
+  // `payee` is null downstream whenever we're not verifying (even if only the
+  // address was supplied — there's nothing to verify it against).
+  const payee: string | null = verified ? (body.payee as string) : null;
   if (typeof body.asset !== "string" || !USDC_MINTS.has(body.asset)) {
     return bad(c, "unsupported_asset", "asset must be a supported USDC mint");
   }
@@ -150,26 +192,39 @@ export async function registerCoverageRoute(c: Context): Promise<Response> {
       : 0;
 
   const ctx = getContext();
-  const coverageId = deriveCoverageId({
-    payee: body.payee,
-    resource: body.resource,
-    paymentSignature: body.paymentSignature,
-  });
 
-  // ---- (3) Verify the payment on-chain -----------------------------------
-  const pv = await verifyPayment({
-    connection: ctx.connection,
-    paymentSignature: body.paymentSignature,
-    payee: body.payee,
-    asset: body.asset,
-    amountBaseUnits,
-  });
-  if (!pv.ok) {
-    return bad(c, `payment_${pv.reason}`, `payment verification failed: ${pv.reason}`, 422);
+  // ---- (3) Coverage id + (conditionally) on-chain payment verification ----
+  // VERIFIED path: deterministic id = hash(payee, resource, paymentSignature)
+  //   so re-registering the same payment is idempotent (the on-chain CallRecord
+  //   PDA dedups it too). Verify the payment on-chain before going further.
+  // UNVERIFIED path: there's no payment sig to dedup on, so mint a fresh random
+  //   UUIDv4-shaped id each call (unverified registrations aren't idempotent —
+  //   re-running `pact pay` is a different payment anyway). Skip verifyPayment.
+  let coverageId: string;
+  let observedPaymentBaseUnits: bigint | null = null;
+  if (verified) {
+    coverageId = deriveCoverageId({
+      payee: body.payee as string,
+      resource: body.resource,
+      paymentSignature: body.paymentSignature as string,
+    });
+    const pv = await verifyPayment({
+      connection: ctx.connection,
+      paymentSignature: body.paymentSignature as string,
+      payee: body.payee as string,
+      asset: body.asset,
+      amountBaseUnits,
+    });
+    if (!pv.ok) {
+      return bad(c, `payment_${pv.reason}`, `payment verification failed: ${pv.reason}`, 422);
+    }
+    observedPaymentBaseUnits = pv.observedAmount;
+  } else {
+    coverageId = randomCoverageId();
   }
 
   // ---- (4)+(5) Map to a pool + read its config ---------------------------
-  const slug = poolSlugFor(body.payee, body.resource, ctx.payDefaults.slug);
+  const slug = poolSlugFor(payee ?? "", body.resource, ctx.payDefaults.slug);
   const pool = await readPoolConfig(ctx.pg, slug, ctx.payDefaults);
   if (pool.paused) {
     return c.json({
@@ -178,17 +233,19 @@ export async function registerCoverageRoute(c: Context): Promise<Response> {
       premiumBaseUnits: "0",
       refundBaseUnits: "0",
       reason: "pool_paused",
+      verified,
     });
   }
 
   // ---- (7) Compute the coverage math -------------------------------------
-  // On a covered breach the refund equals what the agent actually paid the
-  // merchant (we use the chain-observed delta, which is >= the claimed amount),
-  // capped at the pool's per-call ceiling. We use `amountBaseUnits` (the
-  // client's claim, which payment-verify already confirmed the payee received
-  // AT LEAST of) rather than `pv.observedAmount` so the refund the CLI is told
-  // to expect matches what it claimed, not an unrelated larger transfer in the
-  // same tx.
+  // On a covered breach the refund equals what the agent says it paid the
+  // merchant (`amountBaseUnits`), capped at the pool's per-call ceiling. In the
+  // VERIFIED path we additionally confirmed on-chain that the payee received AT
+  // LEAST `amountBaseUnits`; we still use the *claimed* amount (not the larger
+  // chain-observed delta) so the refund the CLI is told to expect matches what
+  // it claimed, not an unrelated bigger transfer in the same tx. In the
+  // UNVERIFIED path there's nothing to cross-check against — the on-chain
+  // hourly exposure cap (and the $1/call imputed-cost ceiling) is the bound.
   const outcome = verdictToOutcome(body.verdict);
   const math = computeCoverage(
     outcome,
@@ -207,6 +264,7 @@ export async function registerCoverageRoute(c: Context): Promise<Response> {
       premiumBaseUnits: "0",
       refundBaseUnits: "0",
       reason: "not_covered_outcome",
+      verified,
     });
   }
 
@@ -225,6 +283,7 @@ export async function registerCoverageRoute(c: Context): Promise<Response> {
           r.reason === "insufficient_allowance" || r.reason === "no_ata"
             ? "no_allowance"
             : "insufficient_balance",
+        verified,
       });
     }
   } catch (err) {
@@ -238,12 +297,19 @@ export async function registerCoverageRoute(c: Context): Promise<Response> {
       premiumBaseUnits: math.premiumLamports.toString(),
       refundBaseUnits: "0",
       reason: "allowance_check_unavailable",
+      verified,
     });
   }
   // (allowanceOk is true here)
   void allowanceOk;
 
   // ---- (8) Publish the SettlementEvent -----------------------------------
+  // We publish the SettlementEvent regardless of `verified` — an unverified
+  // registration still drives an on-chain `settle_batch`, so abuse is bounded
+  // by the pool's on-chain hourly exposure cap (and the $1/call imputed-cost
+  // ceiling), not by receipt verification. `payee` rides along as null when we
+  // didn't verify; the settler/indexer forward it untouched (the Call.payee
+  // Postgres column is nullable).
   const event: PaySettlementEvent = {
     callId: coverageId,
     agentPubkey: body.agent,
@@ -254,7 +320,8 @@ export async function registerCoverageRoute(c: Context): Promise<Response> {
     outcome: math.outcome,
     ts: new Date().toISOString(),
     source: "pay.sh",
-    payee: body.payee,
+    verified,
+    payee,
     resource: body.resource,
     coverageId,
   };
@@ -269,7 +336,10 @@ export async function registerCoverageRoute(c: Context): Promise<Response> {
     reason: null,
     poolSlug: slug,
     outcome: math.outcome,
-    observedPaymentBaseUnits: pv.observedAmount.toString(),
+    // null in the unverified path — we never went to chain to observe it.
+    observedPaymentBaseUnits:
+      observedPaymentBaseUnits === null ? null : observedPaymentBaseUnits.toString(),
+    verified,
   });
 }
 
@@ -305,13 +375,23 @@ export async function getCoverageRoute(c: Context): Promise<Response> {
       // without our own store; the honest answer is "not settled yet".
       return c.json({
         coverageId: id,
+        // Alias for callers that key off `callId` (PR #173's CLI does). Same
+        // value as `coverageId` — usable with `pact calls <id>` once settled.
+        callId: id,
         status: "settlement_pending",
         settled: false,
+        // The on-chain `settle_batch` tx signature. Null until the settler
+        // lands the batch and the indexer ingests it. Aliased below as
+        // `settlementSignature` once present.
+        settleBatchSignature: null,
+        settlementSignature: null,
       });
     }
     const r = res.rows[0];
     return c.json({
       coverageId: r.callId,
+      // Alias for callers that key off `callId` (PR #173's CLI does).
+      callId: r.callId,
       status: "settled",
       settled: true,
       agentPubkey: r.agentPubkey,
@@ -327,6 +407,9 @@ export async function getCoverageRoute(c: Context): Promise<Response> {
       ts: new Date(r.ts).toISOString(),
       settledAt: new Date(r.settledAt).toISOString(),
       settlementSignature: r.signature,
+      // Alias for callers that read `settleBatchSignature` (PR #173's CLI
+      // builds a Solscan link from it). Same value as `settlementSignature`.
+      settleBatchSignature: r.signature,
     });
   } catch (err) {
     // eslint-disable-next-line no-console

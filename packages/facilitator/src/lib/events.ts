@@ -9,10 +9,15 @@
 // Shape: a superset of @pact-network/wrap's `SettlementEvent` (camelCase,
 // bigint-as-decimal-string) plus three pay.sh-specific fields:
 //   - source:   always "pay.sh" — lets the indexer tag the Call row
-//   - payee:    the merchant pubkey the agent paid (bs58)
+//   - verified: did the facilitator verify the payment on-chain? false when
+//               the receipt arrived without `payee` + `paymentSignature`
+//               (pay 0.16.0 doesn't expose them — see coverage.ts)
+//   - payee:    the merchant pubkey the agent paid (bs58), or null when the
+//               receipt didn't carry it (unverified mode)
 //   - resource: the URL/resource that was paid for
 //   - coverageId: the facilitator's coverage record id (== the Pub/Sub
-//                 callId, derived deterministically from the payment tx sig)
+//                 callId). Deterministic from the payment tx sig when verified;
+//                 a fresh random UUIDv4-shaped id when unverified.
 //
 // The settler's batcher only reads `callId / agentPubkey / endpointSlug /
 // premiumLamports / refundLamports / latencyMs / outcome / ts` — the extra
@@ -47,8 +52,15 @@ export interface PaySettlementEvent {
   // ---- pay.sh-specific extensions ----
   /** Always "pay.sh" — distinguishes this from gateway-path events. */
   source: "pay.sh";
-  /** Merchant pubkey the agent paid (bs58). */
-  payee: string;
+  /**
+   * True if the facilitator verified the payment on-chain (the receipt carried
+   * both `payee` and `paymentSignature`). False for "unverified" / degrade-mode
+   * registrations — accepted on the agent's signed word, bounded by the
+   * on-chain hourly exposure cap. The settler/indexer forward this untouched.
+   */
+  verified: boolean;
+  /** Merchant pubkey the agent paid (bs58), or null when not supplied (unverified mode). */
+  payee: string | null;
   /** The URL/resource that was paid for. */
   resource: string;
   /** Facilitator coverage record id (same value as callId). */
