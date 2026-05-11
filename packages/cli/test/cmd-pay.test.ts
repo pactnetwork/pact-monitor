@@ -234,6 +234,28 @@ describe("pact pay: passthrough (gate open)", () => {
     expect(summary.text).toContain("classifier: success");
   });
 
+  test("wrapped tool exits non-zero with no payment attempted → tool_error outcome (passthrough)", async () => {
+    const summary = new BufStream();
+    const result = await payCommand({
+      args: ["wget", "http://example.com"],
+      pay: fakePay({
+        exitCode: 1,
+        stdout: "",
+        stderr: "",
+      }),
+      summaryStream: summary,
+    });
+    expect(result.kind).toBe("passthrough");
+    if (result.kind === "passthrough") {
+      expect(result.outcome).toBe("tool_error");
+      expect(result.exitCode).toBe(1);
+      expect(result.payment.attempted).toBe(false);
+      expect(result.reason).toContain("1");
+    }
+    expect(summary.text).toContain("classifier: tool_error");
+    expect(summary.text).toContain("no charge");
+  });
+
   test("pay binary not on PATH surfaces tool_missing envelope", async () => {
     const result = await payCommand({
       args: ["curl", "https://example.com"],
@@ -318,6 +340,13 @@ describe("classifyPayResult", () => {
       stdoutText: "",
       stderrText: PAY_VERBOSE_SUCCESS,
       expect: "server_error",
+    },
+    {
+      name: "no payment attempted + non-zero exit + no status hint → tool_error",
+      payExitCode: 1,
+      stdoutText: "",
+      stderrText: "",
+      expect: "tool_error",
     },
   ];
 

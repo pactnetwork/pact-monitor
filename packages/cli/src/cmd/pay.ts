@@ -179,6 +179,10 @@ function writePactSummary(
       lines.push(`${tag} classifier: payment_failed  (${reason || "pay exit non-zero"})`);
       lines.push(`${tag} (no charge — pay's payment leg never settled)`);
       break;
+    case "tool_error":
+      lines.push(`${tag} classifier: tool_error  (${reason || "wrapped tool exit non-zero"})`);
+      lines.push(`${tag} (no charge — wrapped tool failed before any 402 challenge)`);
+      break;
   }
 
   for (const l of lines) out.write(l + "\n");
