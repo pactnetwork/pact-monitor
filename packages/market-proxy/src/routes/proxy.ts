@@ -41,10 +41,28 @@ export async function proxyRoute(c: Context): Promise<Response> {
 
   // Agent identity: the CLI transmits the agent pubkey in the `x-pact-agent`
   // header alongside its signed payload (see packages/cli/src/lib/transport.ts).
-  // The dashboard demo path still uses the `pact_wallet` query param, which we
-  // keep as a fallback for backwards compatibility until that surface migrates.
-  const pactWallet =
-    c.req.header("x-pact-agent") ?? c.req.query("pact_wallet");
+  // The dashboard demo path still uses the `pact_wallet` query param. Issue
+  // #164: that fallback bypasses verify-signature.ts (which is a no-op when
+  // `x-pact-agent` is absent), so it is gated behind PACT_PROXY_INSECURE_DEMO
+  // and rejected by default in production.
+  const headerAgent = c.req.header("x-pact-agent");
+  const queryAgent = c.req.query("pact_wallet");
+  let pactWallet: string | undefined;
+  if (headerAgent) {
+    pactWallet = headerAgent;
+  } else if (queryAgent) {
+    if (process.env.PACT_PROXY_INSECURE_DEMO !== "1") {
+      return c.json(
+        {
+          error: "pact_auth_missing",
+          message:
+            "?pact_wallet= is gated by PACT_PROXY_INSECURE_DEMO in this environment. Send an authenticated x-pact-agent header instead.",
+        },
+        401,
+      );
+    }
+    pactWallet = queryAgent;
+  }
   const demoBreach = c.req.query("demo_breach") === "1";
 
   // -----------------------------------------------------------------------
