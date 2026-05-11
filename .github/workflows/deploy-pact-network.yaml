@@ -1,7 +1,7 @@
 # -----------------------------------------------------------------------------
 # Pact Network — Deploy to Cloud Run
 #
-# Deploys one of four Cloud Run services. Image must already exist in
+# Deploys one of five Cloud Run services. Image must already exist in
 # Artifact Registry (push via build-pact-network.yaml first).
 #
 # Pattern: copied from devops/pipelines-gcp/qash/deploy.yaml.
@@ -43,6 +43,7 @@ on:
           - pact-settler
           - pact-indexer
           - pact-market-dashboard
+          - pact-dummy-upstream
       image:
         description: "Full image URI (leave empty for :latest)"
         required: false
