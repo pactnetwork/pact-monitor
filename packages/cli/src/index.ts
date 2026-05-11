@@ -25,7 +25,7 @@ import { payCommand } from "./cmd/pay.ts";
 import skillSrc from "./skill/SKILL.md" with { type: "text" };
 import snippetSrc from "./skill/claude-md-snippet.md" with { type: "text" };
 
-const VERSION = "0.2.1";
+const VERSION = "0.2.2";
 const DEFAULT_GATEWAY = process.env.PACT_GATEWAY_URL ?? "https://api.pactnetwork.io";
 const DEFAULT_RPC = process.env.PACT_RPC_URL ?? "https://api.mainnet-beta.solana.com";
 // v0.1.0 is mainnet-only. Mainnet still requires PACT_MAINNET_ENABLED=1 as a
