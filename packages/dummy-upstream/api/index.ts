@@ -1,27 +1,28 @@
 // Vercel Node serverless function entry point for pact-dummy-upstream.
 //
-// This file is ONLY used when the package is deployed to Vercel (the Vercel
-// project's "Root Directory" is set to `packages/dummy-upstream`, and
-// `vercel.json` rewrites every path to `/api/index`). It is not part of the
-// `pnpm build` / `pnpm typecheck` (those only compile `src/`) — Vercel's
-// `@vercel/node` builder transpiles and bundles this file (and the `src/` it
-// imports) itself.
+// Adapts the Hono app to a Node http handler via @hono/node-server's
+// `getRequestListener` — the `(IncomingMessage, ServerResponse)` shape
+// Vercel's @vercel/node runtime serves natively. (We tried `hono/vercel`'s
+// `handle()` first; the deployed Node-runtime function 500'd on every request
+// with FUNCTION_INVOCATION_FAILED, so we use the node-server request listener,
+// which is already a dependency.)
 //
-// `hono/vercel`'s `handle()` is Hono's official Vercel adapter: it turns the
-// Hono app into a Web `(Request) => Response` handler, which `@vercel/node`
-// serves directly on the Node.js runtime. The file-level `config.runtime` only
-// accepts `"nodejs"` or `"edge"`; the *version* (Node 20) is pinned via
-// `engines.node` in this package's `package.json` (and, belt-and-braces, the
-// Vercel project's "Node.js Version" setting).
-//
-// The standalone `src/index.ts` (@hono/node-server) bootstrap is unaffected —
-// it's still what `pnpm dev` and `docker run` use.
+// Only used on Vercel — `pnpm dev` / `docker run` still use the standalone
+// `src/index.ts` (@hono/node-server `serve()`) bootstrap, untouched.
 
-import { handle } from "hono/vercel";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import { getRequestListener } from "@hono/node-server";
 import { createApp } from "../src/app.js";
 
 export const config = {
   runtime: "nodejs",
 };
 
-export default handle(createApp());
+const listener = getRequestListener(createApp().fetch);
+
+export default function handler(
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  return listener(req, res);
+}

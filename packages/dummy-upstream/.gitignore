@@ -2,3 +2,4 @@
 # metadata (`vercel link` / `vercel pull`). Never committed — the deploy is
 # driven by `vercel.json` + the Vercel project settings, not by these files.
 .vercel/
+.vercel
