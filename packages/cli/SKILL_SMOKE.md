@@ -4,7 +4,23 @@
 
 This file documents manual Claude Code skill activation verification. Steps:
 
-1. Install pact globally: `pnpm --filter @q3labs/pact-cli link --global`
+1. Build and install a local copy of `pact` so the smoke run exercises the
+   actual compiled binary (not `bun run src/index.ts`). pnpm's
+   `link --global` is unreliable in our workspace setup — recursive
+   `--filter` rejects `--global`, and the in-package form fails with
+   `ERR_PNPM_NO_GLOBAL_BIN_DIR` unless `pnpm setup` has been run first.
+   Use a symlink instead:
+
+   ```bash
+   pnpm --filter @q3labs/pact-cli build         # produces dist/pact (compiled)
+   ln -sf "$PWD/packages/cli/dist/pact" /usr/local/bin/pact   # or any dir on $PATH
+   pact --version                               # confirm
+   ```
+
+   Re-running `pnpm --filter @q3labs/pact-cli build` is enough to pick up
+   source changes; the symlink keeps pointing at the freshly rebuilt
+   binary. The published install path (`pnpm add -g @q3labs/pact-cli`) is
+   unaffected — only this local-build smoke flow needs the workaround.
 2. In a fresh directory: `pact init` — verify `.claude/skills/pact/SKILL.md` and `CLAUDE.md` created.
 3. Open Claude Code in that directory.
 4. Ask: "What's the SOL balance of 7g3xy at devnet?"

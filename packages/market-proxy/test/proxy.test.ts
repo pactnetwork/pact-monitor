@@ -15,7 +15,7 @@
 //   - passthrough (no pact_wallet) bypasses wrap entirely
 //   - force-breach mode causes wrap to classify as latency_breach
 
-import { describe, test, expect, vi, beforeEach } from "vitest";
+import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 import { Hono } from "hono";
 import { MemoryEventSink, type BalanceCheck } from "@pact-network/wrap";
 
@@ -76,7 +76,13 @@ function makeApp() {
 }
 
 describe("proxy route (wrap-based)", () => {
+  // Issue #164: the existing tests below exercise the legacy `?pact_wallet=`
+  // query path which is now gated behind PACT_PROXY_INSECURE_DEMO. Enable the
+  // gate here so those back-compat tests keep asserting wrap behavior; the
+  // dedicated gate tests at the bottom toggle this explicitly.
+  const previousInsecureDemo = process.env.PACT_PROXY_INSECURE_DEMO;
   beforeEach(() => {
+    process.env.PACT_PROXY_INSECURE_DEMO = "1";
     mockRegistry.get.mockResolvedValue({ ...defaultEndpoint });
     mockDemoAllowlist.has.mockResolvedValue(false);
     (mockBalanceCheck.check as any) = vi.fn().mockResolvedValue({
@@ -85,12 +91,20 @@ describe("proxy route (wrap-based)", () => {
       allowance: 100_000_000n,
     });
     memorySink.reset();
+    mockUpstreamFetch.mockClear();
     mockUpstreamFetch.mockResolvedValue(
       new Response(JSON.stringify({ result: { value: 100 } }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
       }),
     );
+  });
+  afterEach(() => {
+    if (previousInsecureDemo === undefined) {
+      delete process.env.PACT_PROXY_INSECURE_DEMO;
+    } else {
+      process.env.PACT_PROXY_INSECURE_DEMO = previousInsecureDemo;
+    }
   });
 
   test("happy path — returns upstream response with X-Pact headers", async () => {
@@ -282,6 +296,132 @@ describe("proxy route (wrap-based)", () => {
     });
     expect(resp.headers.get("set-cookie")).toBeNull();
     expect(resp.headers.get("server")).toBeNull();
+  });
+
+  // Issue #158: the CLI transmits the agent pubkey in the `x-pact-agent`
+  // header. The proxy must enter the insured branch on header alone, not
+  // require the legacy `pact_wallet` query param.
+  test("x-pact-agent header enters the insured wrap path (no query param)", async () => {
+    const app = makeApp();
+    const body = JSON.stringify({
+      jsonrpc: "2.0",
+      method: "getAccountInfo",
+      params: [],
+    });
+    const resp = await app.request("/v1/helius/", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-pact-agent": "wallet-from-header",
+      },
+      body,
+    });
+    expect(resp.status).toBe(200);
+    expect(resp.headers.get("X-Pact-Outcome")).toBe("ok");
+    expect(resp.headers.get("X-Pact-Premium")).toBe("500");
+    expect(resp.headers.get("X-Pact-Call-Id")).toBeTruthy();
+    // Allow the fire-and-forget sink publish to flush.
+    await new Promise((r) => setImmediate(r));
+    expect(memorySink.events.length).toBe(1);
+    expect(memorySink.events[0].agentPubkey).toBe("wallet-from-header");
+  });
+
+  // Back-compat: the dashboard demo path still uses `pact_wallet=...` query
+  // param. That surface must keep working until it migrates.
+  test("pact_wallet query param remains supported (back-compat)", async () => {
+    const app = makeApp();
+    const body = JSON.stringify({
+      jsonrpc: "2.0",
+      method: "getAccountInfo",
+      params: [],
+    });
+    const resp = await app.request("/v1/helius/?pact_wallet=legacy-wallet", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    });
+    expect(resp.status).toBe(200);
+    expect(resp.headers.get("X-Pact-Outcome")).toBe("ok");
+    await new Promise((r) => setImmediate(r));
+    expect(memorySink.events[0].agentPubkey).toBe("legacy-wallet");
+  });
+
+  // If both are present, the header wins. The CLI is the source of truth
+  // for an authenticated identity; the query param is the legacy surface.
+  test("x-pact-agent header takes precedence over pact_wallet query param", async () => {
+    const app = makeApp();
+    const body = JSON.stringify({
+      jsonrpc: "2.0",
+      method: "getAccountInfo",
+      params: [],
+    });
+    const resp = await app.request("/v1/helius/?pact_wallet=legacy-wallet", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-pact-agent": "header-wallet",
+      },
+      body,
+    });
+    expect(resp.status).toBe(200);
+    await new Promise((r) => setImmediate(r));
+    expect(memorySink.events[0].agentPubkey).toBe("header-wallet");
+  });
+
+  // Issue #164: the legacy `?pact_wallet=` fallback is now gated behind
+  // PACT_PROXY_INSECURE_DEMO. Without the env var (production default), any
+  // request that supplies only the query param must be rejected with the
+  // `pact_auth_missing` envelope so attackers can't spoof victim pubkeys
+  // through the unauthenticated path.
+  test("?pact_wallet= without PACT_PROXY_INSECURE_DEMO → 401 pact_auth_missing", async () => {
+    delete process.env.PACT_PROXY_INSECURE_DEMO;
+    const app = makeApp();
+    const resp = await app.request("/v1/helius/?pact_wallet=victim-pubkey", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", method: "getAccountInfo", params: [] }),
+    });
+    expect(resp.status).toBe(401);
+    const json = (await resp.json()) as { error: string; message: string };
+    expect(json.error).toBe("pact_auth_missing");
+    expect(json.message).toContain("PACT_PROXY_INSECURE_DEMO");
+    // No upstream call, no settlement event.
+    expect(mockUpstreamFetch).not.toHaveBeenCalled();
+    await new Promise((r) => setImmediate(r));
+    expect(memorySink.events.length).toBe(0);
+  });
+
+  test("?pact_wallet= with PACT_PROXY_INSECURE_DEMO=1 → wrap path entered (back-compat preserved)", async () => {
+    process.env.PACT_PROXY_INSECURE_DEMO = "1";
+    const app = makeApp();
+    const resp = await app.request("/v1/helius/?pact_wallet=demo-wallet", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", method: "getAccountInfo", params: [] }),
+    });
+    expect(resp.status).toBe(200);
+    expect(resp.headers.get("X-Pact-Outcome")).toBe("ok");
+    await new Promise((r) => setImmediate(r));
+    expect(memorySink.events.length).toBe(1);
+    expect(memorySink.events[0].agentPubkey).toBe("demo-wallet");
+  });
+
+  test("header + query param both present → header wins, query value ignored even without env var", async () => {
+    delete process.env.PACT_PROXY_INSECURE_DEMO;
+    const app = makeApp();
+    const resp = await app.request("/v1/helius/?pact_wallet=spoofed-victim", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-pact-agent": "header-wallet",
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", method: "getAccountInfo", params: [] }),
+    });
+    expect(resp.status).toBe(200);
+    expect(resp.headers.get("X-Pact-Outcome")).toBe("ok");
+    await new Promise((r) => setImmediate(r));
+    expect(memorySink.events.length).toBe(1);
+    expect(memorySink.events[0].agentPubkey).toBe("header-wallet");
   });
 
   test("force-breach mode forces a latency_breach classification", async () => {

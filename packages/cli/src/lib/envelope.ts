@@ -19,6 +19,7 @@ export const statuses = [
   // envelope-first contract for the rest of the CLI).
   "unsupported_tool",
   "tool_missing",
+  "tool_error",
   "cli_internal_error",
 ] as const;
 
@@ -67,6 +68,11 @@ const exitCodeMap: Record<Status, number> = {
   unsupported_tool: 50,
   // pact pay's wrapped tool isn't on PATH (e.g. curl uninstalled).
   tool_missing: 51,
+  // pay spawned, no payment attempted, and the wrapped tool exited
+  // non-zero. The passthrough caller exits with pay's exit code; this
+  // map entry only governs --json envelope mode, where we let pay's
+  // exit code drive process.exit instead of remapping.
+  tool_error: 0,
   cli_internal_error: 99,
 };
 
