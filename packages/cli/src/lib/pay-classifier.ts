@@ -7,6 +7,7 @@
 // fixtures under packages/cli/test/fixtures/pay-016/):
 //
 //   x402 challenge (verbose):
+//     "Detected x402 challenge resource=\"<url>\""  ← scheme=x402, resource.
 //     "402 Payment Required (x402) — N USDC"   ← unconditional on the
 //                                              auto-pay path; tells us a
 //                                              payment was attempted and
@@ -16,11 +17,12 @@
 //                                              the payment succeeded.
 //
 //   MPP challenge (verbose only — pay-core tracing):
-//     "Detected MPP challenge"                 ← challenge accepted.
+//     "Detected MPP challenge … resource=\"<url>\""  ← scheme=mpp, resource.
 //     "Selected MPP challenge ... amount=N currency=<mint>"
-//     "Building MPP credential amount=N currency=<mint>"
+//     "Building MPP credential amount=N currency=<mint> … signer=<pubkey>"
 //                                              ← amount in micro-units,
-//                                              currency is the SPL mint.
+//                                              currency is the SPL mint,
+//                                              signer is the agent pubkey.
 //
 //   Failure (either protocol):
 //     "Payment failed:", "Payment rejected", "Payment Verification Error",
@@ -30,6 +32,12 @@
 // classifier can only report payment.attempted=true when the user passes
 // `-v` to pay. The wrap-summary line still describes the upstream HTTP
 // outcome correctly in either mode.
+//
+// What pay 0.16.0 does NOT expose, even verbose: the merchant/payee
+// address and the on-chain settle transaction signature. The facilitator
+// side-call handles those being absent (it can re-derive the payee from
+// the 402 challenge it never saw — i.e. it can't, and treats them as
+// partial data). See packages/cli/src/lib/x402-receipt.ts.
 //
 // Upstream HTTP status: when the wrapped tool is curl, pay forwards
 // curl's exit code as its own. curl returns 0 on a 2xx, 22 on a 4xx/5xx
@@ -78,11 +86,39 @@ const MPP_AMOUNT_RE =
 // auto-pay path even before the "402 Payment Required" body line.
 const X402_DETECTED_RE = /Detected\s+x402\s+challenge/i;
 
+// Both the x402 and MPP "Detected … challenge" verbose lines carry the
+// resource pay paid for: `… resource="https://example.x402/quote/AAPL"`.
+// Pull it best-effort so the facilitator side-call can name the covered
+// resource without re-deriving it from the wrapped tool's argv (which we
+// deliberately don't parse). Falls back to null.
+const RESOURCE_HINT_RE = /\bresource\s*=\s*"([^"]+)"/i;
+
+// pay 0.16.0 logs the signer (the agent's own Solana pubkey) on the
+// MPP/x402 settle path: `… signer=<base58>`. This is NOT the on-chain
+// settle transaction signature — pay 0.16.0's verbose output does not
+// surface that in any captured fixture. We extract `signer=` so the
+// facilitator can cross-check it against the x-pact-agent header, and
+// best-effort scan for an explicit `signature=`/`tx=` hint in case a
+// future pay build adds the settle tx sig to its trace.
+const SIGNER_HINT_RE = /\bsigner\s*=\s*([1-9A-HJ-NP-Za-km-z]{32,44})\b/i;
+const TX_SIGNATURE_HINT_RE =
+  /\b(?:tx_signature|tx_sig|signature|tx)\s*[:=]\s*([1-9A-HJ-NP-Za-km-z]{64,88})\b/i;
+
+// pay 0.16.0 names the SPL mint it paid in as `currency=<mint>` on the
+// MPP path. The x402 legacy body line ("… — 0.05 USDC") only gives the
+// symbol, not the mint.
+const CURRENCY_MINT_RE = /\bcurrency\s*=\s*([1-9A-HJ-NP-Za-km-z]{32,44})\b/i;
+
 const PAYMENT_SIGNED_RE = /Payment\s+signed,?\s*retrying/i;
 const PAYMENT_FAILED_RE =
   /(?:Payment\s*(?:failed|rejected|error)|Payment\s+Verification\s+Error|Server\s+returned\s+402\s+again\s+after\s+payment)/i;
 
 const HTTP_STATUS_HINT_RE = /\b(?:status|http_code|HTTP\/[\d.]+)\s*[:=]?\s*(\d{3})\b/;
+
+// pay does not yet print the call latency in any captured fixture, but
+// some builds log `latency_ms=N` / `elapsed=Nms` on the retry line.
+// Scan best-effort; null when absent.
+const LATENCY_HINT_RE = /\b(?:latency_ms|latency|elapsed)\s*[:=]\s*(\d+)\s*(?:ms)?\b/i;
 
 export type Outcome =
   | "success"
@@ -91,11 +127,39 @@ export type Outcome =
   | "payment_failed" // payment leg itself never settled
   | "tool_error";    // pay spawned, no payment attempted, wrapped tool exited non-zero
 
+// Which 402 protocol pay used. "unknown" when a payment was attempted
+// but neither protocol's trace markers were found (e.g. -v suppressed by
+// the wrapped tool's own quiet flag).
+export type PaymentScheme = "x402" | "mpp" | "unknown";
+
 export interface PaymentSummary {
   attempted: boolean;       // did pay try to pay at all?
   signed: boolean;          // did pay print the "Payment signed" verbose line?
   amount: string | null;    // human-readable amount, e.g. "0.05"
   asset: string | null;     // human-readable asset, e.g. "USDC"
+  // 402 protocol pay used. Present whenever `attempted` is true.
+  scheme?: PaymentScheme;
+  // The SPL mint pay paid in, base58, when pay logged it (`currency=`).
+  // Null when pay only gave a symbol (the x402 legacy body line) or no
+  // mint at all.
+  assetMint?: string | null;
+  // The payment amount in the asset's smallest unit, as a decimal
+  // string, when pay logged it numerically (`amount=` on the MPP path,
+  // or the x402 body amount × 10^decimals when the asset is a known
+  // mint). Null otherwise.
+  amountBaseUnits?: string | null;
+  // The resource (URL) pay paid for, from the `resource="…"` trace
+  // field. Null when pay didn't log it.
+  resource?: string | null;
+  // The signer pay used (the agent's own pubkey), base58. Null when not
+  // logged. NOT the merchant/payee.
+  signerPubkey?: string | null;
+  // The on-chain settle transaction signature, base58. pay 0.16.0 does
+  // NOT log this in any captured fixture — this is always null today and
+  // exists so a future pay build that adds it lights up automatically.
+  txSignature?: string | null;
+  // The call latency in ms, when pay logged it. Null otherwise.
+  latencyMs?: number | null;
 }
 
 export interface ClassifyInput {
@@ -126,20 +190,56 @@ function formatMicroAmount(rawMicro: string, decimals: number): string {
   return fracStr.length === 0 ? whole.toString() : `${whole}.${fracStr}`;
 }
 
-function extractPaymentMetadata(combined: string): {
+// Promote a human-readable decimal amount (e.g. "0.05") to base units in
+// the given decimals (e.g. "50000" at 6 decimals). Returns null on a
+// parse failure rather than throwing.
+function toBaseUnits(decimalAmount: string, decimals: number): string | null {
+  const m = decimalAmount.match(/^(\d+)(?:\.(\d+))?$/);
+  if (!m) return null;
+  const whole = m[1];
+  const frac = (m[2] ?? "").padEnd(decimals, "0").slice(0, decimals);
+  try {
+    const base = BigInt(10) ** BigInt(decimals);
+    return (BigInt(whole) * base + BigInt(frac || "0")).toString();
+  } catch {
+    return null;
+  }
+}
+
+interface ExtractedPaymentMeta {
   attempted: boolean;
   amount: string | null;
   asset: string | null;
-} {
+  scheme: PaymentScheme;
+  assetMint: string | null;
+  amountBaseUnits: string | null;
+}
+
+function extractPaymentMetadata(combined: string): ExtractedPaymentMeta {
+  const mintMatch = combined.match(CURRENCY_MINT_RE);
+  const assetMintFromCurrency = mintMatch ? mintMatch[1] : null;
+
   // Try x402 legacy line first (em-dash, then ASCII dash fallback).
   const x402Match =
     combined.match(X402_PAYMENT_LINE_RE) ??
     combined.match(X402_PAYMENT_LINE_ASCII_RE);
   if (x402Match) {
+    const amount = x402Match[1];
+    const asset = x402Match[2].toUpperCase();
+    // The x402 body line gives a symbol, not a mint. If the symbol is
+    // USDC we can derive base units from the canonical 6-decimal value;
+    // otherwise we leave amountBaseUnits null (the facilitator can't
+    // trust a guessed scale).
+    const amountBaseUnits =
+      asset === "USDC" ? toBaseUnits(amount, USDC_DECIMALS) : null;
     return {
       attempted: true,
-      amount: x402Match[1],
-      asset: x402Match[2].toUpperCase(),
+      amount,
+      asset,
+      scheme: "x402",
+      assetMint:
+        assetMintFromCurrency ?? (asset === "USDC" ? USDC_MINT : null),
+      amountBaseUnits,
     };
   }
 
@@ -155,34 +255,99 @@ function extractPaymentMetadata(combined: string): {
         attempted: true,
         amount: isUsdc ? formatMicroAmount(raw, USDC_DECIMALS) : raw,
         asset: isUsdc ? "USDC" : mint,
+        scheme: "mpp",
+        assetMint: mint,
+        // `amount=` on the MPP path is already in base units.
+        amountBaseUnits: raw,
       };
     }
-    return { attempted: true, amount: null, asset: null };
+    return {
+      attempted: true,
+      amount: null,
+      asset: null,
+      scheme: "mpp",
+      assetMint: assetMintFromCurrency,
+      amountBaseUnits: null,
+    };
   }
 
   // x402 verbose detection without a "402 Payment Required" body line
   // — still tells us a payment was attempted, but we cannot extract
   // amount/asset without the body line.
   if (X402_DETECTED_RE.test(combined)) {
-    return { attempted: true, amount: null, asset: null };
+    return {
+      attempted: true,
+      amount: null,
+      asset: null,
+      scheme: "x402",
+      assetMint: assetMintFromCurrency,
+      amountBaseUnits: null,
+    };
   }
 
-  return { attempted: false, amount: null, asset: null };
+  return {
+    attempted: false,
+    amount: null,
+    asset: null,
+    scheme: "unknown",
+    assetMint: null,
+    amountBaseUnits: null,
+  };
+}
+
+function extractTransportHints(combined: string): {
+  resource: string | null;
+  signerPubkey: string | null;
+  txSignature: string | null;
+  latencyMs: number | null;
+} {
+  const resMatch = combined.match(RESOURCE_HINT_RE);
+  const signerMatch = combined.match(SIGNER_HINT_RE);
+  const txMatch = combined.match(TX_SIGNATURE_HINT_RE);
+  const latMatch = combined.match(LATENCY_HINT_RE);
+  return {
+    resource: resMatch ? resMatch[1] : null,
+    signerPubkey: signerMatch ? signerMatch[1] : null,
+    txSignature: txMatch ? txMatch[1] : null,
+    latencyMs: latMatch ? Number(latMatch[1]) : null,
+  };
 }
 
 export function classifyPayResult(input: ClassifyInput): ClassifyResult {
   const combined = stripAnsi(`${input.stderrText}\n${input.stdoutText}`);
 
   // 1. Payment metadata
-  const { attempted, amount, asset } = extractPaymentMetadata(combined);
+  const pm = extractPaymentMetadata(combined);
+  const { attempted, amount, asset } = pm;
+  const hints = attempted
+    ? extractTransportHints(combined)
+    : { resource: null, signerPubkey: null, txSignature: null, latencyMs: null };
   const signed = PAYMENT_SIGNED_RE.test(combined);
   const failed = PAYMENT_FAILED_RE.test(combined);
+
+  const baseSummary = (signedFlag: boolean): PaymentSummary => ({
+    attempted,
+    signed: signedFlag,
+    amount,
+    asset,
+    ...(attempted
+      ? {
+          scheme: pm.scheme,
+          assetMint: pm.assetMint,
+          amountBaseUnits: pm.amountBaseUnits,
+          resource: hints.resource,
+          signerPubkey: hints.signerPubkey,
+          txSignature: hints.txSignature,
+          latencyMs: hints.latencyMs,
+        }
+      : {}),
+  });
 
   // 2. Payment-leg failure short-circuit
   if (failed || (attempted && !signed && input.payExitCode !== 0)) {
     return {
       outcome: "payment_failed",
-      payment: { attempted, signed: false, amount, asset },
+      payment: baseSummary(false),
       upstreamStatus: null,
       reason: "pay payment leg did not settle",
     };
@@ -209,7 +374,7 @@ export function classifyPayResult(input: ClassifyInput): ClassifyResult {
     if (upstreamStatus >= 500) {
       return {
         outcome: "server_error",
-        payment: { attempted, signed: effectivelySigned, amount, asset },
+        payment: baseSummary(effectivelySigned),
         upstreamStatus,
         reason: `upstream ${upstreamStatus}`,
       };
@@ -217,7 +382,7 @@ export function classifyPayResult(input: ClassifyInput): ClassifyResult {
     if (upstreamStatus >= 400) {
       return {
         outcome: "client_error",
-        payment: { attempted, signed: effectivelySigned, amount, asset },
+        payment: baseSummary(effectivelySigned),
         upstreamStatus,
         reason: `upstream ${upstreamStatus}`,
       };
@@ -230,7 +395,7 @@ export function classifyPayResult(input: ClassifyInput): ClassifyResult {
     // that the operator's policy will treat a no-response as a 5xx.
     return {
       outcome: "server_error",
-      payment: { attempted, signed: effectivelySigned, amount, asset },
+      payment: baseSummary(effectivelySigned),
       upstreamStatus: null,
       reason: `pay exit ${input.payExitCode} after signed payment (no status hint)`,
     };
@@ -242,7 +407,7 @@ export function classifyPayResult(input: ClassifyInput): ClassifyResult {
     // "wrapped tool failed".
     return {
       outcome: "tool_error",
-      payment: { attempted, signed, amount, asset },
+      payment: baseSummary(signed),
       upstreamStatus,
       reason: `wrapped tool exited ${input.payExitCode}`,
     };
@@ -250,7 +415,7 @@ export function classifyPayResult(input: ClassifyInput): ClassifyResult {
 
   return {
     outcome: "success",
-    payment: { attempted, signed: effectivelySigned, amount, asset },
+    payment: baseSummary(effectivelySigned),
     upstreamStatus,
     reason: "",
   };
