@@ -111,11 +111,34 @@ pnpm --filter @pact-network/dummy-upstream test     # vitest
 pnpm --filter @pact-network/dummy-upstream typecheck
 ```
 
+`docker run` still works too — the `Dockerfile` (build context = repo root,
+mirrors `packages/market-proxy/Dockerfile`) builds the `@hono/node-server`
+bootstrap (`src/index.ts`) and listens on `$PORT` (default `8080`). It's no
+longer the deploy path (see below), just a convenience for running the stub in
+a container locally.
+
 ## Deploy
 
-Built and deployed via the standard `pact-network` GitHub Actions workflows
-(`.github/workflows/build-pact-network.yaml` /
-`.github/workflows/deploy-pact-network.yaml`) — pick `pact-dummy-upstream` from
-the `service_name` dropdown. The Dockerfile (`packages/dummy-upstream/Dockerfile`,
-build context = repo root) mirrors `packages/market-proxy/Dockerfile`. The
-service needs **no env vars / secrets**.
+Deployed to **Vercel** as a single Node serverless function, served at
+`https://dummy.pactnetwork.io`. The Vercel project imports this monorepo with
+**Root Directory = `packages/dummy-upstream`**; `api/index.ts` (the
+`hono/vercel` adapter wrapping `createApp()`) is the function, and `vercel.json`
+rewrites every path to it. No env vars / secrets.
+
+- `api/index.ts` — Vercel Node serverless function (`hono/vercel`'s `handle()`).
+- `vercel.json` — `framework: null`, `buildCommand: ""`, rewrite `/(.*)` → `/api/index`.
+- `engines.node` (`package.json`) pins the function to Node 20.x.
+
+Validate the Vercel build locally (no auth needed):
+
+```bash
+npx --yes vercel build      # → .vercel/output/ with functions/api/index.func
+```
+
+Full deploy + custom-domain + DNS runbook: `docs/dummy-upstream-deploy.md`.
+
+> Originally slated for GCP Cloud Run (the same build/deploy GitHub Actions
+> pattern as the other `pact-network` services) — that route was dropped in
+> favour of Vercel for this small stateless demo stub. The Cloud Run wiring
+> (`pact-dummy-upstream` `service_name` option in the workflows, `deploy/dummy-upstream/main.tf`)
+> has been removed.
