@@ -30,6 +30,24 @@ export interface RunPayInput {
   pay?: PayShellFn;
 }
 
+// pay 0.16.0 emits its x402/MPP tracing lines (`402 Payment Required`,
+// `Paying...`, `Payment signed, retrying...`) only when -v/--verbose is
+// passed; without it stderr is empty and pact's classifier can never see
+// that a payment was attempted, so every successful call falsely reports
+// payment.attempted=false. We inject -v as the first pay-side flag unless
+// the user has explicitly opted out with --quiet / -q / --silent.
+const QUIET_FLAGS = new Set(["--quiet", "-q", "--silent"]);
+
+export function withVerboseFlag(args: string[]): string[] {
+  for (const arg of args) {
+    if (QUIET_FLAGS.has(arg)) return args;
+    // Only scan pay-side flags; once we hit the wrapped tool (first
+    // non-flag, e.g. `curl`), subsequent --quiet/--silent belong to it.
+    if (!arg.startsWith("-")) break;
+  }
+  return ["-v", ...args];
+}
+
 /**
  * Default implementation: spawn `pay <args>` via Bun.spawn with stdin
  * inherited. stdout/stderr are tee'd to the user's terminal and an
@@ -99,3 +117,35 @@ export async function runPay(input: RunPayInput): Promise<PayShellResult> {
   const pay = input.pay ?? DEFAULT_PAY_SHELL;
   return pay(input.args);
 }
+
+// First-run probe: pay's `account list` exits 0 even when no accounts
+// exist, but its stdout omits the "mainnet:" / "localnet:" / "devnet:"
+// section headers. We use the presence of any such header as a proxy
+// for "the user has run pay setup at least once on this host" — when
+// none are present, the next pay invocation will pop a macOS Touch ID
+// prompt to provision a Solana keypair into the Keychain, and we want
+// to warn the user before that happens.
+export type PayProbeFn = () => Promise<{ initialized: boolean }>;
+
+const ACCOUNT_HEADER_RE = /^\s*(mainnet|localnet|devnet|testnet):/m;
+
+export const DEFAULT_PAY_PROBE: PayProbeFn = async () => {
+  try {
+    const proc: Subprocess = Bun.spawn(["pay", "account", "list"], {
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stdoutText = await new Response(
+      proc.stdout as ReadableStream<Uint8Array>,
+    ).text();
+    await proc.exited;
+    return { initialized: ACCOUNT_HEADER_RE.test(stdoutText) };
+  } catch {
+    // If we can't even spawn pay, the warning is moot — the real
+    // invocation will fail with tool_missing anyway. Treat as
+    // initialized so we don't print a misleading provisioning warning
+    // on a host that doesn't have pay installed.
+    return { initialized: true };
+  }
+};

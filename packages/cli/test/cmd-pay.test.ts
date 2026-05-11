@@ -87,6 +87,36 @@ describe("pact pay: mainnet gate", () => {
       expect(body.error).toContain("PACT_MAINNET_ENABLED");
     }
   });
+
+  for (const flag of ["--sandbox", "--dev", "--local"] as const) {
+    test(`closed gate is bypassed when argv contains ${flag} (pay's non-mainnet flag)`, async () => {
+      let spawned = false;
+      const result = await payCommand({
+        args: [flag, "curl", "https://debugger.pay.sh/mpp/quote/AAPL"],
+        pay: async () => {
+          spawned = true;
+          return { exitCode: 0, stdout: enc("status=200"), stderr: enc("") };
+        },
+        emitSummary: false,
+      });
+      expect(spawned).toBe(true);
+      expect(result.kind).toBe("passthrough");
+    });
+  }
+
+  test("a non-mainnet flag appearing after `--` does NOT bypass the gate", async () => {
+    let spawned = false;
+    const result = await payCommand({
+      args: ["curl", "--", "--sandbox", "https://example.com"],
+      pay: async () => {
+        spawned = true;
+        return { exitCode: 0, stdout: enc(""), stderr: enc("") };
+      },
+      emitSummary: false,
+    });
+    expect(spawned).toBe(false);
+    expect(result.kind).toBe("envelope");
+  });
 });
 
 // ----------------------------------------------------------------------
@@ -234,6 +264,28 @@ describe("pact pay: passthrough (gate open)", () => {
     expect(summary.text).toContain("classifier: success");
   });
 
+  test("wrapped tool exits non-zero with no payment attempted → tool_error outcome (passthrough)", async () => {
+    const summary = new BufStream();
+    const result = await payCommand({
+      args: ["wget", "http://example.com"],
+      pay: fakePay({
+        exitCode: 1,
+        stdout: "",
+        stderr: "",
+      }),
+      summaryStream: summary,
+    });
+    expect(result.kind).toBe("passthrough");
+    if (result.kind === "passthrough") {
+      expect(result.outcome).toBe("tool_error");
+      expect(result.exitCode).toBe(1);
+      expect(result.payment.attempted).toBe(false);
+      expect(result.reason).toContain("1");
+    }
+    expect(summary.text).toContain("classifier: tool_error");
+    expect(summary.text).toContain("no charge");
+  });
+
   test("pay binary not on PATH surfaces tool_missing envelope", async () => {
     const result = await payCommand({
       args: ["curl", "https://example.com"],
@@ -256,6 +308,42 @@ describe("pact pay: passthrough (gate open)", () => {
     }
   });
 
+  test("first-run probe: no provisioned accounts → warning written and pay still spawned", async () => {
+    const summary = new BufStream();
+    const probeOrder: string[] = [];
+    await payCommand({
+      args: ["curl", "https://example.com"],
+      probe: async () => {
+        probeOrder.push("probe");
+        return { initialized: false };
+      },
+      pay: async () => {
+        probeOrder.push("pay");
+        return { exitCode: 0, stdout: enc("ok status=200"), stderr: enc("") };
+      },
+      summaryStream: summary,
+    });
+    expect(probeOrder).toEqual(["probe", "pay"]);
+    expect(summary.text).toContain("pay.sh has not been initialized");
+    expect(summary.text).toContain("Touch ID");
+    expect(summary.text).toContain("solana-foundation/pay#setup");
+  });
+
+  test("first-run probe: initialized host suppresses the warning", async () => {
+    const summary = new BufStream();
+    await payCommand({
+      args: ["curl", "https://example.com"],
+      probe: async () => ({ initialized: true }),
+      pay: fakePay({
+        exitCode: 0,
+        stdout: "ok status=200",
+        stderr: "",
+      }),
+      summaryStream: summary,
+    });
+    expect(summary.text).not.toContain("pay.sh has not been initialized");
+  });
+
   test("emitSummary=false suppresses the [pact] summary block", async () => {
     const summary = new BufStream();
     await payCommand({
@@ -269,6 +357,94 @@ describe("pact pay: passthrough (gate open)", () => {
       summaryStream: summary,
     });
     expect(summary.text).toBe("");
+  });
+});
+
+// ----------------------------------------------------------------------
+// Verbose-flag injection (#157)
+//
+// pay 0.16.0 emits its x402/MPP tracing only when -v is passed. Without
+// it the classifier sees empty stderr and reports payment.attempted=false
+// even when pay actually settled. pact pay must inject -v before the
+// wrapped tool, unless the user explicitly asked for quiet output.
+// ----------------------------------------------------------------------
+
+describe("pact pay: verbose-flag injection (#157)", () => {
+  let saved: string | undefined;
+  beforeEach(() => {
+    saved = process.env.PACT_MAINNET_ENABLED;
+    process.env.PACT_MAINNET_ENABLED = "1";
+  });
+  afterEach(() => {
+    if (saved !== undefined) process.env.PACT_MAINNET_ENABLED = saved;
+    else delete process.env.PACT_MAINNET_ENABLED;
+  });
+
+  function capturingPay(): { fn: PayShellFn; captured: string[][] } {
+    const captured: string[][] = [];
+    const fn: PayShellFn = async (args) => {
+      captured.push(args);
+      return { exitCode: 0, stdout: enc(""), stderr: enc("") };
+    };
+    return { fn, captured };
+  }
+
+  test("default invocation prepends -v before wrapped tool", async () => {
+    const { fn, captured } = capturingPay();
+    await payCommand({
+      args: ["curl", "-s", "https://example.com"],
+      pay: fn,
+      emitSummary: false,
+    });
+    expect(captured.length).toBe(1);
+    expect(captured[0]).toEqual(["-v", "curl", "-s", "https://example.com"]);
+  });
+
+  test("--quiet at head suppresses injection (passed through to pay)", async () => {
+    const { fn, captured } = capturingPay();
+    await payCommand({
+      args: ["--quiet", "curl", "https://example.com"],
+      pay: fn,
+      emitSummary: false,
+    });
+    expect(captured[0]).toEqual(["--quiet", "curl", "https://example.com"]);
+  });
+
+  test("-q short form suppresses injection", async () => {
+    const { fn, captured } = capturingPay();
+    await payCommand({
+      args: ["-q", "curl", "https://example.com"],
+      pay: fn,
+      emitSummary: false,
+    });
+    expect(captured[0]).toEqual(["-q", "curl", "https://example.com"]);
+  });
+
+  test("--silent variant suppresses injection", async () => {
+    const { fn, captured } = capturingPay();
+    await payCommand({
+      args: ["--silent", "curl", "https://example.com"],
+      pay: fn,
+      emitSummary: false,
+    });
+    expect(captured[0]).toEqual(["--silent", "curl", "https://example.com"]);
+  });
+
+  test("--silent on the wrapped tool (after curl) does NOT suppress -v", async () => {
+    // Only pay-side flags (those before the first non-flag arg) opt out.
+    // `curl --silent` is a curl flag, not a pact-pay quiet request.
+    const { fn, captured } = capturingPay();
+    await payCommand({
+      args: ["curl", "--silent", "https://example.com"],
+      pay: fn,
+      emitSummary: false,
+    });
+    expect(captured[0]).toEqual([
+      "-v",
+      "curl",
+      "--silent",
+      "https://example.com",
+    ]);
   });
 });
 
@@ -318,6 +494,13 @@ describe("classifyPayResult", () => {
       stdoutText: "",
       stderrText: PAY_VERBOSE_SUCCESS,
       expect: "server_error",
+    },
+    {
+      name: "no payment attempted + non-zero exit + no status hint → tool_error",
+      payExitCode: 1,
+      stdoutText: "",
+      stderrText: "",
+      expect: "tool_error",
     },
   ];
 

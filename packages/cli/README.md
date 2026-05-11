@@ -39,30 +39,42 @@ Your USDC stays in your own associated token account (ATA). `pact approve <usdc>
 
 ## `pact pay <tool> [args...]`
 
-Wrap any CLI tool so its 402-gated requests settle through the agent's
-existing SPL Approve allowance to `SettlementAuthority`. Calling convention
-matches [solana-foundation/pay](https://github.com/solana-foundation/pay):
+`pact pay` is a thin wrapper around
+[solana-foundation/pay](https://github.com/solana-foundation/pay): it
+forwards every argument verbatim to the `pay` binary, tee's stdout /
+stderr / exit code straight back to the caller, and after `pay` exits
+classifies the result so the Pact coverage policy can decide whether
+the call qualifies for an SLA refund. The set of supported wrapped
+tools is whatever `pay` itself supports (currently `curl`, `wget`,
+`http` / HTTPie, `claude`, `codex`, `whoami`):
 
 ```bash
 pact pay curl https://api.example.com/v1/quote/AAPL
-pact pay curl -X POST -d '{...}' https://api.example.com/v1/orders
+pact pay wget https://api.example.com/v1/data.json
+pact pay http POST https://api.example.com/v1/orders body=...
 ```
 
-When the upstream returns 402 with an `X-Payment-Required` header (x402) or
-`WWW-Authenticate: SolanaCharge ...` (MPP), `pact pay` parses the challenge,
-signs a `pact-allowance` authorization with the project wallet, and re-runs
-the wrapped tool with the retry header attached. Stdout / stderr / exit code
-of the wrapped tool pass through transparently — `pact pay` only emits a
-JSON envelope on failure paths (unsupported tool, payment rejected, unknown
-402, retry failure).
+`pay` handles the 402 / x402 / MPP challenge, payment signing, and
+retry; pact-cli does not parse 402 challenges itself. After `pay`
+exits, `pact pay` emits a short `[pact]` summary block to stderr (or a
+structured envelope to stdout when `--json` is passed) covering the
+classifier verdict (`success` / `server_error` / `client_error` /
+`payment_failed` / `tool_error`), the payment amount + asset when one
+was attempted, and an SLA-policy hint when the upstream returned a 5xx.
 
-There is no per-call biometric prompt: the project wallet is on-disk at
-`~/.config/pact/<project>/wallet.json`, and the on-chain debit happens
-server-side via Pact's gateway using the previously-granted allowance.
+The closed `PACT_MAINNET_ENABLED` gate that protects the other on-chain
+commands is bypassed for `pact pay` when argv contains one of pay's
+documented non-mainnet flags (`--sandbox`, `--dev`, `--local`); those
+flows route to a local Surfpool / hosted sandbox and carry zero
+mainnet exposure.
 
-v0.1.0 supports `curl` only. Other tools (`wget`, `http` (HTTPie), `claude`,
-`codex`) are explicit non-MVP and return a `client_error` envelope so
-callers can detect the gap programmatically.
+The first `pact pay` invocation on macOS triggers pay.sh's own `pay
+setup` flow, which pops a Touch ID prompt to provision a Solana
+keypair into the Keychain. `pact pay` probes for this state via `pay
+account list` before spawning pay and prints a one-line heads-up to
+stderr when no accounts exist yet, so the biometric prompt is
+expected rather than surprising. The warning never blocks the call;
+subsequent invocations are silent.
 
 ## Admin: `pact pause`
 
