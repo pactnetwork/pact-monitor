@@ -308,6 +308,42 @@ describe("pact pay: passthrough (gate open)", () => {
     }
   });
 
+  test("first-run probe: no provisioned accounts → warning written and pay still spawned", async () => {
+    const summary = new BufStream();
+    const probeOrder: string[] = [];
+    await payCommand({
+      args: ["curl", "https://example.com"],
+      probe: async () => {
+        probeOrder.push("probe");
+        return { initialized: false };
+      },
+      pay: async () => {
+        probeOrder.push("pay");
+        return { exitCode: 0, stdout: enc("ok status=200"), stderr: enc("") };
+      },
+      summaryStream: summary,
+    });
+    expect(probeOrder).toEqual(["probe", "pay"]);
+    expect(summary.text).toContain("pay.sh has not been initialized");
+    expect(summary.text).toContain("Touch ID");
+    expect(summary.text).toContain("solana-foundation/pay#setup");
+  });
+
+  test("first-run probe: initialized host suppresses the warning", async () => {
+    const summary = new BufStream();
+    await payCommand({
+      args: ["curl", "https://example.com"],
+      probe: async () => ({ initialized: true }),
+      pay: fakePay({
+        exitCode: 0,
+        stdout: "ok status=200",
+        stderr: "",
+      }),
+      summaryStream: summary,
+    });
+    expect(summary.text).not.toContain("pay.sh has not been initialized");
+  });
+
   test("emitSummary=false suppresses the [pact] summary block", async () => {
     const summary = new BufStream();
     await payCommand({

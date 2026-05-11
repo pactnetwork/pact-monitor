@@ -27,7 +27,12 @@
 
 import { makeEnvelope, type Envelope } from "../lib/envelope.ts";
 import { resolveClusterConfig } from "../lib/solana.ts";
-import { runPay, type PayShellFn } from "../lib/pay-shell.ts";
+import {
+  runPay,
+  DEFAULT_PAY_PROBE,
+  type PayShellFn,
+  type PayProbeFn,
+} from "../lib/pay-shell.ts";
 import {
   classifyPayResult,
   type Outcome,
@@ -72,11 +77,14 @@ function argvTargetsNonMainnet(args: string[]): boolean {
 export interface PayCommandInput {
   args: string[];           // verbatim argv after `pact pay`, e.g. ["curl", "-s", "https://…"]
   pay?: PayShellFn;         // test override
+  probe?: PayProbeFn;       // test override for the first-run probe
   // Whether to emit the [pact] summary block to stderr at the end. The
   // default is true. --quiet mode (handled in index.ts) sets this false.
   emitSummary?: boolean;
   // Where to write the summary lines (default: process.stderr). Tests
-  // capture into a buffer to assert content.
+  // capture into a buffer to assert content. The first-run pay-setup
+  // warning is also written through this stream so tests can assert
+  // on it without grabbing process.stderr.
   summaryStream?: { write(s: string): unknown };
 }
 
@@ -119,6 +127,34 @@ export async function payCommand(
   if (!argvTargetsNonMainnet(input.args)) {
     const gate = gateEnvelope();
     if (gate) return gate;
+  }
+
+  // 2b. First-run pay-setup warning. On macOS, pay's first invocation
+  //     pops a Touch ID prompt asking the user to authorize provisioning
+  //     a Solana keypair into the Keychain. Surfacing a one-line heads-up
+  //     before we spawn pay turns an unexpected biometric prompt into an
+  //     expected one. Probe errors are swallowed inside the probe itself
+  //     so this branch can never block the main flow.
+  //
+  //     The default probe is skipped when the caller injected a fake pay
+  //     binary (i.e. tests) to keep the harness hermetic; tests that
+  //     specifically exercise the first-run warning pass an explicit
+  //     `probe` override.
+  if (input.emitSummary !== false) {
+    const probe =
+      input.probe ?? (input.pay === undefined ? DEFAULT_PAY_PROBE : null);
+    if (probe) {
+      const { initialized } = await probe();
+      if (!initialized) {
+        const out = input.summaryStream ?? process.stderr;
+        out.write(
+          "[pact] pay.sh has not been initialized on this host. The first " +
+            "invocation will prompt for Touch ID to provision a Solana keypair " +
+            "into your macOS Keychain. See " +
+            "https://github.com/solana-foundation/pay#setup for details.\n",
+        );
+      }
+    }
   }
 
   // 3. Spawn pay. The runner tee's stdout/stderr to the user's terminal
