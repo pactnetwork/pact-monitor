@@ -29,6 +29,7 @@ import { makeEnvelope, type Envelope } from "../lib/envelope.ts";
 import { resolveClusterConfig } from "../lib/solana.ts";
 import {
   runPay,
+  withVerboseFlag,
   DEFAULT_PAY_PROBE,
   type PayShellFn,
   type PayProbeFn,
@@ -158,10 +159,16 @@ export async function payCommand(
   }
 
   // 3. Spawn pay. The runner tee's stdout/stderr to the user's terminal
-  //    in real time AND captures buffers for the classifier.
+  //    in real time AND captures buffers for the classifier. We prepend
+  //    -v so pay emits its tracing lines (Paying.../Payment signed...),
+  //    without which the classifier sees an empty stderr and reports
+  //    payment.attempted=false on every settled call (#157).
   let result;
   try {
-    result = await runPay({ args: input.args, pay: input.pay });
+    result = await runPay({
+      args: withVerboseFlag(input.args),
+      pay: input.pay,
+    });
   } catch (err) {
     // Most common cause: pay isn't on PATH. Surface a structured
     // envelope rather than a stack trace; same shape as the old

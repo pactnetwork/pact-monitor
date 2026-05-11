@@ -30,6 +30,24 @@ export interface RunPayInput {
   pay?: PayShellFn;
 }
 
+// pay 0.16.0 emits its x402/MPP tracing lines (`402 Payment Required`,
+// `Paying...`, `Payment signed, retrying...`) only when -v/--verbose is
+// passed; without it stderr is empty and pact's classifier can never see
+// that a payment was attempted, so every successful call falsely reports
+// payment.attempted=false. We inject -v as the first pay-side flag unless
+// the user has explicitly opted out with --quiet / -q / --silent.
+const QUIET_FLAGS = new Set(["--quiet", "-q", "--silent"]);
+
+export function withVerboseFlag(args: string[]): string[] {
+  for (const arg of args) {
+    if (QUIET_FLAGS.has(arg)) return args;
+    // Only scan pay-side flags; once we hit the wrapped tool (first
+    // non-flag, e.g. `curl`), subsequent --quiet/--silent belong to it.
+    if (!arg.startsWith("-")) break;
+  }
+  return ["-v", ...args];
+}
+
 /**
  * Default implementation: spawn `pay <args>` via Bun.spawn with stdin
  * inherited. stdout/stderr are tee'd to the user's terminal and an
