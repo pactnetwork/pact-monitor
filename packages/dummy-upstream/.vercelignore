@@ -1,0 +1,12 @@
+# Vercel deploys this package as a single Node serverless function (api/index.ts,
+# which imports the Hono app from src/). Nothing here is a static asset — exclude
+# build/test/docker tooling and source so it isn't uploaded or served as a static
+# file. The @vercel/node builder still bundles src/ into the function at build
+# time; .vercelignore only affects what's served statically.
+dist
+test
+src
+tsconfig.json
+Dockerfile
+README.md
+.vercel
