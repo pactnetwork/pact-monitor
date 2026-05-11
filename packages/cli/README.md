@@ -64,6 +64,14 @@ v0.1.0 supports `curl` only. Other tools (`wget`, `http` (HTTPie), `claude`,
 `codex`) are explicit non-MVP and return a `client_error` envelope so
 callers can detect the gap programmatically.
 
+The first `pact pay` invocation on macOS triggers pay.sh's own `pay
+setup` flow, which pops a Touch ID prompt to provision a Solana
+keypair into the Keychain. `pact pay` probes for this state via `pay
+account list` before spawning pay and prints a one-line heads-up to
+stderr when no accounts exist yet, so the biometric prompt is
+expected rather than surprising. The warning never blocks the call;
+subsequent invocations are silent.
+
 ## Admin: `pact pause`
 
 `pact pause` flips the protocol-wide kill switch — every subsequent `settle_batch` call returns `ProtocolPaused (6032)` until the same instruction is sent again with `paused = 0`. The signer must equal `ProtocolConfig.authority` on-chain.
