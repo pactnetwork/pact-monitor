@@ -100,4 +100,8 @@ export const classifierRegistry: Record<string, ClassifierFactory> = {
   jupiter: { kind: "static", classifier: marketDefaultClassifier },
   elfa: { kind: "static", classifier: marketDefaultClassifier },
   fal: { kind: "static", classifier: marketDefaultClassifier },
+  // `dummy` returns plain HTTP (not JSON-RPC), so the simple status-based
+  // default classifier is the right fit: 5xx → server_error+refund,
+  // 2xx-over-SLA → latency_breach+refund, 4xx (incl. 402) → client_error.
+  dummy: { kind: "static", classifier: marketDefaultClassifier },
 };
