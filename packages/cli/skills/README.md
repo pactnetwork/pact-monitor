@@ -26,6 +26,15 @@ to try it with fake money.
 > Note: the repo is currently private — until it's public, `curl`ing the raw
 > URL above will 404; copy the file contents directly instead.
 
+## `pact-demo/` — use the "dummy services" / demo Pact coverage
+
+Drives the live flaky demo upstream at `https://dummy.pactnetwork.io` to
+exercise or screen-record the Pact coverage flow (`?fail` / `?status` /
+`?latency` / `?x402` toggles; `pact pay --sandbox` walkthrough; the gateway-path
+on-chain demo). There's also a `bash packages/dummy-upstream/demo.sh` driver.
+
+**Install:** copy `pact-demo/SKILL.md` to `~/.claude/skills/pact-demo/SKILL.md`.
+
 ## See also
 
 `pact init` installs the broader `pact` skill (the insured-gateway flow for the
