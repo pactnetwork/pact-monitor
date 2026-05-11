@@ -1,5 +1,7 @@
 # @pact-network/dummy-upstream
 
+**Live:** https://dummy.pactnetwork.io — deployed on Vercel (project `dummy-upstream`, scope `metalboyricks-projects`).
+
 A deliberately flaky HTTP "price quote" API — the demo/test target for **Pact
 Network** premium coverage.
 

@@ -97,10 +97,10 @@ exercised deterministically.</p>
   <tr><td><code>?status=&lt;100-599&gt;</code></td><td>respond with that HTTP status code</td></tr>
   <tr><td><code>?latency=&lt;ms&gt;</code></td><td>sleep that many ms before responding (clamped 0&ndash;${MAX_LATENCY_MS}) — for latency-SLA-breach demos</td></tr>
   <tr><td><code>?body=&lt;string&gt;</code></td><td>return that string verbatim as <code>text/plain</code> instead of the JSON quote</td></tr>
-  <tr><td><code>?x402=1</code></td><td>402 Payment Required with an x402-style challenge (<code>accepts</code> array + <code>PAYMENT-REQUIRED</code> header) so <code>pay</code> / <code>pact pay</code> would attempt payment</td></tr>
+  <tr><td><code>?x402=1</code></td><td>acts as a demo x402 server: a request <em>without</em> a payment header gets 402 + an x402 challenge (<code>accepts</code> array + <code>PAYMENT-REQUIRED</code> header); the retry <em>with</em> a payment header (<code>X-PAYMENT</code> / <code>PAYMENT-SIGNATURE</code>) is treated as paid and falls through to the normal branches (so <code>?x402=1&amp;fail=1</code> = "agent paid, then upstream 5xx'd"). Payment is not verified — demo target.</td></tr>
 </table>
 <p class="muted">Toggles compose, e.g. <code>?fail=1&amp;latency=2000</code> sleeps then 503s.
-Precedence: <code>x402</code> &rarr; <code>status</code> &rarr; <code>fail</code> &rarr; <code>body</code> &rarr; default quote
+Precedence: unpaid <code>x402</code> wins (402); once paid (or no <code>?x402</code>): <code>status</code> &rarr; <code>fail</code> &rarr; <code>body</code> &rarr; default quote
 (latency is applied first, regardless).</p>
 
 <h2>Example curls</h2>
@@ -152,14 +152,37 @@ export function createApp(): Hono {
     }
 
     // 2. x402 paywall — highest precedence: a paid call should never be
-    //    masked by a ?status= echo.
+    //    masked by a ?status= echo. Acts as a (demo) x402 server: a request
+    //    WITHOUT a payment header gets the 402 + challenge; on the retry
+    //    WITH one (X-PAYMENT for standard x402, or PAYMENT-SIGNATURE for the
+    //    "header" flavor pay also speaks) we treat the call as paid and fall
+    //    through to the normal response branches (so `?x402=1&fail=1` lets you
+    //    demo "agent paid, then upstream 5xx'd"). We do NOT verify the payment
+    //    — this is a demo target; the point is exercising the wrapper, not
+    //    settlement.
     if (q.x402 === "1") {
-      const resourceUrl = c.req.url;
-      const accept = buildX402Accept(resourceUrl);
-      const challenge = buildX402Challenge(resourceUrl);
-      c.header("WWW-Authenticate", 'x402 realm="pact-dummy-upstream"');
-      c.header("PAYMENT-REQUIRED", encodeAcceptHeader(accept));
-      return c.json(challenge, 402);
+      const hasPayment =
+        c.req.header("x-payment") !== undefined ||
+        c.req.header("payment-signature") !== undefined ||
+        c.req.header("x-payment-signature") !== undefined;
+      if (!hasPayment) {
+        const proto = (c.req.header("x-forwarded-proto") ?? "https").split(",")[0].trim();
+        let resourceUrl = c.req.url;
+        try {
+          const u = new URL(c.req.url);
+          u.protocol = `${proto}:`;
+          resourceUrl = u.toString();
+        } catch {
+          /* keep c.req.url */
+        }
+        const accept = buildX402Accept(resourceUrl);
+        const challenge = buildX402Challenge(resourceUrl);
+        c.header("WWW-Authenticate", 'x402 realm="pact-dummy-upstream"');
+        c.header("PAYMENT-REQUIRED", encodeAcceptHeader(accept));
+        return c.json(challenge, 402);
+      }
+      // paid — echo a settlement-ish header back, then fall through.
+      c.header("PAYMENT-RESPONSE", "accepted; demo=1");
     }
 
     // 3. Arbitrary status echo. Content-less statuses (101/204/205/304, 1xx)

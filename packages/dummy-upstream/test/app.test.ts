@@ -203,4 +203,25 @@ describe("toggle precedence", () => {
     const res = await app.request("/quote/AAPL?fail=1&body=nope");
     expect(res.status).toBe(503);
   });
+
+  test("?x402=1 with an X-PAYMENT header is treated as paid → 200 quote", async () => {
+    const res = await app.request("/quote/AAPL?x402=1", {
+      headers: { "x-payment": "demo-base64-payload" },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { symbol: string; source: string };
+    expect(body.symbol).toBe("AAPL");
+    expect(body.source).toBe("pact-dummy-upstream");
+    expect(res.headers.get("payment-response")).toContain("accepted");
+  });
+
+  test("?x402=1&fail=1 with a payment header → paid, then upstream 503", async () => {
+    const res = await app.request("/quote/MSFT?x402=1&fail=1", {
+      headers: { "payment-signature": "demo-tx-sig" },
+    });
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("upstream_unavailable");
+  });
+
 });
