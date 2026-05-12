@@ -8,7 +8,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { Keypair } from "@solana/web3.js";
 import { payCommand, coverageMeta } from "../src/cmd/pay.ts";
-import type { PayShellFn } from "../src/lib/pay-shell.ts";
+import {
+  PACT_CURL_STATUS_WRITE_OUT,
+  withCurlStatusMarker,
+  type PayShellFn,
+} from "../src/lib/pay-shell.ts";
 import {
   classifyPayResult,
   type Outcome,
@@ -407,7 +411,14 @@ describe("pact pay: verbose-flag injection (#157)", () => {
       emitSummary: false,
     });
     expect(captured.length).toBe(1);
-    expect(captured[0]).toEqual(["-v", "curl", "-s", "https://example.com"]);
+    expect(captured[0]).toEqual([
+      "-v",
+      "curl",
+      "-s",
+      "https://example.com",
+      "-w",
+      PACT_CURL_STATUS_WRITE_OUT,
+    ]);
   });
 
   test("--quiet at head suppresses injection (passed through to pay)", async () => {
@@ -417,7 +428,16 @@ describe("pact pay: verbose-flag injection (#157)", () => {
       pay: fn,
       emitSummary: false,
     });
-    expect(captured[0]).toEqual(["--quiet", "curl", "https://example.com"]);
+    // -v is suppressed by --quiet, but the curl -w status marker is
+    // still appended — the classifier needs the upstream status
+    // regardless of pay's own verbosity.
+    expect(captured[0]).toEqual([
+      "--quiet",
+      "curl",
+      "https://example.com",
+      "-w",
+      PACT_CURL_STATUS_WRITE_OUT,
+    ]);
   });
 
   test("-q short form suppresses injection", async () => {
@@ -427,7 +447,13 @@ describe("pact pay: verbose-flag injection (#157)", () => {
       pay: fn,
       emitSummary: false,
     });
-    expect(captured[0]).toEqual(["-q", "curl", "https://example.com"]);
+    expect(captured[0]).toEqual([
+      "-q",
+      "curl",
+      "https://example.com",
+      "-w",
+      PACT_CURL_STATUS_WRITE_OUT,
+    ]);
   });
 
   test("--silent variant suppresses injection", async () => {
@@ -437,7 +463,13 @@ describe("pact pay: verbose-flag injection (#157)", () => {
       pay: fn,
       emitSummary: false,
     });
-    expect(captured[0]).toEqual(["--silent", "curl", "https://example.com"]);
+    expect(captured[0]).toEqual([
+      "--silent",
+      "curl",
+      "https://example.com",
+      "-w",
+      PACT_CURL_STATUS_WRITE_OUT,
+    ]);
   });
 
   test("--silent on the wrapped tool (after curl) does NOT suppress -v", async () => {
@@ -454,6 +486,89 @@ describe("pact pay: verbose-flag injection (#157)", () => {
       "curl",
       "--silent",
       "https://example.com",
+      "-w",
+      PACT_CURL_STATUS_WRITE_OUT,
+    ]);
+  });
+});
+
+// ----------------------------------------------------------------------
+// curl -w status-marker injection (SLA-breach refunds via `pact pay curl`)
+// ----------------------------------------------------------------------
+
+describe("withCurlStatusMarker", () => {
+  test("appends -w status marker for a bare `curl` invocation", () => {
+    expect(withCurlStatusMarker(["-v", "curl", "https://example.com"])).toEqual([
+      "-v",
+      "curl",
+      "https://example.com",
+      "-w",
+      PACT_CURL_STATUS_WRITE_OUT,
+    ]);
+  });
+
+  test("does NOT inject for wget", () => {
+    const argv = ["-v", "wget", "https://example.com"];
+    expect(withCurlStatusMarker(argv)).toEqual(argv);
+  });
+
+  test("does NOT inject for httpie (`http`)", () => {
+    const argv = ["-v", "http", "GET", "https://example.com"];
+    expect(withCurlStatusMarker(argv)).toEqual(argv);
+  });
+
+  test("does NOT inject for claude / codex", () => {
+    expect(withCurlStatusMarker(["-v", "claude", "-p", "hi"])).toEqual([
+      "-v",
+      "claude",
+      "-p",
+      "hi",
+    ]);
+    expect(withCurlStatusMarker(["-v", "codex", "exec", "x"])).toEqual([
+      "-v",
+      "codex",
+      "exec",
+      "x",
+    ]);
+  });
+
+  test("does NOT double-inject when the user already passed -w", () => {
+    const argv = ["-v", "curl", "-w", "%{http_code}", "https://example.com"];
+    expect(withCurlStatusMarker(argv)).toEqual(argv);
+  });
+
+  test("does NOT double-inject when the user passed --write-out", () => {
+    const argv = ["-v", "curl", "--write-out", "%{http_code}", "https://x"];
+    expect(withCurlStatusMarker(argv)).toEqual(argv);
+  });
+
+  test("does NOT double-inject for the glued `--write-out=` form", () => {
+    const argv = ["-v", "curl", "--write-out=%{http_code}", "https://x"];
+    expect(withCurlStatusMarker(argv)).toEqual(argv);
+  });
+
+  test("recognises curl invoked by absolute path", () => {
+    expect(
+      withCurlStatusMarker(["-v", "/usr/bin/curl", "https://example.com"]),
+    ).toEqual([
+      "-v",
+      "/usr/bin/curl",
+      "https://example.com",
+      "-w",
+      PACT_CURL_STATUS_WRITE_OUT,
+    ]);
+  });
+
+  test("respects pay's `--` separator before the wrapped tool", () => {
+    expect(
+      withCurlStatusMarker(["-v", "--", "curl", "https://example.com"]),
+    ).toEqual([
+      "-v",
+      "--",
+      "curl",
+      "https://example.com",
+      "-w",
+      PACT_CURL_STATUS_WRITE_OUT,
     ]);
   });
 });

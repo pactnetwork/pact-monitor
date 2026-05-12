@@ -27,7 +27,7 @@ import { payCoverageStatusCommand } from "./cmd/pay-coverage.ts";
 import skillSrc from "./skill/SKILL.md" with { type: "text" };
 import snippetSrc from "./skill/claude-md-snippet.md" with { type: "text" };
 
-const VERSION = "0.2.5";
+const VERSION = "0.2.6";
 const DEFAULT_GATEWAY = process.env.PACT_GATEWAY_URL ?? "https://api.pactnetwork.io";
 const DEFAULT_RPC = process.env.PACT_RPC_URL ?? "https://api.mainnet-beta.solana.com";
 // v0.1.0 is mainnet-only. Mainnet still requires PACT_MAINNET_ENABLED=1 as a
@@ -91,10 +91,11 @@ async function maybeWaitForSettlement(opts: {
   // Only poll when settlement is genuinely pending: a server-assigned call_id,
   // no tx yet, and an ETA hint from the gateway. --raw (call_id_source =
   // local_fallback, no settlement_eta_sec) and already-settled envelopes are
-  // left untouched.
+  // left untouched. (PactMeta.call_id_source was renamed "proxy" → "gateway"
+  // in #187; index.ts wasn't updated, so tsc --noEmit was red on main.)
   if (
     typeof callId !== "string" ||
-    meta.call_id_source !== "proxy" ||
+    meta.call_id_source !== "gateway" ||
     meta.tx_signature ||
     meta.settlement_eta_sec === undefined
   ) {

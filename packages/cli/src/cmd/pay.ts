@@ -39,6 +39,7 @@ import { loadOrCreateWallet } from "../lib/wallet.ts";
 import {
   runPay,
   withVerboseFlag,
+  withCurlStatusMarker,
   DEFAULT_PAY_PROBE,
   type PayShellFn,
   type PayProbeFn,
@@ -207,11 +208,15 @@ export async function payCommand(
   //    in real time AND captures buffers for the classifier. We prepend
   //    -v so pay emits its tracing lines (Paying.../Payment signed...),
   //    without which the classifier sees an empty stderr and reports
-  //    payment.attempted=false on every settled call (#157).
+  //    payment.attempted=false on every settled call (#157). When the
+  //    wrapped tool is curl, we ALSO append `-w '[pact-http-status=…]'`
+  //    so the upstream HTTP status reaches the classifier — plain curl
+  //    forwards exit 0 even on a 5xx, so without this the SLA-breach
+  //    refund path can never trigger via `pact pay curl`.
   let result;
   try {
     result = await runPay({
-      args: withVerboseFlag(input.args),
+      args: withCurlStatusMarker(withVerboseFlag(input.args)),
       pay: input.pay,
     });
   } catch (err) {

@@ -43,9 +43,13 @@
 // curl's exit code as its own. curl returns 0 on a 2xx, 22 on a 4xx/5xx
 // (only if -f was supplied), and various non-zero codes for network
 // errors. Without -f, curl exits 0 even on a 5xx and writes the body to
-// stdout — so we ALSO scan the captured stdout for an HTTP status
-// hint (e.g. `-w "%{http_code}"` or a JSON-RPC error envelope) when
-// possible.
+// stdout — so `pact pay` injects `-w '\n[pact-http-status=%{http_code}]\n'`
+// into curl's argv (see pay-shell.ts withCurlStatusMarker) and we scan
+// the captured stdout for that `[pact-http-status=…]` marker first
+// (PACT_HTTP_STATUS_RE), falling back to a generic status hint (a stray
+// `http_code=`/`status:` token, or a JSON-RPC error envelope). Without
+// the marker a 5xx would be misclassified `success` and the
+// `server_error → refund` path would never fire via `pact pay curl`.
 
 // Canonical USDC mint on Solana mainnet — re-used as the localnet/sandbox
 // alias by pay-core. When the MPP "currency=<mint>" field matches this
@@ -83,8 +87,30 @@ const MPP_AMOUNT_RE =
   /Building\s+MPP\s+credential\b[^\n]*?\bamount=(\d+)[^\n]*?\bcurrency=([A-Za-z0-9]+)/i;
 
 // x402 detection signal (verbose pay-core trace) — present on the x402
-// auto-pay path even before the "402 Payment Required" body line.
+// auto-pay path even before the "402 Payment Required" body line. pay
+// 0.13.0/0.16.0 phrases this as "Detected x402 challenge (Solana)".
 const X402_DETECTED_RE = /Detected\s+x402\s+challenge/i;
+
+// pay 0.13.0/0.16.0 x402 auto-pay credential-build line. The hosted
+// `pay curl '<url>?x402=1'` path emits (verbose, stderr):
+//
+//   Building x402 payment amount=5000 currency=<mint> cluster=mainnet recipient=<pubkey> signer=<pubkey>
+//
+// Unlike the legacy "402 Payment Required (x402) — N USDC" body line,
+// this carries the amount ALREADY in base units, the SPL mint, the
+// merchant address (`recipient=` — this is the payee!), and the agent's
+// own signer pubkey. The fields are order-independent and we tolerate
+// extra fields (e.g. `cluster=`) between them, matching both the 0.13
+// and 0.16 output formats. The amount is a plain integer (base units);
+// currency / recipient / signer are base58 pubkeys.
+const X402_BUILD_LINE_RE = /Building\s+x402\s+payment\b/i;
+const X402_BUILD_AMOUNT_RE = /Building\s+x402\s+payment\b[^\n]*?\bamount=(\d+)\b/i;
+const X402_BUILD_CURRENCY_RE =
+  /Building\s+x402\s+payment\b[^\n]*?\bcurrency=([1-9A-HJ-NP-Za-km-z]{32,44})\b/i;
+const X402_BUILD_RECIPIENT_RE =
+  /Building\s+x402\s+payment\b[^\n]*?\brecipient=([1-9A-HJ-NP-Za-km-z]{32,44})\b/i;
+// (`signer=` on this same line is matched by SIGNER_HINT_RE below — no
+// separate regex needed.)
 
 // Both the x402 and MPP "Detected … challenge" verbose lines carry the
 // resource pay paid for: `… resource="https://example.x402/quote/AAPL"`.
@@ -114,6 +140,16 @@ const PAYMENT_FAILED_RE =
   /(?:Payment\s*(?:failed|rejected|error)|Payment\s+Verification\s+Error|Server\s+returned\s+402\s+again\s+after\s+payment)/i;
 
 const HTTP_STATUS_HINT_RE = /\b(?:status|http_code|HTTP\/[\d.]+)\s*[:=]?\s*(\d{3})\b/;
+
+// The status marker pact injects into curl's output via `-w` (see
+// pay-shell.ts withCurlStatusMarker): `[pact-http-status=503]`. This is
+// the authoritative upstream HTTP status when present — `pact pay curl`
+// runs plain curl, which forwards exit 0 even on a 5xx, so without this
+// marker the classifier would call a 5xx `success` and the
+// `server_error → refund` path would never fire. Checked before the
+// generic HTTP_STATUS_HINT_RE so it wins over any incidental
+// `http_code=`/`status:` text in a response body.
+const PACT_HTTP_STATUS_RE = /\[pact-http-status=(\d{3})\]/;
 
 // pay does not yet print the call latency in any captured fixture, but
 // some builds log `latency_ms=N` / `elapsed=Nms` on the retry line.
@@ -154,6 +190,11 @@ export interface PaymentSummary {
   // The signer pay used (the agent's own pubkey), base58. Null when not
   // logged. NOT the merchant/payee.
   signerPubkey?: string | null;
+  // The merchant/payee address from the x402 challenge, base58. pay
+  // 0.13.0/0.16.0 logs this as `recipient=` on the x402 "Building x402
+  // payment" credential-build line; the MPP path and the legacy x402
+  // body line do not surface it. Null when not logged.
+  payeePubkey?: string | null;
   // The on-chain settle transaction signature, base58. pay 0.16.0 does
   // NOT log this in any captured fixture — this is always null today and
   // exists so a future pay build that adds it lights up automatically.
@@ -213,11 +254,46 @@ interface ExtractedPaymentMeta {
   scheme: PaymentScheme;
   assetMint: string | null;
   amountBaseUnits: string | null;
+  // The merchant address from the x402 build line (`recipient=`), base58.
+  // Null on every path except the x402 "Building x402 payment" line.
+  payeePubkey: string | null;
 }
 
 function extractPaymentMetadata(combined: string): ExtractedPaymentMeta {
   const mintMatch = combined.match(CURRENCY_MINT_RE);
   const assetMintFromCurrency = mintMatch ? mintMatch[1] : null;
+
+  // x402 auto-pay credential-build line (pay 0.13.0/0.16.0):
+  //   "Building x402 payment amount=5000 currency=<mint> cluster=… recipient=<pk> signer=<pk>"
+  // This is what the hosted `pay curl '<url>?x402=1'` path actually
+  // emits (the legacy "402 Payment Required (x402) — N USDC" body line
+  // is NOT printed by `pay curl`, which echoes the final 200 body, not
+  // the 402 challenge). Prefer it: it carries the amount in base units,
+  // the SPL mint, AND the merchant address (`recipient=`).
+  if (X402_BUILD_LINE_RE.test(combined)) {
+    const amtMatch = combined.match(X402_BUILD_AMOUNT_RE);
+    const curMatch = combined.match(X402_BUILD_CURRENCY_RE);
+    const recMatch = combined.match(X402_BUILD_RECIPIENT_RE);
+    const raw = amtMatch ? amtMatch[1] : null;
+    const mint = (curMatch ? curMatch[1] : null) ?? assetMintFromCurrency;
+    const isUsdc = mint === USDC_MINT;
+    return {
+      attempted: true,
+      // `amount=` here is already in base units; promote to a
+      // human-readable decimal only when we know the mint's decimals.
+      amount:
+        raw === null
+          ? null
+          : isUsdc
+            ? formatMicroAmount(raw, USDC_DECIMALS)
+            : raw,
+      asset: isUsdc ? "USDC" : mint,
+      scheme: "x402",
+      assetMint: mint,
+      amountBaseUnits: raw,
+      payeePubkey: recMatch ? recMatch[1] : null,
+    };
+  }
 
   // Try x402 legacy line first (em-dash, then ASCII dash fallback).
   const x402Match =
@@ -240,6 +316,7 @@ function extractPaymentMetadata(combined: string): ExtractedPaymentMeta {
       assetMint:
         assetMintFromCurrency ?? (asset === "USDC" ? USDC_MINT : null),
       amountBaseUnits,
+      payeePubkey: null,
     };
   }
 
@@ -259,6 +336,7 @@ function extractPaymentMetadata(combined: string): ExtractedPaymentMeta {
         assetMint: mint,
         // `amount=` on the MPP path is already in base units.
         amountBaseUnits: raw,
+        payeePubkey: null,
       };
     }
     return {
@@ -268,6 +346,7 @@ function extractPaymentMetadata(combined: string): ExtractedPaymentMeta {
       scheme: "mpp",
       assetMint: assetMintFromCurrency,
       amountBaseUnits: null,
+      payeePubkey: null,
     };
   }
 
@@ -282,6 +361,7 @@ function extractPaymentMetadata(combined: string): ExtractedPaymentMeta {
       scheme: "x402",
       assetMint: assetMintFromCurrency,
       amountBaseUnits: null,
+      payeePubkey: null,
     };
   }
 
@@ -292,6 +372,7 @@ function extractPaymentMetadata(combined: string): ExtractedPaymentMeta {
     scheme: "unknown",
     assetMint: null,
     amountBaseUnits: null,
+    payeePubkey: null,
   };
 }
 
@@ -336,7 +417,10 @@ export function classifyPayResult(input: ClassifyInput): ClassifyResult {
           assetMint: pm.assetMint,
           amountBaseUnits: pm.amountBaseUnits,
           resource: hints.resource,
+          // `signer=` from the x402 build line is picked up by
+          // SIGNER_HINT_RE in extractTransportHints already.
           signerPubkey: hints.signerPubkey,
+          payeePubkey: pm.payeePubkey,
           txSignature: hints.txSignature,
           latencyMs: hints.latencyMs,
         }
@@ -357,7 +441,10 @@ export function classifyPayResult(input: ClassifyInput): ClassifyResult {
   //    stdout (e.g. curl -w "%{http_code}") over curl's exit code, which
   //    is unreliable without -f.
   const stdoutClean = stripAnsi(input.stdoutText);
-  const statusMatch = stdoutClean.match(HTTP_STATUS_HINT_RE);
+  // Prefer pact's own injected `[pact-http-status=…]` marker (curl `-w`)
+  // over a generic status-looking token in the response body.
+  const pactStatusMatch = stdoutClean.match(PACT_HTTP_STATUS_RE);
+  const statusMatch = pactStatusMatch ?? stdoutClean.match(HTTP_STATUS_HINT_RE);
   const upstreamStatus = statusMatch ? Number(statusMatch[1]) : null;
 
   // For MPP/x402 verbose paths, pay does the payment in-flight and exits

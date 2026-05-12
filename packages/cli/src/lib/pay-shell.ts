@@ -48,6 +48,76 @@ export function withVerboseFlag(args: string[]): string[] {
   return ["-v", ...args];
 }
 
+// The status marker we append to curl's output via `-w`. Plain `curl`
+// (no -i / -f / -w) writes only the response body to stdout and forwards
+// a 0 exit code even on a 5xx — so pact's classifier sees `tool_exit=0`
+// + no parseable status and (wrongly) calls it `success`, which means
+// the `server_error → refund` path can never fire via `pact pay curl`.
+// Appending `-w '\n[pact-http-status=<code>]\n'` makes curl print the
+// real HTTP status as an extra trailing line on stdout, which
+// pay-classifier's PACT_HTTP_STATUS_RE picks up. `-w` only ADDS to
+// curl's output — it does not change how curl handles the response, so
+// (unlike `curl -i`, which breaks pay's own x402 parsing) it is safe to
+// inject unconditionally for curl. The happy path is unaffected: a 200
+// is still classified `success`, just with one extra `[pact-http-status=200]`
+// line on stdout.
+export const PACT_CURL_STATUS_WRITE_OUT = "\n[pact-http-status=%{http_code}]\n";
+
+// curl flags that already define a custom write-out template. If the
+// user supplied one, we don't add ours (their template wins; they can
+// include `%{http_code}` themselves if they want the marker).
+const CURL_WRITE_OUT_FLAGS = new Set(["-w", "--write-out"]);
+
+// True when `tool` is curl (bare name or an absolute/relative path ending
+// in `curl`). We deliberately don't touch wget / http(ie) / claude /
+// codex: HTTPie already prints the status line, and claude/codex aren't
+// HTTP tools.
+function isCurlTool(tool: string): boolean {
+  if (tool === "curl") return true;
+  const base = tool.replace(/^.*[\\/]/, "");
+  return base === "curl";
+}
+
+/**
+ * If the wrapped tool is curl and the user hasn't already passed a
+ * `-w` / `--write-out`, append `-w '\n[pact-http-status=%{http_code}]\n'`
+ * to curl's argv so the upstream HTTP status surfaces in stdout for the
+ * classifier (enables the SLA-breach refund path via `pact pay curl`).
+ *
+ * `args` is the argv as passed to `pay` (already including any leading
+ * `-v` from withVerboseFlag). pay's own flags precede the wrapped tool;
+ * the first non-`-` token is the wrapped tool, everything after it is
+ * the tool's argv. We never inject before `--` and never for non-curl
+ * tools.
+ */
+export function withCurlStatusMarker(args: string[]): string[] {
+  // Locate the wrapped tool: the first token that isn't a pay-side flag.
+  let toolIdx = -1;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "--") {
+      // pay's `--` separator: the wrapped tool is the next token.
+      toolIdx = i + 1;
+      break;
+    }
+    if (!a.startsWith("-")) {
+      toolIdx = i;
+      break;
+    }
+  }
+  if (toolIdx < 0 || toolIdx >= args.length) return args;
+  if (!isCurlTool(args[toolIdx])) return args;
+  // The user already specified their own write-out template — leave it.
+  for (let i = toolIdx + 1; i < args.length; i++) {
+    const a = args[i];
+    if (CURL_WRITE_OUT_FLAGS.has(a)) return args;
+    // `-w<template>` / `--write-out=<template>` glued forms.
+    if (a.startsWith("--write-out=")) return args;
+    if (a.startsWith("-w") && a.length > 2) return args;
+  }
+  return [...args, "-w", PACT_CURL_STATUS_WRITE_OUT];
+}
+
 /**
  * Default implementation: spawn `pay <args>` via Bun.spawn with stdin
  * inherited. stdout/stderr are tee'd to the user's terminal and an
