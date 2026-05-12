@@ -26,7 +26,7 @@ import { payCoverageStatusCommand } from "./cmd/pay-coverage.ts";
 import skillSrc from "./skill/SKILL.md" with { type: "text" };
 import snippetSrc from "./skill/claude-md-snippet.md" with { type: "text" };
 
-const VERSION = "0.2.3";
+const VERSION = "0.2.4";
 const DEFAULT_GATEWAY = process.env.PACT_GATEWAY_URL ?? "https://api.pactnetwork.io";
 const DEFAULT_RPC = process.env.PACT_RPC_URL ?? "https://api.mainnet-beta.solana.com";
 // v0.1.0 is mainnet-only. Mainnet still requires PACT_MAINNET_ENABLED=1 as a
@@ -106,7 +106,21 @@ program
     "mainnet only in v0.1.0 (requires PACT_MAINNET_ENABLED=1)",
     validateClusterStrict,
     DEFAULT_CLUSTER,
+  )
+  .option(
+    "--keypair <path>",
+    "path to a keypair file (solana-keygen JSON byte array or base58 secret key); precedence: --keypair > PACT_PRIVATE_KEY > disk wallet",
   );
+
+// `--keypair <path>` is sugar for PACT_PRIVATE_KEY: the wallet loader's
+// secret-key parser already accepts a file path, so feeding the flag value in
+// via the same env var keeps every command's keypair resolution identical and
+// gives `--keypair` precedence over an inherited PACT_PRIVATE_KEY. Runs before
+// any command action so the loader sees it.
+program.hook("preAction", (thisCommand) => {
+  const kp = thisCommand.opts().keypair as string | undefined;
+  if (kp) process.env.PACT_PRIVATE_KEY = kp;
+});
 
 // Route commander parse errors (invalid --cluster, unknown options, missing
 // args, etc.) through emit() as client_error envelopes so --json consumers

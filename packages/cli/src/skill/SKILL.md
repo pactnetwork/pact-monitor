@@ -88,6 +88,8 @@ Every command returns the same envelope: `{ status, body, meta? }`.
 
 Pact uses SPL Token delegation, not a deposit-into-program model. Your USDC stays in your own associated token account (ATA). You grant the protocol's SettlementAuthority a fixed allowance with `pact approve <usdc>`; the protocol debits premiums from your ATA up to that allowance during settlement. You retain control of the funds at all times — `pact revoke` removes the allowance instantly.
 
+The agent keypair lives at `~/.config/pact/<project>/wallet.json` (auto-generated on first run). To supply it yourself, set `PACT_PRIVATE_KEY` or pass `--keypair <path>`; both accept a base58-encoded secret key, a `solana-keygen` JSON byte-array keypair (`[n, …]`, 64 numbers), **or a path to a file** containing either. Precedence: `--keypair` > `PACT_PRIVATE_KEY` > disk wallet.
+
 Agents must fund their own mainnet USDC ATA externally (bridge or transfer in). `pact approve` does NOT move USDC; it only sets the delegation.
 
 ## Self-funding policy

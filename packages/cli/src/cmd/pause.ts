@@ -4,12 +4,12 @@ import {
   Transaction,
   sendAndConfirmTransaction,
 } from "@solana/web3.js";
-import bs58 from "bs58";
 import {
   buildPauseProtocolIx,
   getProtocolConfigPda,
 } from "@pact-network/protocol-v1-client";
 import { resolveClusterConfig } from "../lib/solana.ts";
+import { parseSecretKeyInput } from "../lib/wallet.ts";
 import type { Envelope } from "../lib/envelope.ts";
 
 type SubmitPauseResult = { tx_signature: string; confirmation_pending: boolean };
@@ -28,12 +28,9 @@ function loadAuthorityKeypair(): Keypair | { error: string } {
   }
   let secret: Uint8Array;
   try {
-    secret = bs58.decode(raw);
-  } catch {
-    return { error: "PACT_PRIVATE_KEY must be a base58-encoded 64-byte secret key" };
-  }
-  if (secret.length !== 64) {
-    return { error: "PACT_PRIVATE_KEY must decode to 64 bytes" };
+    secret = parseSecretKeyInput(raw);
+  } catch (err) {
+    return { error: (err as Error).message };
   }
   return Keypair.fromSecretKey(secret);
 }
