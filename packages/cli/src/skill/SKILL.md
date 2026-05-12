@@ -1,6 +1,6 @@
 ---
 name: pact
-version: 0.2.3
+version: 0.2.5
 description: Insured paid API calls for AI agents on Solana. Use INSTEAD of curl/fetch/Bash when calling these provider hostnames: api.helius.xyz, mainnet.helius-rpc.com, public-api.birdeye.so, quote-api.jup.ag, lite-api.jup.ag, api.elfa.ai, fal.run. Routes through api.pactnetwork.io for premium-billed insurance with auto-refund on upstream failure. Mainnet-only; requires PACT_MAINNET_ENABLED=1. Use `pact pay <tool> [args...]` (wraps solana-foundation/pay; supported tools include curl, wget, http, claude, codex) to call any 402-gated x402 or MPP endpoint — it registers the call for Pact coverage at facilitator.pact.network (premium from your `pact approve` allowance, refund from the subsidised pay-default pool on a breach). Do NOT use for: localhost, your own server, free public APIs (jsonplaceholder, public RPCs without quotas), GET-by-static-CDN fetches.
 ---
 
@@ -61,7 +61,7 @@ Every command returns the same envelope: `{ status, body, meta? }`.
 
 | command                              | what it does                                                       | body keys (on `ok`)                                                                                              |
 |--------------------------------------|--------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------|
-| `pact <url>`                         | insured GET/POST through the gateway                               | upstream JSON; `meta.slug`, `meta.call_id`, `meta.latency_ms`, `meta.premium_usdc`, `meta.tx_signature`           |
+| `pact <url>` (`--wait` opt.)          | insured GET/POST through the gateway; `--wait` polls on-chain settlement (~8s) and fills in `meta.tx_signature` | upstream JSON; `meta.slug`, `meta.call_id`, `meta.latency_ms`, `meta.premium_usdc`, `meta.tx_signature` (null until settled; use `--wait` or `pact calls show <call_id>`), `meta.solscan_url`/`meta.premium_*`/`meta.refund_*` after `--wait` settles |
 | `pact balance --json`                | wallet pubkey + ATA balance + granted allowance                    | `wallet`, `ata`, `ata_balance_usdc`, `allowance_usdc`, `eligible`                                                |
 | `pact approve <usdc> --json`         | grant SPL Token allowance to SettlementAuthority                   | `tx_signature`, `allowance_usdc`, `confirmation_pending`                                                          |
 | `pact revoke --json`                 | clear the allowance                                                | `tx_signature`, `confirmation_pending`                                                                            |
@@ -124,6 +124,11 @@ In `--json` mode `.meta.coverage` is `{ id, status, premiumBaseUnits, refundBase
 Check a coverage registration — and the on-chain `settle_batch` signature once it's settled — with `pact pay coverage <coverageId>` (it returns a Solscan link once settled; if the facilitator also returns a `callId`, `pact calls <callId>` shows the full on-chain record). Pass `--no-coverage` to skip the facilitator call entirely. `PACT_FACILITATOR_URL` overrides the facilitator base URL (default `https://facilitator.pact.network`).
 
 Caveat: pay 0.16.0's verbose output does not expose the merchant address or the on-chain payment tx signature, so those fields are absent from the receipt the CLI sends — the facilitator works with partial data.
+
+## Notes — async settlement & shell quoting (read before debugging "it's broken")
+
+- **`meta.tx_signature: null` on the immediate response is NOT a bug — settlement is asynchronous.** `pact <url>` returns as soon as the upstream responds; the on-chain `settle_batch` tx lands ~`meta.settlement_eta_sec` (≈8s) later because the settler batches events. The tx signature (and the *real* charged premium — `meta.premium_lamports` on the immediate response is a pre-settlement estimate, often `0`) appears via `pact calls show <call_id>` after the batch settles. To get it in one shot, pass `--wait` (default 30s poll window, `--wait=<secs>` to override): the CLI polls `pact calls show <call_id>` until settled, then merges `meta.tx_signature`, real `meta.premium_*`, `meta.refund_*`, `meta.breach`, `meta.settled_at`, and `meta.solscan_url` into the envelope. If the window elapses it sets `meta.settlement_pending: true` + `meta.settlement_hint` instead. Place `--wait` after the URL (`pact <url> --wait`) or use `pact --wait=30 <url>` — `pact --wait <url>` makes commander eat the URL as the flag value.
+- **Quote URLs with `?` (or `&`, `*`, `[`) in zsh/bash.** `pact --json https://dummy.pactnetwork.io/quote/AAPL?fail=1` → `zsh: no matches found` (zsh glob-expands `?`; bash with `failglob`/`nullglob` too). Single-quote it: `pact --json 'https://dummy.pactnetwork.io/quote/AAPL?fail=1'`. Shell-quoting issue, not a `pact` bug.
 
 ## Trust + private beta
 
