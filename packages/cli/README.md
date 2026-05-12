@@ -119,7 +119,7 @@ subsequent invocations are silent.
 
 `pact pause` flips the protocol-wide kill switch — every subsequent `settle_batch` call returns `ProtocolPaused (6032)` until the same instruction is sent again with `paused = 0`. The signer must equal `ProtocolConfig.authority` on-chain.
 
-Usage requires `PACT_PRIVATE_KEY` to hold the authority's base58 secret key — the command refuses to fall back to the project wallet or to generate a new keypair. End-users do not run this; it exists for the protocol operator's incident-response runbook.
+Usage requires `PACT_PRIVATE_KEY` to hold the authority's secret key (a base58-encoded secret key, a `solana-keygen` JSON byte-array keypair file, or a path to such a file) — the command refuses to fall back to the project wallet or to generate a new keypair. End-users do not run this; it exists for the protocol operator's incident-response runbook.
 
 ## Status taxonomy
 
@@ -143,12 +143,14 @@ Project name is resolved from `--project`, `$PACT_PROJECT`, git repo, or cwd bas
 
 ## Env vars
 
-- `PACT_PRIVATE_KEY` — bypass disk wallet
+- `PACT_PRIVATE_KEY` — bypass the disk wallet. Accepts a base58-encoded 64-byte secret key (Phantom-style export), a JSON byte-array keypair `[n, …]` of length 64 (the `solana-keygen` / Solana CLI keypair file format), **or a path to a file** containing either of those (e.g. `PACT_PRIVATE_KEY=~/keys/agent.json` or `PACT_PRIVATE_KEY=$(cat agent.json)`). See also the `--keypair <path>` flag.
 - `PACT_GATEWAY_URL` — override gateway (default `https://api.pactnetwork.io`)
 - `PACT_RPC_URL` — override Solana RPC (default `https://api.mainnet-beta.solana.com`)
 - `PACT_CLUSTER` — only `mainnet` is accepted; any other value is rejected at startup with a `client_error` envelope. v0.1.0 is mainnet-only — local devnet testing requires sed-replacing `constants.rs` and rebuilding the program per Rick's runbook.
 - `PACT_MAINNET_ENABLED=1` — required closed-beta gate. Any on-chain command (`balance`, `approve`, `revoke`, `<url>`) returns `client_error` until set, so a first-invocation accident cannot route real USDC through the production program.
 - `PACT_FACILITATOR_URL` — override the `pact pay` coverage facilitator base URL (default `https://facilitator.pact.network`)
 - `PACT_AUTO_DEPOSIT_DISABLED=1` — disable auto-approve
+
+Global flag: `--keypair <path>` — load the agent keypair from `<path>` (same format tolerance as `PACT_PRIVATE_KEY`: base58 secret key or `solana-keygen` JSON byte array). Precedence: `--keypair` > `PACT_PRIVATE_KEY` > disk wallet.
 
 See `docs/superpowers/specs/2026-05-05-pact-cli-design.md` for full spec.
