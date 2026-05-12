@@ -17,6 +17,7 @@ import { approveCommand, revokeCommand } from "./cmd/approve.ts";
 import { pauseCommand } from "./cmd/pause.ts";
 import { agentsShowCommand, agentsWatchCommand } from "./cmd/agents.ts";
 import { callsShowCommand } from "./cmd/calls.ts";
+import { pollSettlement, applySettlementToMeta } from "./lib/settlement.ts";
 import { initCommand } from "./cmd/init.ts";
 import { payCommand, coverageMeta } from "./cmd/pay.ts";
 import { payCoverageStatusCommand } from "./cmd/pay-coverage.ts";
@@ -26,7 +27,7 @@ import { payCoverageStatusCommand } from "./cmd/pay-coverage.ts";
 import skillSrc from "./skill/SKILL.md" with { type: "text" };
 import snippetSrc from "./skill/claude-md-snippet.md" with { type: "text" };
 
-const VERSION = "0.2.4";
+const VERSION = "0.2.5";
 const DEFAULT_GATEWAY = process.env.PACT_GATEWAY_URL ?? "https://api.pactnetwork.io";
 const DEFAULT_RPC = process.env.PACT_RPC_URL ?? "https://api.mainnet-beta.solana.com";
 // v0.1.0 is mainnet-only. Mainnet still requires PACT_MAINNET_ENABLED=1 as a
@@ -35,6 +36,18 @@ const DEFAULT_RPC = process.env.PACT_RPC_URL ?? "https://api.mainnet-beta.solana
 // closed gate short-circuits to a client_error envelope before any
 // wallet/RPC side effect.
 const DEFAULT_CLUSTER = "mainnet" as const;
+
+// --wait[=<secs>] : poll for on-chain settlement before returning. Commander
+// hands an optional-value option through as `true` (flag, no value) or the
+// raw string. Default poll window is 30s; an explicit value clamps to 1..300s.
+const WAIT_DEFAULT_SEC = 30;
+function parseWaitFlag(raw: unknown): number | undefined {
+  if (raw === undefined || raw === false) return undefined;
+  if (raw === true || raw === "") return WAIT_DEFAULT_SEC;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return WAIT_DEFAULT_SEC;
+  return Math.min(300, Math.max(1, Math.floor(n)));
+}
 
 function configDirFor(projectName: string): string {
   return join(homedir(), ".config", "pact", projectName);
@@ -50,6 +63,53 @@ function emit(env: Envelope, jsonFlag: boolean, quietFlag: boolean): never {
   if (r.stdout) process.stdout.write(r.stdout + "\n");
   if (r.stderr) process.stderr.write(r.stderr + "\n");
   process.exit(exitCodeFor(env.status));
+}
+
+// When `--wait` is set, an insured `pact <url>` envelope that came back
+// before the on-chain `settle_batch` (meta.call_id present, meta.tx_signature
+// still null, meta.settlement_eta_sec indicating settlement is pending) gets
+// its settled fields filled in by polling `GET <gateway>/v1/calls/<id>` — the
+// same query `pact calls show <id>` uses. On success meta.tx_signature,
+// meta.premium_lamports/usdc become the real values and meta.refund_lamports/usdc,
+// meta.breach, meta.settled_at, meta.solscan_url are added. If the window
+// elapses without settlement, meta.settlement_pending=true plus a hint are
+// added and tx_signature stays null. Non-`--wait` behaviour is unchanged.
+// In TTY mode a one-line `[pact] settled on-chain: <sig>` (or "still pending")
+// notice goes to stderr.
+async function maybeWaitForSettlement(opts: {
+  env: Envelope;
+  waitSec: number | undefined;
+  gatewayUrl: string;
+  jsonFlag: boolean;
+  quietFlag: boolean;
+}): Promise<Envelope> {
+  const { env, waitSec } = opts;
+  if (waitSec === undefined) return env;
+  const meta = env.meta;
+  if (!meta) return env;
+  const callId = meta.call_id;
+  // Only poll when settlement is genuinely pending: a server-assigned call_id,
+  // no tx yet, and an ETA hint from the gateway. --raw (call_id_source =
+  // local_fallback, no settlement_eta_sec) and already-settled envelopes are
+  // left untouched.
+  if (
+    typeof callId !== "string" ||
+    meta.call_id_source !== "proxy" ||
+    meta.tx_signature ||
+    meta.settlement_eta_sec === undefined
+  ) {
+    return env;
+  }
+
+  const result = await pollSettlement({
+    gatewayUrl: opts.gatewayUrl,
+    callId,
+    windowMs: waitSec * 1000,
+  });
+  const { ttyLine } = applySettlementToMeta(meta as Record<string, unknown>, result, waitSec);
+  const isTty = !opts.jsonFlag && !opts.quietFlag && Boolean(process.stdout.isTTY);
+  if (isTty && ttyLine) process.stderr.write(ttyLine + "\n");
+  return env;
 }
 
 function emitClientError(message: string): never {
@@ -110,6 +170,10 @@ program
   .option(
     "--keypair <path>",
     "path to a keypair file (solana-keygen JSON byte array or base58 secret key); precedence: --keypair > PACT_PRIVATE_KEY > disk wallet",
+  )
+  .option(
+    "--wait [secs]",
+    "after an insured call, poll on-chain settlement (~8s) and merge tx_signature/premium/refund into the envelope (default window 30s)",
   );
 
 // `--keypair <path>` is sugar for PACT_PRIVATE_KEY: the wallet loader's
@@ -174,7 +238,16 @@ program
       raw: options.raw,
       timeoutMs: (options.timeout as number) * 1000,
     });
-    emit(env, Boolean(program.opts().json), Boolean(program.opts().quiet));
+    const jsonFlag = Boolean(program.opts().json);
+    const quietFlag = Boolean(program.opts().quiet);
+    const settled = await maybeWaitForSettlement({
+      env,
+      waitSec: parseWaitFlag(program.opts().wait),
+      gatewayUrl: program.opts().gateway,
+      jsonFlag,
+      quietFlag,
+    });
+    emit(settled, jsonFlag, quietFlag);
   });
 
 program
