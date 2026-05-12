@@ -121,6 +121,50 @@ subsequent invocations are silent.
 
 Usage requires `PACT_PRIVATE_KEY` to hold the authority's secret key (a base58-encoded secret key, a `solana-keygen` JSON byte-array keypair file, or a path to such a file) — the command refuses to fall back to the project wallet or to generate a new keypair. End-users do not run this; it exists for the protocol operator's incident-response runbook.
 
+## Waiting for on-chain settlement (`--wait`)
+
+Settlement is **asynchronous**. A `pact <url>` call returns as soon as the
+upstream responds — *before* the on-chain `settle_batch` transaction lands. The
+settler batches insured-call events and submits `settle_batch` roughly
+`meta.settlement_eta_sec` (~8s) later, so the immediate `--json` envelope has
+`meta.tx_signature: null` and `meta.premium_lamports` is a pre-settlement
+*estimate* (often `0`). The real tx signature and charged premium show up via
+`pact calls show <call_id>` after the batch settles.
+
+Pass `--wait` to have the CLI do that polling for you:
+
+```bash
+pact https://api.helius.xyz/v0/addresses/<addr>/balances --wait        # default 30s window
+pact --wait=60 https://api.helius.xyz/v0/addresses/<addr>/balances     # custom window (1..300s)
+```
+
+With `--wait`, after an insured call returns the CLI polls
+`GET <gateway>/v1/calls/<call_id>` (the same query `pact calls show` uses) every
+~3s until the `Call` row has a signature or the window elapses, then merges the
+settled fields into the `--json` envelope's `meta`: `meta.tx_signature`,
+`meta.premium_lamports` / `meta.premium_usdc` (real values), `meta.refund_lamports` /
+`meta.refund_usdc`, `meta.breach` (+ `meta.breach_reason`), `meta.settled_at`,
+`meta.settled_latency_ms`, and `meta.solscan_url = https://solscan.io/tx/<sig>`. In
+a TTY it also prints `[pact] settled on-chain: <sig> — https://solscan.io/tx/<sig>`
+(plus `(refunded <amt> USDC)` on a breach). If the window elapses without
+settlement, `tx_signature` stays `null` but `meta.settlement_pending: true` and
+`meta.settlement_hint` (`run \`pact calls show <call_id>\` later`) are added.
+
+Without `--wait` the behaviour is unchanged: the call returns immediately and
+you fetch the tx later with `pact calls show <call_id>`. `--wait` only applies
+to the gateway `pact <url>` path; for `pact pay` use `pact pay coverage <id>`
+to check settlement.
+
+> **Flag placement quirk:** `--wait` takes an optional value, so put it **after**
+> the URL (`pact <url> --wait`) or use the `=` form (`pact --wait=30 <url>`).
+> `pact --wait <url>` (space-separated, before the URL) makes commander treat the
+> URL as `--wait`'s value — use one of the two forms above instead.
+
+## Gotchas
+
+- **Quote URLs that contain `?` (or `&`, `*`, `[`).** In zsh, `pact --json https://dummy.pactnetwork.io/quote/AAPL?fail=1` fails with `zsh: no matches found` because zsh glob-expands the `?`; bash has the same issue if `nullglob`/`failglob` is on. Always single-quote: `pact --json 'https://dummy.pactnetwork.io/quote/AAPL?fail=1'`. This is a shell-quoting issue, not a `pact` bug.
+- **Settlement is asynchronous — `meta.tx_signature: null` on the immediate response is expected.** See [`--wait`](#waiting-for-on-chain-settlement---wait) above. The on-chain `settle_batch` lands ~`meta.settlement_eta_sec` after the call; use `--wait` to poll for it, or `pact calls show <call_id>` later. Likewise `meta.premium_lamports` on the immediate response is a pre-settlement estimate (often `0`); the real charged premium is in `pact calls show` (or in `meta` after `--wait` settles).
+
 ## Status taxonomy
 
 Every `--json` invocation returns `{ status, body, meta }`. Status is one of:
