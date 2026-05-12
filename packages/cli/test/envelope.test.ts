@@ -16,6 +16,7 @@ describe("envelope", () => {
       "needs_project_name",
       "x402_payment_made",
       "mpp_payment_made",
+      "krexa_payment_made",
       "payment_failed",
       "unsupported_tool",
       "tool_missing",
@@ -37,6 +38,7 @@ describe("envelope", () => {
     expect(exitCodeFor("needs_project_name")).toBe(40);
     expect(exitCodeFor("x402_payment_made")).toBe(0);
     expect(exitCodeFor("mpp_payment_made")).toBe(0);
+    expect(exitCodeFor("krexa_payment_made")).toBe(0);
     expect(exitCodeFor("payment_failed")).toBe(31);
     expect(exitCodeFor("unsupported_tool")).toBe(50);
     expect(exitCodeFor("tool_missing")).toBe(51);
