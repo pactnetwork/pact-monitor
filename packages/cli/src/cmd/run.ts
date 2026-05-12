@@ -195,8 +195,22 @@ function buildEnvelope(
   }
 
   const callId = resp.callId ?? `call_${randomUUID()}`;
-  const callIdSource: "proxy" | "local_fallback" = resp.callId ? "proxy" : "local_fallback";
+  const callIdSource: "gateway" | "local_fallback" = resp.callId ? "gateway" : "local_fallback";
 
+  // Premium / refund / settlement state are emitted by the gateway as response
+  // headers (see packages/wrap/src/headers.ts). Fetch lowercases header keys,
+  // and signedRequest preserves that, so read them lowercased. Missing headers
+  // default to 0 / false for old-gateway tolerance.
+  const premiumLamports = Number.parseInt(resp.headers["x-pact-premium"] ?? "", 10);
+  const premiumLamportsSafe = Number.isFinite(premiumLamports) ? premiumLamports : 0;
+  const refundLamports = Number.parseInt(resp.headers["x-pact-refund"] ?? "", 10);
+  const refundLamportsSafe = Number.isFinite(refundLamports) ? refundLamports : 0;
+  const settlementPending = resp.headers["x-pact-settlement-pending"] === "1";
+
+  // tx_signature is null in the immediate envelope: the gateway acknowledges
+  // the call synchronously but settle_batch is submitted asynchronously by the
+  // settler (typically 5-60s later). The on-chain signature surfaces in the
+  // indexer's GET /api/calls/:id once settlement lands.
   return {
     status: outcome,
     body: parsedBody,
@@ -206,8 +220,10 @@ function buildEnvelope(
       call_id_source: callIdSource,
       latency_ms: resp.latencyMs,
       outcome,
-      premium_lamports: 0,
-      premium_usdc: 0.0001,
+      premium_lamports: premiumLamportsSafe,
+      premium_usdc: premiumLamportsSafe / 1_000_000,
+      refund_lamports: refundLamportsSafe,
+      settlement_pending: settlementPending,
       tx_signature: null,
       settlement_eta_sec: 8,
     },
