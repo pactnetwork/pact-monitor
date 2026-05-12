@@ -303,8 +303,10 @@ the `settle_batch` tx shows the premium debit + the $0.005 refund out of the
 
 - Coverage `cd6530c9-9320-4961-ab49-04cf20bcae35` — `pact pay curl
   '…?x402=1&fail=1'` → registered against `pay-default`, premium `1000`
-  ($0.001), refund `5000` ($0.005). (Look it up live with `pact pay coverage
-  cd6530c9-9320-4961-ab49-04cf20bcae35` for its `settleBatchSignature`.)
+  ($0.001), refund `5000` ($0.005), settled on-chain:
+  `settle_batch` tx
+  `3WGRGWX5uDCMjB9TP1mimb4PA6hCrxaHXfrxB6jgKsupQNG5uEp2VL1UWH9EiUx7kZLdTwoH6KKXuNV3fNy5iuDL`
+  ([Solscan](https://solscan.io/tx/3WGRGWX5uDCMjB9TP1mimb4PA6hCrxaHXfrxB6jgKsupQNG5uEp2VL1UWH9EiUx7kZLdTwoH6KKXuNV3fNy5iuDL)).
 
 ---
 
