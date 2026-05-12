@@ -61,6 +61,32 @@ classifier verdict (`success` / `server_error` / `client_error` /
 `payment_failed` / `tool_error`), the payment amount + asset when one
 was attempted, and the **coverage** state (below).
 
+Two things `pact pay` injects into the wrapped invocation so coverage
+works end-to-end:
+
+- **`-v` to `pay`** — so `pay` emits its verbose trace lines; without
+  it the classifier can't see that a payment was attempted. Suppressed
+  if you pass `--quiet` / `-q` / `--silent` to `pay`.
+- **`-w '\n[pact-http-status=%{http_code}]\n'` to `curl`** (only when
+  the wrapped tool is `curl` and you haven't already passed your own
+  `-w` / `--write-out`) — plain `curl` forwards exit code 0 even on a
+  5xx and doesn't surface the HTTP status, so without this marker the
+  classifier would call a 5xx `success` and the `server_error → refund`
+  SLA-breach path could never trigger via `pact pay curl`. The marker
+  is just an extra trailing line on stdout; the happy path (200 → still
+  `success`) is unaffected. (`curl -i` is *not* injected — it breaks
+  `pay`'s own x402 challenge parsing; `-w` is safe.) Not injected for
+  `wget` / `http` / `claude` / `codex`.
+
+When `pay` uses the x402 auto-pay path (e.g. `pact pay curl
+'https://merchant.example/quote?x402=1'`), the payment **amount** (base
+units), **asset** (SPL mint), and **payee** (merchant address) are
+extracted from `pay`'s verbose `Building x402 payment amount=… currency=…
+recipient=… signer=…` log line and included in the receipt POSTed to
+`facilitator.pact.network/v1/coverage/register` — so the facilitator
+can price and (on a breach) refund the call. (`pay 0.13.x` and `0.16.x`
+output formats are both handled.)
+
 ### Coverage (`facilitator.pact.network`)
 
 When a payment was attempted, `pact pay` makes a side-call to

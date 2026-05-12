@@ -7,18 +7,23 @@
 // covered failure) refunds against the subsidised `pay-default` pool via
 // the same on-chain `settle_batch` machinery the gateway path uses.
 //
-// What we CAN extract from pay 0.16.0's verbose output (see
+// What we CAN extract from pay 0.13.0/0.16.0's verbose output (see
 // pay-classifier.ts): the resource URL, the 402 scheme (x402 / mpp), the
-// amount + asset (and base units / mint on the MPP path), the signer
-// (the agent's own pubkey), and the upstream HTTP outcome.
+// amount + asset (base units + mint on the MPP path and on the x402
+// auto-pay "Building x402 payment" line), the payee/merchant address
+// (x402 auto-pay path only — `recipient=`), the signer (the agent's own
+// pubkey), and the upstream HTTP outcome.
 //
 // What we CANNOT extract — pay 0.16.0 does not log them in any captured
 // fixture:
-//   - `payee`: the merchant address from the x402/MPP challenge. pay
-//     consumes the challenge internally and never prints the recipient.
-//     We omit it; the facilitator either re-derives it from its own
-//     knowledge of the resource (a config table) or treats the receipt
-//     as partial data and prices conservatively / rejects.
+//   - `payee` (MPP path / legacy x402 body line only): the merchant
+//     address. On the MPP path and the legacy "402 Payment Required"
+//     x402 body line, pay consumes the challenge internally and never
+//     prints the recipient — we omit it there. On the x402 auto-pay
+//     path (`pay curl '<url>?x402=1'`) pay DOES log it as `recipient=`
+//     on the "Building x402 payment" line, and we populate `payee` from
+//     it. When absent, the facilitator re-derives the payee from its
+//     own knowledge of the resource or prices conservatively / rejects.
 //   - `paymentSignature`: the on-chain settle tx sig. pay 0.16.0 prints
 //     `signer=…` but not the tx sig. We include it only if a (future)
 //     pay build adds it to its trace (classifier scans `tx=`/`signature=`
@@ -116,10 +121,12 @@ export function buildCoveragePayload(
     verdict: outcomeToVerdict(classified.outcome),
   };
 
-  // payee — pay 0.16.0 never logs it; this is here for completeness if a
-  // future pay build does, and so the facilitator's schema is satisfied
-  // when the field IS present. Today it's always absent.
-  // (No source to populate from in the classifier output.)
+  // payee — the merchant address from the x402 challenge. pay
+  // 0.13.0/0.16.0 DOES log it on the x402 auto-pay path as `recipient=`
+  // on the "Building x402 payment" credential-build line; the classifier
+  // surfaces it as `payment.payeePubkey`. The legacy x402 body line and
+  // the MPP path don't carry it — absent there.
+  if (p.payeePubkey) payload.payee = p.payeePubkey;
 
   if (p.resource) payload.resource = p.resource;
   if (p.txSignature) payload.paymentSignature = p.txSignature;
