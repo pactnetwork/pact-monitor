@@ -30,10 +30,15 @@ export type Outcome = "ok" | "client_error" | "server_error";
 export interface EnvelopeMeta {
   slug?: string;
   call_id?: string;
+  call_id_source?: "gateway" | "local_fallback";
   latency_ms?: number;
   outcome?: Outcome;
   premium_lamports?: number;
   premium_usdc?: number;
+  refund_lamports?: number;
+  settlement_pending?: boolean;
+  // tx_signature is null in the immediate envelope; the on-chain settle_batch
+  // signature surfaces in /api/calls/:id once the settler submits (typically 5-60s).
   tx_signature?: string | null;
   settlement_eta_sec?: number;
   [k: string]: unknown;
