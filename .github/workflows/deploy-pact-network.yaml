@@ -43,7 +43,7 @@ on:
           - pact-settler
           - pact-indexer
           - pact-market-dashboard
-          - pact-dummy-upstream
+          - pact-facilitator
       image:
         description: "Full image URI (leave empty for :latest)"
         required: false

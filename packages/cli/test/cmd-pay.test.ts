@@ -6,12 +6,17 @@
 // drive the classifier through every branch.
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { payCommand } from "../src/cmd/pay.ts";
+import { Keypair } from "@solana/web3.js";
+import { payCommand, coverageMeta } from "../src/cmd/pay.ts";
 import type { PayShellFn } from "../src/lib/pay-shell.ts";
 import {
   classifyPayResult,
   type Outcome,
 } from "../src/lib/pay-classifier.ts";
+import type {
+  CoverageDecision,
+  RegisterCoverageInput,
+} from "../src/lib/facilitator.ts";
 
 // ----------------------------------------------------------------------
 // Helpers
@@ -201,7 +206,12 @@ describe("pact pay: passthrough (gate open)", () => {
     }
     expect(summary.text).toContain("classifier: server_error");
     expect(summary.text).toContain("policy: refund_on_server_error");
-    expect(summary.text).toContain("facilitator.pact.network");
+    // No pact wallet / PACT_PRIVATE_KEY in this test, so the facilitator
+    // side-call is skipped — the policy line says so. The covered /
+    // breach-with-refund paths are exercised in the
+    // "pact pay: facilitator coverage" describe block below with a
+    // mocked registerCoverage.
+    expect(summary.text).toContain("coverage skipped (no pact wallet)");
   });
 
   test("upstream 422 → client_error outcome, no refund offered", async () => {
@@ -514,4 +524,285 @@ describe("classifyPayResult", () => {
       expect(r.outcome).toBe(c.expect);
     });
   }
+});
+
+// ----------------------------------------------------------------------
+// Facilitator coverage registration (0.2.3)
+//
+// After `pay` exits, if a payment was attempted and --no-coverage was
+// not passed, pact pay POSTs a coverage receipt to
+// facilitator.pact.network. These tests inject both a fake pay AND a
+// fake registerCoverage + a test keypair so nothing touches the network.
+// ----------------------------------------------------------------------
+
+describe("pact pay: facilitator coverage", () => {
+  let saved: string | undefined;
+  beforeEach(() => {
+    saved = process.env.PACT_MAINNET_ENABLED;
+    process.env.PACT_MAINNET_ENABLED = "1";
+  });
+  afterEach(() => {
+    if (saved !== undefined) process.env.PACT_MAINNET_ENABLED = saved;
+    else delete process.env.PACT_MAINNET_ENABLED;
+  });
+
+  const KP = Keypair.generate();
+
+  function fakeRegister(decision: CoverageDecision): {
+    fn: (i: RegisterCoverageInput) => Promise<CoverageDecision>;
+    calls: RegisterCoverageInput[];
+  } {
+    const calls: RegisterCoverageInput[] = [];
+    const fn = async (i: RegisterCoverageInput) => {
+      calls.push(i);
+      return decision;
+    };
+    return { fn, calls };
+  }
+
+  const X402_RESOURCE_TRACE =
+    'Detected x402 challenge resource="https://x.example/v1/q"\n';
+
+  test("covered (settlement_pending) on success → '[pact] base … + premium … (covered: pool pay-default)'", async () => {
+    const summary = new BufStream();
+    const { fn, calls } = fakeRegister({
+      coverageId: "cov_OK",
+      status: "settlement_pending",
+      premiumBaseUnits: "1000",
+      refundBaseUnits: "0",
+      reason: "",
+      callId: "00000000-0000-4000-8000-000000000001",
+    });
+    const result = await payCommand({
+      args: ["curl", "-s", "-w", "status=%{http_code}", "https://x.example/v1/q"],
+      pay: fakePay({
+        exitCode: 0,
+        stdout: '{"ok":true} status=200',
+        stderr: X402_RESOURCE_TRACE + PAY_VERBOSE_SUCCESS,
+      }),
+      summaryStream: summary,
+      keypair: KP,
+      registerCoverageImpl: fn,
+      project: "my-agent",
+    });
+    expect(result.kind).toBe("passthrough");
+    if (result.kind === "passthrough") {
+      expect(result.coverage?.status).toBe("settlement_pending");
+      expect(result.coverage?.coverageId).toBe("cov_OK");
+    }
+    // The receipt payload was built from the classifier output.
+    expect(calls.length).toBe(1);
+    expect(calls[0].payload.agent).toBe(KP.publicKey.toBase58());
+    expect(calls[0].payload.scheme).toBe("x402");
+    expect(calls[0].payload.resource).toBe("https://x.example/v1/q");
+    expect(calls[0].payload.amountBaseUnits).toBe("50000");
+    expect(calls[0].payload.verdict).toBe("success");
+    expect(calls[0].project).toBe("my-agent");
+    // Summary line.
+    expect(summary.text).toContain("[pact] base 0.05 USDC + premium 0.001 (covered: pool pay-default) (coverage cov_OK)");
+    expect(summary.text).toContain("[pact] classifier: success");
+  });
+
+  test("breach (server_error) + covered → refund line + 'check status: pact pay coverage <id>'", async () => {
+    const summary = new BufStream();
+    const { fn } = fakeRegister({
+      coverageId: "cov_B",
+      status: "settlement_pending",
+      premiumBaseUnits: "1000",
+      refundBaseUnits: "10000",
+      reason: "",
+      callId: "00000000-0000-4000-8000-000000000002",
+    });
+    const result = await payCommand({
+      args: ["curl", "-s", "-w", "status=%{http_code}", "https://x.example/v1/q"],
+      pay: fakePay({
+        exitCode: 0,
+        stdout: '{"error":"upstream"} status=503',
+        stderr: X402_RESOURCE_TRACE + PAY_VERBOSE_SUCCESS,
+      }),
+      summaryStream: summary,
+      keypair: KP,
+      registerCoverageImpl: fn,
+    });
+    expect(result.kind).toBe("passthrough");
+    if (result.kind === "passthrough") {
+      expect(result.outcome).toBe("server_error");
+      // exit code unchanged — pay's exit code wins.
+      expect(result.exitCode).toBe(0);
+    }
+    expect(summary.text).toContain("[pact] classifier: server_error");
+    expect(summary.text).toContain(
+      "[pact] policy: refund_on_server_error — refund 0.010 settling on-chain (coverage cov_B)",
+    );
+    expect(summary.text).toContain("[pact] check status: pact pay coverage cov_B");
+  });
+
+  test("uncovered (no_allowance) → '(uncovered: no_allowance)' + 'run `pact approve`' hint", async () => {
+    const summary = new BufStream();
+    const { fn } = fakeRegister({
+      coverageId: null,
+      status: "uncovered",
+      premiumBaseUnits: "0",
+      refundBaseUnits: "0",
+      reason: "no_allowance",
+      callId: null,
+    });
+    await payCommand({
+      args: ["curl", "-w", "status=%{http_code}", "https://x.example/v1/q"],
+      pay: fakePay({
+        exitCode: 0,
+        stdout: "ok status=200",
+        stderr: X402_RESOURCE_TRACE + PAY_VERBOSE_SUCCESS,
+      }),
+      summaryStream: summary,
+      keypair: KP,
+      registerCoverageImpl: fn,
+    });
+    expect(summary.text).toContain("[pact] base 0.05 USDC + premium 0.000 (uncovered: no_allowance)");
+    expect(summary.text).toContain("[pact] (run `pact approve` to enable coverage)");
+  });
+
+  test("facilitator unreachable → graceful '(coverage not recorded: facilitator unreachable)', exit code unchanged", async () => {
+    const summary = new BufStream();
+    const { fn } = fakeRegister({
+      coverageId: null,
+      status: "facilitator_unreachable",
+      premiumBaseUnits: "0",
+      refundBaseUnits: "0",
+      reason: "ECONNREFUSED",
+      callId: null,
+    });
+    const result = await payCommand({
+      args: ["curl", "-w", "status=%{http_code}", "https://x.example/v1/q"],
+      pay: fakePay({
+        exitCode: 0,
+        stdout: "ok status=200",
+        stderr: X402_RESOURCE_TRACE + PAY_VERBOSE_SUCCESS,
+      }),
+      summaryStream: summary,
+      keypair: KP,
+      registerCoverageImpl: fn,
+    });
+    expect(result.kind).toBe("passthrough");
+    if (result.kind === "passthrough") {
+      expect(result.exitCode).toBe(0);
+      expect(result.coverage?.status).toBe("facilitator_unreachable");
+    }
+    expect(summary.text).toContain("coverage not recorded: facilitator unreachable");
+    expect(summary.text).toContain("[pact] classifier: success");
+  });
+
+  test("--no-coverage skips the facilitator call entirely", async () => {
+    const summary = new BufStream();
+    const { fn, calls } = fakeRegister({
+      coverageId: "should_not_be_used",
+      status: "settlement_pending",
+      premiumBaseUnits: "1000",
+      refundBaseUnits: "0",
+      reason: "",
+      callId: null,
+    });
+    const result = await payCommand({
+      args: ["curl", "-w", "status=%{http_code}", "https://x.example/v1/q"],
+      pay: fakePay({
+        exitCode: 0,
+        stdout: "ok status=200",
+        stderr: X402_RESOURCE_TRACE + PAY_VERBOSE_SUCCESS,
+      }),
+      summaryStream: summary,
+      keypair: KP,
+      registerCoverageImpl: fn,
+      noCoverage: true,
+    });
+    expect(calls.length).toBe(0);
+    expect(result.kind).toBe("passthrough");
+    if (result.kind === "passthrough") {
+      expect(result.coverage).toBeNull();
+    }
+    expect(summary.text).toContain("(coverage skipped: --no-coverage)");
+  });
+
+  test("free passthrough (no payment) → no facilitator call, no coverage line", async () => {
+    const summary = new BufStream();
+    const { fn, calls } = fakeRegister({
+      coverageId: "x",
+      status: "settlement_pending",
+      premiumBaseUnits: "0",
+      refundBaseUnits: "0",
+      reason: "",
+      callId: null,
+    });
+    await payCommand({
+      args: ["curl", "-w", "status=%{http_code}", "https://api.github.com/zen"],
+      pay: fakePay({ exitCode: 0, stdout: "Focus. status=200", stderr: "" }),
+      summaryStream: summary,
+      keypair: KP,
+      registerCoverageImpl: fn,
+    });
+    expect(calls.length).toBe(0);
+    expect(summary.text).not.toContain("coverage");
+    expect(summary.text).not.toContain("premium");
+  });
+
+  test("no signing key resolvable → coverage skipped with 'no pact wallet' note", async () => {
+    const savedKey = process.env.PACT_PRIVATE_KEY;
+    delete process.env.PACT_PRIVATE_KEY;
+    try {
+      const summary = new BufStream();
+      const result = await payCommand({
+        args: ["curl", "-w", "status=%{http_code}", "https://x.example/v1/q"],
+        pay: fakePay({
+          exitCode: 0,
+          stdout: "ok status=200",
+          stderr: X402_RESOURCE_TRACE + PAY_VERBOSE_SUCCESS,
+        }),
+        summaryStream: summary,
+        // no keypair, no configDir → resolveSigningKey returns null
+      });
+      expect(result.kind).toBe("passthrough");
+      if (result.kind === "passthrough") expect(result.coverage).toBeNull();
+      expect(summary.text).toContain("coverage skipped: no pact wallet");
+    } finally {
+      if (savedKey !== undefined) process.env.PACT_PRIVATE_KEY = savedKey;
+    }
+  });
+
+  test("--json mode: meta.coverage block populated, exit code = pay's", async () => {
+    // Mirrors how index.ts builds the envelope: we assert on the result
+    // shape + coverageMeta() rather than spawning the CLI process.
+    const { fn } = fakeRegister({
+      coverageId: "cov_J",
+      status: "settlement_pending",
+      premiumBaseUnits: "1000",
+      refundBaseUnits: "10000",
+      reason: "",
+      callId: "00000000-0000-4000-8000-000000000003",
+    });
+    const result = await payCommand({
+      args: ["curl", "-w", "status=%{http_code}", "https://x.example/v1/q"],
+      pay: fakePay({
+        exitCode: 0,
+        stdout: '{"error":"x"} status=503',
+        stderr: X402_RESOURCE_TRACE + PAY_VERBOSE_SUCCESS,
+      }),
+      emitSummary: false, // --json suppresses the [pact] stderr lines
+      keypair: KP,
+      registerCoverageImpl: fn,
+    });
+    expect(result.kind).toBe("passthrough");
+    if (result.kind === "passthrough") {
+      const meta = coverageMeta(result.coverage);
+      expect(meta).toBeDefined();
+      expect(meta).toEqual({
+        id: "cov_J",
+        status: "settlement_pending",
+        premiumBaseUnits: "1000",
+        refundBaseUnits: "10000",
+        pool: "pay-default",
+        reason: "",
+        callId: "00000000-0000-4000-8000-000000000003",
+      });
+      expect(result.exitCode).toBe(0);
+    }
+  });
 });

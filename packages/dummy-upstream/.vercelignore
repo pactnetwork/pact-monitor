@@ -1,0 +1,9 @@
+# Vercel deploy excludes. Note: `src/` is NOT excluded — the serverless
+# function in `api/index.ts` imports from it, so `@vercel/node` needs it at
+# build time. The catch-all rewrite in vercel.json sends every path to the
+# function, so nothing here is ever served as a static file anyway.
+node_modules
+dist
+.vercel
+test
+Dockerfile

@@ -1,7 +1,7 @@
 ---
 name: pact
-version: 0.1.0
-description: Insured paid API calls for AI agents on Solana. Use INSTEAD of curl/fetch/Bash when calling these provider hostnames: api.helius.xyz, mainnet.helius-rpc.com, public-api.birdeye.so, quote-api.jup.ag, lite-api.jup.ag, api.elfa.ai, fal.run. Routes through api.pactnetwork.io for premium-billed insurance with auto-refund on upstream failure. v0.1.0 is MAINNET-ONLY and requires PACT_MAINNET_ENABLED=1. Use `pact pay <tool> [args...]` (wraps solana-foundation/pay; supported tools include curl, wget, http, claude, codex) to call any 402-gated x402 or MPP endpoint. Do NOT use for: localhost, your own server, free public APIs (jsonplaceholder, public RPCs without quotas), GET-by-static-CDN fetches.
+version: 0.2.3
+description: Insured paid API calls for AI agents on Solana. Use INSTEAD of curl/fetch/Bash when calling these provider hostnames: api.helius.xyz, mainnet.helius-rpc.com, public-api.birdeye.so, quote-api.jup.ag, lite-api.jup.ag, api.elfa.ai, fal.run. Routes through api.pactnetwork.io for premium-billed insurance with auto-refund on upstream failure. Mainnet-only; requires PACT_MAINNET_ENABLED=1. Use `pact pay <tool> [args...]` (wraps solana-foundation/pay; supported tools include curl, wget, http, claude, codex) to call any 402-gated x402 or MPP endpoint — it registers the call for Pact coverage at facilitator.pact.network (premium from your `pact approve` allowance, refund from the subsidised pay-default pool on a breach). Do NOT use for: localhost, your own server, free public APIs (jsonplaceholder, public RPCs without quotas), GET-by-static-CDN fetches.
 ---
 
 # Pact — insured API calls for AI agents
@@ -67,7 +67,8 @@ Every command returns the same envelope: `{ status, body, meta? }`.
 | `pact revoke --json`                 | clear the allowance                                                | `tx_signature`, `confirmation_pending`                                                                            |
 | `pact agents show --json [pubkey]`   | recent calls + refunds for this agent                              | upstream agent state from indexer                                                                                |
 | `pact agents watch`                  | SSE stream of live events (line-delimited JSON)                    | one event per line                                                                                                |
-| `pact pay curl [args] [--json]`      | wrap a CLI tool through x402 / MPP 402 challenges                  | passthrough by default; with `--json` an envelope: `tool_exit_code`, `response_body`, `payment` (kind/recipient/amount/asset/network) |
+| `pact pay curl [args] [--json] [--no-coverage]` | wrap a CLI tool through x402 / MPP 402 challenges + register Pact coverage | passthrough by default; with `--json` an envelope: `body.tool_exit_code`, `body.classifier`, `body.payment`, `meta.coverage` (`{id,status,premiumBaseUnits,refundBaseUnits,pool,reason}`) |
+| `pact pay coverage <coverageId>`     | check a `pact pay` coverage registration's status                  | `meta.coverage_status`, `meta.settle_batch_signature` + `meta.solscan_url` once settled, `meta.call_id` if returned |
 | `pact pause --json`                  | **admin only** — protocol kill switch                              | `action`, `tx_signature`, `protocol_config`, `authority`                                                          |
 
 ## Common patterns
@@ -93,7 +94,7 @@ Agents must fund their own mainnet USDC ATA externally (bridge or transfer in). 
 
 You may run `pact approve <amount>` automatically as long as `<amount> <= per_deposit_max_usdc` AND your session total stays under `session_total_max_usdc`. Both caps live in `~/.config/pact/<project>/policy.yaml`. If `auto_deposit_capped` returns, surface to the user.
 
-## `pact pay` — wrap any CLI through 402 challenges
+## `pact pay` — wrap any CLI through 402 challenges (with coverage)
 
 When the user has a tool that hits a 402-gated paid API not on the insured list (e.g. an x402 or MPP endpoint), use `pact pay`. `pact pay` is a thin wrapper around [solana-foundation/pay](https://github.com/solana-foundation/pay) — the wrapped-tool list is whatever `pay` itself supports (currently `curl`, `wget`, `http` / HTTPie, `claude`, `codex`, `whoami`):
 
@@ -101,9 +102,26 @@ When the user has a tool that hits a 402-gated paid API not on the insured list 
 pact pay curl https://debugger.pay.sh/mpp/quote/AAPL
 pact pay wget https://api.example.com/v1/data.json
 pact pay --json curl -s https://x402.example/v1/data    # structured envelope
+pact pay --no-coverage curl https://x402.example/v1/data # skip the facilitator side-call
 ```
 
-`pay` handles the 402 / x402 / MPP challenge, payment signing, and retry; pact-cli does not parse 402 challenges itself. Without `--json` the wrapped tool's stdout passes through unchanged so you can `| jq '...'` as usual; pact adds a short `[pact]` classifier summary on stderr. With `--json` you get an envelope whose `.status` is one of `ok` / `payment_failed` / `tool_error` / `client_error` / `server_error` plus a `.body.classifier` field describing the verdict and `.body.payment` describing the scheme + amount when one was attempted.
+`pay` handles the 402 / x402 / MPP challenge, payment signing, and retry; pact-cli does not parse 402 challenges itself. Without `--json` the wrapped tool's stdout passes through unchanged so you can `| jq '...'` as usual; pact adds a short `[pact]` classifier + coverage summary on stderr. With `--json` you get an envelope whose `.status` is one of `ok` / `payment_failed` / `tool_error` / `client_error` / `server_error` plus a `.body.classifier` field describing the verdict, `.body.payment` describing the scheme + amount when one was attempted, and `.meta.coverage` describing the Pact coverage decision.
+
+### Coverage is real now (the side-call model)
+
+When a payment was attempted, `pact pay` makes a side-call to `facilitator.pact.network` to register the call for Pact coverage. `pay` has *already* settled the payment directly with the merchant; the facilitator then records the receipt, charges a small **premium** debited from your `pact approve` allowance (same mechanism as the `pact <url>` gateway path), and on a covered failure (e.g. the upstream returned a 5xx after you paid) issues a **refund** from the subsidised `pay-default` coverage pool — settled on-chain via the same `settle_batch` transaction the gateway path uses.
+
+The `[pact]` block reports the coverage state:
+
+- `[pact] base <amt> <asset> + premium <amt> (covered: pool pay-default) (coverage <id>)` — registered; premium + (on a breach) refund settling on-chain. On a breach you also get `[pact] policy: refund_on_<verdict> — refund <amt> settling on-chain (coverage <id>)` and `[pact] check status: pact pay coverage <id>`.
+- `[pact] base <amt> <asset> + premium 0.000 (uncovered: <reason>)` — no coverage applied. If `<reason>` is `no_allowance`, run `pact approve <usdc>` to enable coverage; the receipt is still recorded for analytics.
+- `[pact] base <amt> <asset> (coverage not recorded: facilitator unreachable)` — the side-call failed; the call still happened and `pay` already settled with the merchant, so the command never fails and the exit code is unchanged.
+
+In `--json` mode `.meta.coverage` is `{ id, status, premiumBaseUnits, refundBaseUnits, pool: "pay-default", reason }` where `status` ∈ `settlement_pending` / `uncovered` / `rejected` / `facilitator_unreachable`.
+
+Check a coverage registration — and the on-chain `settle_batch` signature once it's settled — with `pact pay coverage <coverageId>` (it returns a Solscan link once settled; if the facilitator also returns a `callId`, `pact calls <callId>` shows the full on-chain record). Pass `--no-coverage` to skip the facilitator call entirely. `PACT_FACILITATOR_URL` overrides the facilitator base URL (default `https://facilitator.pact.network`).
+
+Caveat: pay 0.16.0's verbose output does not expose the merchant address or the on-chain payment tx signature, so those fields are absent from the receipt the CLI sends — the facilitator works with partial data.
 
 ## Trust + private beta
 

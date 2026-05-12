@@ -147,6 +147,55 @@ importers:
         specifier: ^2.1.0
         version: 2.1.9(@types/node@22.19.17)(jsdom@29.1.1(@noble/hashes@2.2.0))(lightningcss@1.32.0)(terser@5.46.2)
 
+  packages/facilitator:
+    dependencies:
+      '@google-cloud/pubsub':
+        specifier: ^4.9.0
+        version: 4.11.0
+      '@hono/node-server':
+        specifier: ^1.13.7
+        version: 1.19.14(hono@4.12.16)
+      '@pact-network/wrap':
+        specifier: workspace:*
+        version: link:../wrap
+      '@solana/spl-token':
+        specifier: ^0.4.14
+        version: 0.4.14(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6))(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@5.9.3)(utf-8-validate@6.0.6)
+      '@solana/web3.js':
+        specifier: ^1.98.4
+        version: 1.98.4(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)
+      bs58:
+        specifier: ^6.0.0
+        version: 6.0.0
+      hono:
+        specifier: ^4.7.0
+        version: 4.12.16
+      pg:
+        specifier: ^8.13.3
+        version: 8.20.0
+      tweetnacl:
+        specifier: ^1.0.3
+        version: 1.0.3
+      zod:
+        specifier: ^3.24.2
+        version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: ^22.15.3
+        version: 22.19.17
+      '@types/pg':
+        specifier: ^8.11.13
+        version: 8.20.0
+      tsx:
+        specifier: ^4.19.3
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@22.19.17)(jsdom@29.1.1(@noble/hashes@2.2.0))(lightningcss@1.32.0)(terser@5.46.2)
+
   packages/indexer:
     dependencies:
       '@nestjs/common':

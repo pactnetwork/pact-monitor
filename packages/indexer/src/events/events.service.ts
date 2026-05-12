@@ -349,6 +349,8 @@ export class EventsService {
           breach,
           breachReason,
           source: call.source ?? null,
+          payee: call.payee ?? null,
+          resource: call.resource ?? null,
           ts: new Date(call.ts),
           settledAt: new Date(call.settledAt),
           signature: call.signature,

@@ -43,10 +43,9 @@ Your USDC stays in your own associated token account (ATA). `pact approve <usdc>
 [solana-foundation/pay](https://github.com/solana-foundation/pay): it
 forwards every argument verbatim to the `pay` binary, tee's stdout /
 stderr / exit code straight back to the caller, and after `pay` exits
-classifies the result so the Pact coverage policy can decide whether
-the call qualifies for an SLA refund. The set of supported wrapped
-tools is whatever `pay` itself supports (currently `curl`, `wget`,
-`http` / HTTPie, `claude`, `codex`, `whoami`):
+classifies the result and registers the call for Pact coverage. The set
+of supported wrapped tools is whatever `pay` itself supports (currently
+`curl`, `wget`, `http` / HTTPie, `claude`, `codex`, `whoami`):
 
 ```bash
 pact pay curl https://api.example.com/v1/quote/AAPL
@@ -60,7 +59,47 @@ exits, `pact pay` emits a short `[pact]` summary block to stderr (or a
 structured envelope to stdout when `--json` is passed) covering the
 classifier verdict (`success` / `server_error` / `client_error` /
 `payment_failed` / `tool_error`), the payment amount + asset when one
-was attempted, and an SLA-policy hint when the upstream returned a 5xx.
+was attempted, and the **coverage** state (below).
+
+### Coverage (`facilitator.pact.network`)
+
+When a payment was attempted, `pact pay` makes a side-call to
+`facilitator.pact.network` to register the call for Pact coverage. It's
+the *side-call* model: `pay` has already settled the payment directly
+with the merchant; the facilitator records the receipt, charges a small
+premium (debited from your `pact approve` allowance — exactly like the
+gateway path), and on a covered failure (e.g. the upstream returned a
+5xx after you paid) issues a refund from the subsidised `pay-default`
+coverage pool — settled on-chain via the same `settle_batch` transaction
+the `pact <url>` path uses.
+
+The `[pact]` block reports one of:
+
+- `[pact] base <amt> <asset> + premium <amt> (covered: pool pay-default) (coverage <id>)` — registered; premium + (on a breach) refund settling on-chain. On a breach you also get `[pact] policy: refund_on_<verdict> — refund <amt> settling on-chain (coverage <id>)` and `[pact] check status: pact pay coverage <id>`.
+- `[pact] base <amt> <asset> + premium 0.000 (uncovered: <reason>)` — no coverage applied (e.g. `no_allowance` → run `pact approve` to enable it; the receipt is still recorded for analytics).
+- `[pact] base <amt> <asset> (coverage not recorded: facilitator unreachable)` — the side-call failed; the call still happened and `pay` already settled with the merchant, so this never fails the command or changes the exit code.
+
+With `--json`, a `coverage` block is added to the envelope's `meta`:
+`{ id, status, premiumBaseUnits, refundBaseUnits, pool: "pay-default", reason }`
+(`status` ∈ `settlement_pending` / `uncovered` / `rejected` /
+`facilitator_unreachable`). Pass `--no-coverage` to skip the facilitator
+call entirely. `PACT_FACILITATOR_URL` overrides the facilitator base URL
+(default `https://facilitator.pact.network`).
+
+Check a coverage registration — and the on-chain `settle_batch`
+signature once it's settled — with `pact pay coverage <coverageId>`:
+
+```bash
+pact pay coverage cov_abc123       # status + Solscan link once settled
+```
+
+(Once settled, the facilitator may also return a `callId`; `pact calls
+<callId>` shows the full on-chain settlement record, same as a
+gateway-path call.)
+
+Note: pay 0.16.0's verbose output does not expose the merchant address
+or the on-chain payment tx signature, so those fields are absent from
+the receipt the CLI sends — the facilitator works with partial data.
 
 The closed `PACT_MAINNET_ENABLED` gate that protects the other on-chain
 commands is bypassed for `pact pay` when argv contains one of pay's
@@ -109,6 +148,7 @@ Project name is resolved from `--project`, `$PACT_PROJECT`, git repo, or cwd bas
 - `PACT_RPC_URL` — override Solana RPC (default `https://api.mainnet-beta.solana.com`)
 - `PACT_CLUSTER` — only `mainnet` is accepted; any other value is rejected at startup with a `client_error` envelope. v0.1.0 is mainnet-only — local devnet testing requires sed-replacing `constants.rs` and rebuilding the program per Rick's runbook.
 - `PACT_MAINNET_ENABLED=1` — required closed-beta gate. Any on-chain command (`balance`, `approve`, `revoke`, `<url>`) returns `client_error` until set, so a first-invocation accident cannot route real USDC through the production program.
+- `PACT_FACILITATOR_URL` — override the `pact pay` coverage facilitator base URL (default `https://facilitator.pact.network`)
 - `PACT_AUTO_DEPOSIT_DISABLED=1` — disable auto-approve
 
 See `docs/superpowers/specs/2026-05-05-pact-cli-design.md` for full spec.

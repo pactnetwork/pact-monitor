@@ -3,7 +3,7 @@
 #
 # Builds one of five Cloud Run services from the pact-monitor monorepo:
 #   pact-market-proxy / pact-settler / pact-indexer / pact-market-dashboard /
-#   pact-dummy-upstream
+#   pact-facilitator
 #
 # Pattern: copied from devops/pipelines-gcp/qash/build.yaml (monorepo template).
 # The corresponding infra lives at devops/terraform-gcp/pact-network/.
@@ -39,7 +39,7 @@ on:
           - pact-settler
           - pact-indexer
           - pact-market-dashboard
-          - pact-dummy-upstream
+          - pact-facilitator
       dockerfile:
         description: "Path to Dockerfile (default = packages/<service>/Dockerfile)"
         required: false
@@ -97,7 +97,7 @@ jobs:
               pact-settler)          echo "path=packages/settler/Dockerfile"          >> $GITHUB_OUTPUT ;;
               pact-indexer)          echo "path=packages/indexer/Dockerfile"          >> $GITHUB_OUTPUT ;;
               pact-market-dashboard) echo "path=packages/market-dashboard/Dockerfile" >> $GITHUB_OUTPUT ;;
-              pact-dummy-upstream)   echo "path=packages/dummy-upstream/Dockerfile"    >> $GITHUB_OUTPUT ;;
+              pact-facilitator)      echo "path=packages/facilitator/Dockerfile"       >> $GITHUB_OUTPUT ;;
               *)                     echo "Unknown service_name: ${{ inputs.service_name }}" && exit 1 ;;
             esac
           fi
