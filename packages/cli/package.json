@@ -1,11 +1,15 @@
 {
   "name": "@q3labs/pact-cli",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "type": "module",
   "bin": {
     "pact": "bin/pact.cjs"
   },
-  "files": ["bin", "README.md", "LICENSE"],
+  "files": [
+    "bin",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "dev": "bun run src/index.ts",
     "_build:deps": "pnpm --filter @pact-network/protocol-v1-client build",
@@ -22,7 +26,13 @@
   "publishConfig": {
     "access": "public"
   },
-  "keywords": ["pact-network", "solana", "cli", "ai-agent", "x402"],
+  "keywords": [
+    "pact-network",
+    "solana",
+    "cli",
+    "ai-agent",
+    "x402"
+  ],
   "license": "MIT",
   "author": "Pact Network",
   "devDependencies": {

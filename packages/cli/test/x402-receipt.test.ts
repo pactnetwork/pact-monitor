@@ -148,3 +148,70 @@ describe("buildCoveragePayload: synthetic 5xx verdict", () => {
     expect(missingReceiptFields(payload)).not.toContain("paymentSignature");
   });
 });
+
+describe("buildCoveragePayload: x402-buildline-success fixture (pay 0.13/0.16 x402 auto-pay)", () => {
+  const { stdout, stderr } = loadFixture("x402-buildline-success");
+  const classified = classifyPayResult({ payExitCode: 0, stdoutText: stdout, stderrText: stderr });
+
+  test("classifier surfaces amountBaseUnits, asset (mint), payee, signer from the build line", () => {
+    expect(classified.payment.attempted).toBe(true);
+    expect(classified.payment.scheme).toBe("x402");
+    expect(classified.payment.amountBaseUnits).toBe("5000");
+    expect(classified.payment.assetMint).toBe("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
+    expect(classified.payment.payeePubkey).toBe("9xQeWvG816bUx9EPm2Mz1cVqYqRyVQK9Q6Gz3vQF1pT");
+    expect(classified.payment.signerPubkey).toBe("Ba8rnWKKvVwrD9CNL6BSjooWE9jZmj2zzBzNVjxSwd25");
+  });
+
+  test("payload carries amountBaseUnits, asset=mint, payee=recipient", () => {
+    const payload = buildCoveragePayload({ agentPubkey: AGENT, classified });
+    expect(payload.agent).toBe(AGENT);
+    expect(payload.scheme).toBe("x402");
+    // amountBaseUnits is the integer string from `amount=5000` — exactly
+    // what the facilitator's `amountBaseUnits must be an integer string`
+    // check wants (the bug this fixes was sending null here).
+    expect(payload.amountBaseUnits).toBe("5000");
+    expect(payload.asset).toBe("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
+    // payee is the merchant — `recipient=` on the build line.
+    expect(payload.payee).toBe("9xQeWvG816bUx9EPm2Mz1cVqYqRyVQK9Q6Gz3vQF1pT");
+    expect(payload.resource).toBe("https://dummy.pactnetwork.io/quote/AAPL");
+    expect(payload.verdict).toBe("success");
+    expect(payload.upstreamStatus).toBe(200);
+    // On wire: present, non-null.
+    const wire = JSON.parse(JSON.stringify(payload));
+    expect(wire.amountBaseUnits).toBe("5000");
+    expect(wire.payee).toBe("9xQeWvG816bUx9EPm2Mz1cVqYqRyVQK9Q6Gz3vQF1pT");
+  });
+
+  test("missingReceiptFields does NOT flag amountBaseUnits / asset / payee here", () => {
+    const payload = buildCoveragePayload({ agentPubkey: AGENT, classified });
+    const missing = missingReceiptFields(payload);
+    expect(missing).not.toContain("amountBaseUnits");
+    expect(missing).not.toContain("asset");
+    expect(missing).not.toContain("payee");
+  });
+});
+
+describe("buildCoveragePayload: x402-buildline-5xx fixture (covered failure receipt)", () => {
+  const { stdout, stderr } = loadFixture("x402-buildline-5xx");
+  const classified = classifyPayResult({ payExitCode: 0, stdoutText: stdout, stderrText: stderr });
+
+  test("verdict=server_error, amountBaseUnits + payee still populated", () => {
+    const payload = buildCoveragePayload({ agentPubkey: AGENT, classified });
+    expect(payload.verdict).toBe("server_error");
+    expect(payload.upstreamStatus).toBe(503);
+    expect(payload.amountBaseUnits).toBe("5000");
+    expect(payload.payee).toBe("9xQeWvG816bUx9EPm2Mz1cVqYqRyVQK9Q6Gz3vQF1pT");
+  });
+});
+
+describe("buildCoveragePayload: x402-buildline-013 (plain variant)", () => {
+  const { stdout, stderr } = loadFixture("x402-buildline-013");
+  const classified = classifyPayResult({ payExitCode: 0, stdoutText: stdout, stderrText: stderr });
+
+  test("payee/amount still extracted from the non-ANSI build line", () => {
+    const payload = buildCoveragePayload({ agentPubkey: AGENT, classified });
+    expect(payload.amountBaseUnits).toBe("5000");
+    expect(payload.payee).toBe("9xQeWvG816bUx9EPm2Mz1cVqYqRyVQK9Q6Gz3vQF1pT");
+    expect(payload.asset).toBe("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
+  });
+});
