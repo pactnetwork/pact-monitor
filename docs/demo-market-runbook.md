@@ -314,15 +314,17 @@ the `settle_batch` tx shows the premium debit + the $0.005 refund out of the
 
 `pact init` in a project installs the broader `pact` skill into
 `.claude/skills/pact/SKILL.md` (plus a `CLAUDE.md` snippet). This repo also ships
-`packages/cli/skills/pact-pay/` and `packages/cli/skills/pact-demo/` skills you
-can copy into `~/.claude/skills/`.
+`packages/cli/skills/pact-pay/` and `packages/cli/skills/market-quotes/` skills
+you can copy into `~/.claude/skills/`.
 
 With those installed, a Claude Code agent routes paid calls through `pact <url>`
-(gateway) or `pact pay …` (x402) automatically and announces when coverage
-kicked in — so the demo becomes "ask the agent to call the flaky API, watch it
-self-insure." The `pact-demo` skill is keyed on phrases like *"use dummy
-services"* / *"demo Pact coverage"* and knows the exact commands and toggles for
-both Demo B and Demo C.
+(gateway) or `pact pay …` (x402) automatically and notes when coverage kicked
+in — so the demo becomes "ask the agent to fetch a quote from the paid API,
+watch it stay covered when the upstream falls over." The `market-quotes` skill
+is keyed on phrases like *"use dummy services"* / *"demo Pact coverage"* / a
+`dummy.pactnetwork.io/quote/...` URL; its agent-facing half is "just use the
+API" and a fenced operator section has the parameters/beat-sequence for both
+Demo B and Demo C.
 
 ---
 
