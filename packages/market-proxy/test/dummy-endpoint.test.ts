@@ -5,8 +5,8 @@
 // upstream `https://dummy.pactnetwork.io`.
 //
 // We exercise:
-//   - URL rewrite: /v1/dummy/<path+query> → <upstreamBase>/<path+query>,
-//     stripping pact_wallet / demo_breach query params
+//   - URL rewrite: /v1/dummy/<rest>?<q> → <upstreamBase>/<rest>?<q> — i.e.
+//     strip the `/v1/<slug>` gateway prefix, then strip pact_wallet / demo_breach
 //   - header allowlist: base headers forwarded, Authorization / Cookie /
 //     X-API-KEY dropped (dummy is unauthenticated, like Jupiter)
 //   - isInsurableMethod → always true (plain GET upstream)
@@ -36,12 +36,12 @@ function makeIncoming(
 }
 
 describe("dummy endpoint handler", () => {
-  test("rewrites /v1/dummy/<path> → upstreamBase/<path>", async () => {
+  test("rewrites /v1/dummy/<rest> → upstreamBase/<rest> (strips the /v1/<slug> prefix)", async () => {
     const req = makeIncoming("/v1/dummy/quote/AAPL");
     const upstream = await dummyHandler.buildRequest(req, UPSTREAM_BASE);
     const u = new URL(upstream.url);
     expect(u.origin).toBe("https://dummy.pactnetwork.io");
-    expect(u.pathname).toBe("/v1/dummy/quote/AAPL");
+    expect(u.pathname).toBe("/quote/AAPL");
   });
 
   test("preserves upstream-relevant query params", async () => {
