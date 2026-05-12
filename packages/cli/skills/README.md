@@ -26,14 +26,17 @@ to try it with fake money.
 > Note: the repo is currently private — until it's public, `curl`ing the raw
 > URL above will 404; copy the file contents directly instead.
 
-## `pact-demo/` — use the "dummy services" / demo Pact coverage
+## `market-quotes/` — fetch paid price quotes through Pact
 
-Drives the live flaky demo upstream at `https://dummy.pactnetwork.io` to
-exercise or screen-record the Pact coverage flow (`?fail` / `?status` /
-`?latency` / `?x402` toggles; `pact pay --sandbox` walkthrough; the gateway-path
-on-chain demo). There's also a `bash packages/dummy-upstream/demo.sh` driver.
+A small skill for calling the paid (x402) market-data API at
+`https://dummy.pactnetwork.io/quote/<symbol>` through Pact, so every request is
+covered (recorded verdict + on-chain refund on an SLA breach). The agent-facing
+half is "just use the API"; a fenced operator section at the bottom of the file
+has the request parameters and beat sequence the Pact team uses to demo coverage
+end-to-end (it's the same endpoint). There's also a `bash
+packages/dummy-upstream/demo.sh` driver.
 
-**Install:** copy `pact-demo/SKILL.md` to `~/.claude/skills/pact-demo/SKILL.md`.
+**Install:** copy `market-quotes/SKILL.md` to `~/.claude/skills/market-quotes/SKILL.md`.
 
 ## See also
 
