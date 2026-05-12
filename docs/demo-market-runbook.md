@@ -1,13 +1,22 @@
-# Pact Market Gateway Demo ("Demo B") — Runbook
+# Pact Market Demo — Runbook (Demo B + Demo C)
 
-This is the runbook for the `pact <url>` insured-call demo: an agent calls a paid
-API through Pact's market gateway against the live demo upstream
-`https://dummy.pactnetwork.io`, and refunds settle on **Solana mainnet**.
+Two demos against the live deliberately-flaky upstream `https://dummy.pactnetwork.io`,
+both settling on **Solana mainnet**:
 
-> Scope: this is the **gateway** path only (`pact <url>` → `api.pactnetwork.io`).
-> The separate `pact pay` path (wrapping `solana-foundation/pay` for arbitrary
-> x402/MPP endpoints, settling via `facilitator.pactnetwork.io`) is out of scope
-> here — see [`docs/premium-coverage-mvp.md`](./premium-coverage-mvp.md).
+- **Demo B — the gateway path.** An agent calls a paid API through Pact's market
+  gateway (`pact <url>` → `api.pactnetwork.io`). Premium in, refund out on an SLA
+  breach. §§ 1–6 below.
+- **Demo C — the `pact pay` path.** An agent makes an x402 payment with
+  `solana-foundation/pay`, wrapped by `pact pay`; the receipt + verdict register
+  with `facilitator.pactnetwork.io`, which settles a refund from the shared
+  `pay-default` coverage pool when the paid call breaches. § 7 below.
+
+Both run from the same machine with the same CLI and the same demo wallet — only
+the command differs. Demo B is the cleaner "here's the Solscan tx" story; Demo C
+is the "I wrapped `pay` and got my money back when the API died" story.
+
+See also [`docs/premium-coverage-mvp.md`](./premium-coverage-mvp.md) for the
+deeper operator/architecture notes.
 
 ---
 
@@ -62,41 +71,76 @@ Deployed at revision `pact-market-proxy-00015-lzj` with the `dummy` handler.
 | Program ID | `5bCJcdWdKLJ7arrMVMFh3z99rQDxV785fnD9XGcr3xwc` |
 | USDC mint | `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v` |
 
+**Facilitator — `https://facilitator.pactnetwork.io`** (used by Demo C)
+Cloud Run service `pact-facilitator`, wired into the LB, Cloud SQL + Direct VPC
+egress. `GET /health` → `{"status":"ok","service":"pact-facilitator",...}`.
+Coverage pool `pay-default` is registered + funded on-chain.
+
+**The dummy's x402 mode** (used by Demo C): `GET /quote/:symbol?x402=1` makes the
+dummy act as an x402 server — a request without a payment header returns `402` +
+an x402 challenge; the retry with a payment header is treated as paid and falls
+through to the `?fail` / `?status` / `?latency` branches above. Its challenge
+`payTo` is `5jMLJ6EuGVqyruN2eyf3GoVUnRUpn3h8vUVxp84DmcCf` — i.e. the pre-set demo
+wallet (see § 3), so on mainnet `pact pay` against the dummy is a **self-pay** of
+$0.005 USDC (you pay yourself; only the network fee is real).
+
 **CLI**
-`@q3labs/pact-cli@0.2.3` is published to npm — multi-platform (macOS / Linux /
-Windows).
+`@q3labs/pact-cli@0.2.6` is published to npm — multi-platform (macOS arm64/x64,
+Linux arm64/x64, Windows x64). `npm i -g @q3labs/pact-cli` picks the right binary
+for your Mac automatically.
 
 ---
 
 ## 3. One-time setup on the demo machine
 
 ```bash
-npm i -g @q3labs/pact-cli              # 0.2.3
+npm i -g @q3labs/pact-cli              # 0.2.6+
 
 export PACT_MAINNET_ENABLED=1          # closed-beta gate — required for the mainnet path
 
 export PACT_RPC_URL="https://solana-mainnet.g.alchemy.com/v2/pi-qzAdsrf0GvKlNIOzwk"
 # Any mainnet RPC works. A WS-capable endpoint avoids the `signatureSubscribe`
 # noise on `pact approve` (see Gotchas).
+
+# For Demo C only — point pact pay at the deployed facilitator:
+export PACT_FACILITATOR_URL="https://facilitator.pactnetwork.io"
 ```
+
+For **Demo C** you also need the `solana-foundation/pay` CLI installed and set up
+once:
+
+```bash
+# install per https://github.com/solana-foundation/pay (Homebrew tap or release binary), then:
+pay setup        # provisions a Solana keypair into the macOS Keychain (Touch ID)
+```
+
+> Demo C runs `pay` under the hood — `pact pay <args>` forwards `<args>` verbatim
+> to `pay`. The wallet that *signs the x402 payment* is `pay`'s own Keychain
+> wallet; the wallet that signs Pact's coverage registration is `PACT_PRIVATE_KEY`
+> (the demo wallet below). For a self-contained demo, keep them the same — import
+> the demo keypair into `pay` too (`pay account import …`) — or just let `pay`
+> use its Keychain wallet and fund that one instead.
 
 ### Demo-agent wallet
 
 You need a Solana keypair funded on **mainnet** with **≥ ~0.5 USDC** and
 **≥ ~0.01 SOL**.
 
-> **Keypair format.** With `pact-cli` 0.2.3, `PACT_PRIVATE_KEY` expects a
-> **base58-encoded secret key**, *not* a `solana-keygen` JSON-array keypair file.
-> Convert a JSON keypair file to base58:
+> **Keypair format.** With `pact-cli` ≥ 0.2.4, you have three options, in
+> precedence order:
+> 1. `pact --keypair /path/to/keypair.json <cmd> …` — a `solana-keygen` JSON-array
+>    file (works for `pact pay` too: `pact --keypair … pay curl …` — the flag is
+>    global, so it goes *before* the subcommand).
+> 2. `export PACT_PRIVATE_KEY=…` — accepts a base58 secret key, a JSON byte-array
+>    string, **or** a path to a keypair file.
+> 3. The on-disk wallet `pact init` / `pact wallet` manages.
+>
+> If you specifically need a base58 string, convert a JSON keypair file:
 >
 > ```bash
-> PACT_PRIVATE_KEY="$(node -e 'const bs58=require("bs58").default||require("bs58"); process.stdout.write(bs58.encode(Buffer.from(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")))))' /path/to/keypair.json)"
+> PACT_PRIVATE_KEY="$(node -e 'const A="123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";const b=Buffer.from(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")));let d=[0];for(const x of b){let c=x;for(let j=0;j<d.length;j++){c+=d[j]<<8;d[j]=c%58;c=(c/58)|0;}while(c){d.push(c%58);c=(c/58)|0;}}let s="";for(const x of b){if(x===0)s+="1";else break;}for(let j=d.length-1;j>=0;j--)s+=A[d[j]];process.stdout.write(s);' /path/to/keypair.json)"
 > export PACT_PRIVATE_KEY
 > ```
->
-> `pact-cli` ≥ 0.2.4 (when published) accepts a JSON-array keypair or a file path
-> directly via `PACT_PRIVATE_KEY`, or via a `--keypair <path>` flag — until then,
-> base58.
 
 ### Delegate a USDC allowance (one time)
 
@@ -116,7 +160,11 @@ pact balance
 
 ---
 
-## 4. Running the demo
+## 4. Running Demo B — the gateway path (`pact <url>`)
+
+> **Quote every URL that has a `?`.** In zsh (the macOS default) an unquoted
+> `...AAPL?fail=1` is a glob and you'll get `zsh: no matches found`. Always
+> single-quote: `pact --json 'https://...?fail=1'`.
 
 ```bash
 # Warm the Vercel upstream first — avoids cold-start latency on camera.
@@ -126,7 +174,7 @@ curl -s https://dummy.pactnetwork.io/health
 **Success — premium only, no refund:**
 
 ```bash
-pact --json https://dummy.pactnetwork.io/quote/AAPL
+pact --json 'https://dummy.pactnetwork.io/quote/AAPL'
 # → {"status":"ok","body":{"symbol":"AAPL","price":"287.90",...},
 #    "meta":{"slug":"dummy","call_id":"<id>","outcome":"ok",
 #             "premium_usdc":0.001,"settlement_eta_sec":8}}
@@ -135,7 +183,7 @@ pact --json https://dummy.pactnetwork.io/quote/AAPL
 **The headline — upstream 5xx's after the agent paid → on-chain refund:**
 
 ```bash
-pact --json https://dummy.pactnetwork.io/quote/AAPL?fail=1
+pact --json 'https://dummy.pactnetwork.io/quote/AAPL?fail=1'
 # → {"status":"server_error","body":{"error":"upstream_unavailable",...},
 #    "meta":{"slug":"dummy","call_id":"<id>","outcome":"server_error",
 #             "premium_usdc":0.001,"settlement_eta_sec":8}}
@@ -144,7 +192,14 @@ pact --json https://dummy.pactnetwork.io/quote/AAPL?fail=1
 **Latency-breach variant (2.5s > the 2s SLA) → also refunds:**
 
 ```bash
-pact --json https://dummy.pactnetwork.io/quote/AAPL?latency=2500
+pact --json 'https://dummy.pactnetwork.io/quote/AAPL?latency=2500'
+```
+
+You can also let `pact` poll the settlement for you instead of checking by hand:
+
+```bash
+pact --wait --json 'https://dummy.pactnetwork.io/quote/AAPL?fail=1'
+# blocks ~10–50s, then the returned meta has tx_signature + solscan_url filled in
 ```
 
 **Check the on-chain settlement (~10–50s after the call):**
@@ -170,7 +225,90 @@ Use these as backups in a video if a live settlement is slow on camera:
 
 ---
 
-## 5. Have the agent do it (optional)
+## 5. Running Demo C — the `pact pay` path (wraps `solana-foundation/pay`)
+
+Same flaky upstream, but this time the agent *pays* for the call with an x402
+payment (via `pay`), and `pact pay` registers the receipt + verdict with the
+facilitator. On a breach, the refund settles from the shared `pay-default`
+coverage pool.
+
+Prereqs (one-time, from § 3): `npm i -g @q3labs/pact-cli` · `pay` installed +
+`pay setup` · `export PACT_MAINNET_ENABLED=1 PACT_FACILITATOR_URL=https://facilitator.pactnetwork.io PACT_RPC_URL=… PACT_PRIVATE_KEY=…`
+· `pact approve 1.0` done · the demo wallet funded (≥ ~0.5 USDC + ~0.01 SOL).
+
+```bash
+# Warm both the upstream and the facilitator (Cloud Run cold start):
+curl -s https://dummy.pactnetwork.io/health
+curl -s https://facilitator.pactnetwork.io/health
+```
+
+**Happy path — agent pays, call succeeds → coverage recorded, nothing to refund:**
+
+```bash
+pact pay --json curl 'https://dummy.pactnetwork.io/quote/AAPL?x402=1'
+# pay detects the 402, pays $0.005 USDC to the dummy's payTo (= the demo wallet,
+# so this is a self-pay), retries with the payment header, gets the 200 quote.
+# → meta.coverage: {"status":"settlement_pending"|"covered","premiumBaseUnits":"1000",
+#                   "refundBaseUnits":"0","pool":"pay-default", ...}
+```
+
+**The headline — agent pays, then the upstream 5xx's → refund from `pay-default`:**
+
+```bash
+pact pay --json curl 'https://dummy.pactnetwork.io/quote/AAPL?x402=1&fail=1'
+# → ...
+#   "body":{"classifier":"server_error","upstream_status":503,
+#           "payment":{"attempted":true,"signed":true,"amount":"0.005","asset":"USDC",
+#                      "amountBaseUnits":"5000","scheme":"x402", ...}},
+#   "meta":{"coverage":{"id":"<coverageId>","status":"settlement_pending",
+#                       "premiumBaseUnits":"1000","refundBaseUnits":"5000",
+#                       "pool":"pay-default"}}
+```
+
+Without `--json` you get the human lines on stderr instead:
+
+```
+[pact-http-status=503]
+[pact] base 0.005 USDC + premium 0.001 ... (covered by pay-default)
+[pact] classifier: server_error  (status=503, reason=upstream 503)
+[pact] policy: refund_on_server_error — refund 0.005 USDC (settling on-chain)
+[pact] check status: pact pay coverage <coverageId>
+```
+
+**Check the on-chain settlement:**
+
+```bash
+pact pay coverage <coverageId>
+# → ...{"status":"settlement_pending"|"settled","settled":true,
+#       "settleBatchSignature":"<sig>"}...
+```
+
+When `settled` flips true, open `https://solscan.io/tx/<settleBatchSignature>` —
+the `settle_batch` tx shows the premium debit + the $0.005 refund out of the
+`pay-default` pool.
+
+> **Settler cadence.** The on-chain `settle_batch` for `pact pay`-registered
+> coverage is done by the settler on its batch cycle — it can take a couple of
+> minutes, longer than Demo B's ~40s gateway settle. The `coverageId` and amounts
+> are confirmed the instant `pact pay` returns; the Solscan tx follows. For a
+> video, register the coverage a few minutes before you film the `pact pay
+> coverage` check, or use a backup tx (below).
+
+> **`?x402=1` is required for Demo C.** Without it the dummy is a plain HTTP API —
+> `pay` sees no 402 challenge, makes no payment, and `pact pay` correctly reports
+> "no charge — no 402". `?x402=1&fail=1` = "agent paid, then the upstream died",
+> which is the case Pact exists for.
+
+### Verified example (mainnet, 2026-05-12)
+
+- Coverage `cd6530c9-9320-4961-ab49-04cf20bcae35` — `pact pay curl
+  '…?x402=1&fail=1'` → registered against `pay-default`, premium `1000`
+  ($0.001), refund `5000` ($0.005). (Look it up live with `pact pay coverage
+  cd6530c9-9320-4961-ab49-04cf20bcae35` for its `settleBatchSignature`.)
+
+---
+
+## 6. Have the agent do it (optional)
 
 `pact init` in a project installs the broader `pact` skill into
 `.claude/skills/pact/SKILL.md` (plus a `CLAUDE.md` snippet). This repo also ships
@@ -178,12 +316,15 @@ Use these as backups in a video if a live settlement is slow on camera:
 can copy into `~/.claude/skills/`.
 
 With those installed, a Claude Code agent routes paid calls through `pact <url>`
-automatically and announces when coverage kicked in — so the demo becomes "ask
-the agent to call the flaky API, watch it self-insure."
+(gateway) or `pact pay …` (x402) automatically and announces when coverage
+kicked in — so the demo becomes "ask the agent to call the flaky API, watch it
+self-insure." The `pact-demo` skill is keyed on phrases like *"use dummy
+services"* / *"demo Pact coverage"* and knows the exact commands and toggles for
+both Demo B and Demo C.
 
 ---
 
-## 6. Gotchas / FAQ
+## 7. Gotchas / FAQ
 
 - **`signatureSubscribe` errors on `pact approve`.** If the RPC URL doesn't serve
   WebSocket subscriptions over HTTP (e.g. the Alchemy HTTP endpoint), `pact
@@ -194,18 +335,39 @@ the agent to call the flaky API, watch it self-insure."
   repeatedly. **The transaction still lands fine** — it's just confirmation-
   polling noise. Use a WS-capable RPC, or ignore it.
 
-- **Command is `pact calls show <id>`**, not `pact calls <id>`.
+- **Command is `pact calls show <id>`** (Demo B), not `pact calls <id>`. For
+  Demo C it's `pact pay coverage <coverageId>`.
 
-- **Cold starts.** The dummy upstream is on Vercel — a cold start adds ~1–4s to
-  the first request. `curl …/health` first.
+- **Quote `?`-bearing URLs in zsh** — unquoted `…?fail=1` → `zsh: no matches
+  found`. Single-quote the whole URL.
 
-- **Two different paths.** This runbook is the **gateway** path
-  (`pact <url>` → `api.pactnetwork.io`). There's a separate `pact pay` path
-  (wraps `solana-foundation/pay` for arbitrary x402/MPP endpoints, settles via
-  `facilitator.pactnetwork.io`) — out of scope here; see
+- **Cold starts.** The dummy upstream is on Vercel and the facilitator is on
+  Cloud Run — a cold start adds ~1–10s to the first request. `curl …/health`
+  on both first.
+
+- **`pact pay` says "facilitator unreachable — operation was aborted".** That's
+  the CLI's 8s timeout on the coverage POST firing because the facilitator is
+  blocked on something server-side (it took >8s to respond). Most likely cause:
+  the facilitator can't reach Cloud SQL. Check
+  `gcloud run services logs read pact-facilitator --region asia-southeast1` for
+  `Cloud SQL connection failed … timed out` — fix is to make sure the service has
+  Direct VPC egress (`run.googleapis.com/network-interfaces` +
+  `vpc-access-egress: private-ranges-only`, plus the `cloudsql-instances`
+  annotation). This was hit and fixed on 2026-05-12.
+
+- **`pay` not initialized.** `pact pay` prints a "pay.sh has not been initialized
+  on this host" note if `pay setup` was never run / no Keychain wallet. Run `pay
+  setup` (or import a keypair: `pay account import …`).
+
+- **Two paths, two settlers.** Demo B = gateway (`pact <url>` →
+  `api.pactnetwork.io`, settles ~40s, per-endpoint `dummy` pool). Demo C =
+  `pact pay` (wraps `pay`, registers with `facilitator.pactnetwork.io`, settles
+  on the settler's batch cycle, shared `pay-default` pool). Deeper notes:
   [`docs/premium-coverage-mvp.md`](./premium-coverage-mvp.md).
 
 - **Cloud Armor blocks default user-agents.** `api.pactnetwork.io` sits behind
   Cloud Armor that 403s default `curl` / Node user-agents. The `pact` CLI sends
   its own UA, so it's fine. If you `curl` the gateway directly for debugging,
-  pass `-H "User-Agent: pact-monitor-sdk/0.1.0"` (or a browser UA).
+  pass `-H "User-Agent: pact-monitor-sdk/0.1.0"` (or a browser UA). The
+  facilitator and the dummy upstream are *not* behind Cloud Armor — plain `curl`
+  works there.
