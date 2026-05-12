@@ -29,8 +29,12 @@ const DUMMY_EXTRA_ALLOWED: ReadonlySet<string> = new Set();
 export const dummyHandler: EndpointHandler = {
   async buildRequest(req: Request, upstreamBase: string): Promise<Request> {
     const url = new URL(req.url);
-    // Rewrite /v1/dummy/<path+query> → https://dummy.pactnetwork.io/<path+query>.
-    const upstreamUrl = new URL(url.pathname + url.search, upstreamBase);
+    // Rewrite /v1/dummy/<rest>?<q> → <upstreamBase>/<rest>?<q> — i.e. strip the
+    // `/v1/<slug>` gateway prefix the CLI/proxy route adds, then forward the
+    // remaining path to the upstream. (`new URL("/v1/dummy/...", base)` would
+    // forward the prefix verbatim and the upstream would 404.)
+    const rest = url.pathname.replace(/^\/v1\/[^/]+/, "") || "/";
+    const upstreamUrl = new URL(rest + url.search, upstreamBase);
     // Strip pact-specific query params before forwarding.
     upstreamUrl.searchParams.delete("pact_wallet");
     upstreamUrl.searchParams.delete("demo_breach");
