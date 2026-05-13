@@ -1,22 +1,24 @@
 {
   "name": "@q3labs/pact-cli",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "type": "module",
   "bin": {
-    "pact": "bin/pact.cjs"
+    "pact": "dist/pact.js"
   },
   "files": [
-    "bin",
+    "dist",
     "README.md",
     "LICENSE"
   ],
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "dev": "bun run src/index.ts",
     "_build:deps": "pnpm --filter @pact-network/protocol-v1-client build",
     "_check:version": "node -e \"const a=require('./package.json').version,b=require('fs').readFileSync('src/index.ts','utf8').match(/VERSION\\s*=\\s*\\\"([^\\\"]+)/)[1]; if(a!==b){console.error('VERSION drift: package.json='+a+' src/index.ts='+b);process.exit(1)}\"",
     "prebuild": "pnpm run _build:deps && pnpm run _check:version",
-    "build": "bun build src/index.ts --compile --target=bun --outfile dist/pact",
-    "build:platforms": "pnpm run _build:deps && pnpm run _check:version && bash scripts/build-platforms.sh",
+    "build": "bun build src/index.ts --target=node --format=esm --outfile dist/pact.js && node scripts/fix-shebang.mjs dist/pact.js && chmod +x dist/pact.js",
     "pretest": "pnpm run _build:deps",
     "test": "bun test",
     "pretypecheck": "pnpm run _build:deps",
