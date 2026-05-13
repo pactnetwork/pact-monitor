@@ -4,18 +4,15 @@ name: Publish @q3labs/pact-cli
 # mirroring the publish-monitor / publish-insurance pattern (path-gated,
 # version-monotonic, idempotent on re-runs).
 #
-# Multi-platform packaging (esbuild-style): `bun build --compile` produces a
-# native binary per platform, so we publish:
-#   - @q3labs/pact-cli              — tiny package; bin = bin/pact.cjs launcher
-#                                     shim + optionalDependencies on the 5 below
-#   - @q3labs/pact-cli-linux-x64    — prebuilt binary, os/cpu pinned
-#   - @q3labs/pact-cli-linux-arm64
-#   - @q3labs/pact-cli-darwin-x64
-#   - @q3labs/pact-cli-darwin-arm64
-#   - @q3labs/pact-cli-windows-x64
-# npm/pnpm install only the platform package matching the host; the shim
-# require.resolve()s it and execs the binary. `bun build --compile
-# --target=bun-<os>-<arch>` cross-compiles all of them from one ubuntu runner.
+# Single-package distribution (0.2.8+): `bun build --target=node` produces a
+# Node-compatible JS bundle (`dist/pact.js`) that runs on any platform with
+# Node 18+. No native binaries, no platform sub-packages.
+#
+# History: 0.2.2 — 0.2.6 shipped as 5 platform-specific sub-packages
+# (`@q3labs/pact-cli-<os>-<arch>`) + an umbrella with optionalDependencies.
+# 0.2.7 attempted multi-platform publish and failed: the NPM token had write
+# access to the umbrella only, not the sub-package names. 0.2.8 collapses to
+# the umbrella alone so the token's scope matches the publish surface.
 
 on:
   push:
@@ -60,52 +57,21 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build (native dist/pact for smoke + binary-init regression test)
+      - name: Build (dist/pact.js — Node-compatible bundle)
         run: pnpm --filter @q3labs/pact-cli build
 
       - name: Test
         run: pnpm --filter @q3labs/pact-cli test
 
-      - name: Smoke — native dist/pact responds to --version
+      - name: Smoke — dist/pact.js responds to --version under Node
         working-directory: packages/cli
         run: |
           set -euo pipefail
-          test -x dist/pact || { echo "::error::dist/pact missing or not executable"; exit 1; }
-          ./dist/pact --version
-
-      - name: Build per-platform packages
-        run: pnpm --filter @q3labs/pact-cli build:platforms
-
-      - name: Smoke — launcher shim resolves + execs a platform binary
-        working-directory: packages/cli
-        run: |
-          set -euo pipefail
-          mkdir -p node_modules/@q3labs
-          rm -rf node_modules/@q3labs/pact-cli-linux-x64
-          ln -s "$PWD/dist-platforms/linux-x64" node_modules/@q3labs/pact-cli-linux-x64
-          OUT=$(node bin/pact.cjs --version)
+          test -x dist/pact.js || { echo "::error::dist/pact.js missing or not executable"; exit 1; }
+          OUT=$(node dist/pact.js --version)
           EXPECTED=$(node -p "require('./package.json').version")
-          [ "$OUT" = "$EXPECTED" ] || { echo "::error::shim --version '$OUT' != '$EXPECTED'"; exit 1; }
-          echo "shim ok: pact $OUT via @q3labs/pact-cli-linux-x64"
-
-      - name: Inject platform optionalDependencies into @q3labs/pact-cli
-        working-directory: packages/cli
-        run: |
-          set -euo pipefail
-          node -e '
-            const fs = require("fs");
-            const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
-            const v = pkg.version;
-            pkg.optionalDependencies = {
-              "@q3labs/pact-cli-linux-x64": v,
-              "@q3labs/pact-cli-linux-arm64": v,
-              "@q3labs/pact-cli-darwin-x64": v,
-              "@q3labs/pact-cli-darwin-arm64": v,
-              "@q3labs/pact-cli-windows-x64": v,
-            };
-            fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2) + "\n");
-          '
-          node -p "require('./package.json').optionalDependencies"
+          [ "$OUT" = "$EXPECTED" ] || { echo "::error::node dist/pact.js --version '$OUT' != '$EXPECTED'"; exit 1; }
+          echo "bundle ok: pact $OUT"
 
       - name: Resolve names + versions, enforce monotonicity
         id: check
@@ -117,10 +83,10 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
 
-          # Monotonicity guard on the umbrella package: block a downgrade
-          # republish (publishing 0.2.1 after 0.2.2 was released would silently
-          # regress consumers on "latest"). Runs before the idempotency check so
-          # a rolled-back package.json cannot smuggle a downgrade through.
+          # Monotonicity guard: block a downgrade republish (publishing 0.2.1
+          # after 0.2.2 was released would silently regress consumers on
+          # "latest"). Runs before the idempotency check so a rolled-back
+          # package.json cannot smuggle a downgrade through.
           LATEST_NPM=$(npm view "$NAME" version 2>/dev/null || echo "")
           if [ -n "$LATEST_NPM" ]; then
             if npx --yes semver "$LATEST_NPM" -r ">$VERSION" > /dev/null 2>&1; then
@@ -130,33 +96,15 @@ jobs:
           fi
 
           if npm view "$NAME@$VERSION" version > /dev/null 2>&1; then
-            echo "skip_umbrella=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::$NAME@$VERSION already on npm — will skip umbrella publish (platform packages still checked individually)."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::$NAME@$VERSION already on npm — skipping publish."
           else
-            echo "skip_umbrella=false" >> "$GITHUB_OUTPUT"
+            echo "skip=false" >> "$GITHUB_OUTPUT"
             echo "::notice::Will publish $NAME@$VERSION."
           fi
 
-      - name: Publish platform packages
-        working-directory: packages/cli/dist-platforms
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          set -euo pipefail
-          for d in */; do
-            d="${d%/}"
-            NAME=$(node -p "require('./$d/package.json').name")
-            VERSION=$(node -p "require('./$d/package.json').version")
-            if npm view "$NAME@$VERSION" version > /dev/null 2>&1; then
-              echo "::notice::$NAME@$VERSION already on npm — skipping."
-              continue
-            fi
-            echo "::notice::Publishing $NAME@$VERSION"
-            ( cd "$d" && npm publish --access public )
-          done
-
       - name: Publish @q3labs/pact-cli
-        if: steps.check.outputs.skip_umbrella == 'false'
+        if: steps.check.outputs.skip == 'false'
         working-directory: packages/cli
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -168,7 +116,7 @@ jobs:
         run: pnpm publish --access public --no-git-checks
 
       - name: Tag and release
-        if: steps.check.outputs.skip_umbrella == 'false'
+        if: steps.check.outputs.skip == 'false'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NAME: ${{ steps.check.outputs.name }}
@@ -180,7 +128,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git tag -a "$TAG" -m "$NAME@$VERSION"
           git push origin "$TAG"
-          NOTES=$'Published to npm: https://www.npmjs.com/package/'"${NAME}"'/v/'"${VERSION}"$'\n\nMulti-platform: linux-x64, linux-arm64, darwin-x64, darwin-arm64, windows-x64 (Bun-compiled standalone binaries, shipped as @q3labs/pact-cli-<platform> optionalDependencies). `npm install -g @q3labs/pact-cli` works on all five.'
+          NOTES=$'Published to npm: https://www.npmjs.com/package/'"${NAME}"'/v/'"${VERSION}"$'\n\nSingle-package Node bundle (`bun build --target=node`). Runs on any platform with Node 18+. `npm install -g @q3labs/pact-cli`.'
           gh release create "$TAG" \
             --title "$NAME@$VERSION" \
             --notes "$NOTES" \
