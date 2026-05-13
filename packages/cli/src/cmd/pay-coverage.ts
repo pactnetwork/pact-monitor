@@ -1,5 +1,5 @@
 // `pact pay coverage <coverageId>` — look up the status of a pay.sh
-// coverage registration on facilitator.pact.network.
+// coverage registration on facilitator.pactnetwork.io.
 //
 // Mirrors `pact calls <id>` (the gateway-path call lookup): GETs
 // `${PACT_FACILITATOR_URL}/v1/coverage/:id` and surfaces the coverage

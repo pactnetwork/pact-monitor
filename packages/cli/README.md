@@ -83,14 +83,14 @@ When `pay` uses the x402 auto-pay path (e.g. `pact pay curl
 units), **asset** (SPL mint), and **payee** (merchant address) are
 extracted from `pay`'s verbose `Building x402 payment amount=… currency=…
 recipient=… signer=…` log line and included in the receipt POSTed to
-`facilitator.pact.network/v1/coverage/register` — so the facilitator
+`facilitator.pactnetwork.io/v1/coverage/register` — so the facilitator
 can price and (on a breach) refund the call. (`pay 0.13.x` and `0.16.x`
 output formats are both handled.)
 
-### Coverage (`facilitator.pact.network`)
+### Coverage (`facilitator.pactnetwork.io`)
 
 When a payment was attempted, `pact pay` makes a side-call to
-`facilitator.pact.network` to register the call for Pact coverage. It's
+`facilitator.pactnetwork.io` to register the call for Pact coverage. It's
 the *side-call* model: `pay` has already settled the payment directly
 with the merchant; the facilitator records the receipt, charges a small
 premium (debited from your `pact approve` allowance — exactly like the
@@ -110,7 +110,7 @@ With `--json`, a `coverage` block is added to the envelope's `meta`:
 (`status` ∈ `settlement_pending` / `uncovered` / `rejected` /
 `facilitator_unreachable`). Pass `--no-coverage` to skip the facilitator
 call entirely. `PACT_FACILITATOR_URL` overrides the facilitator base URL
-(default `https://facilitator.pact.network`).
+(default `https://facilitator.pactnetwork.io`).
 
 Check a coverage registration — and the on-chain `settle_batch`
 signature once it's settled — with `pact pay coverage <coverageId>`:
@@ -218,7 +218,7 @@ Project name is resolved from `--project`, `$PACT_PROJECT`, git repo, or cwd bas
 - `PACT_RPC_URL` — override Solana RPC (default `https://api.mainnet-beta.solana.com`)
 - `PACT_CLUSTER` — only `mainnet` is accepted; any other value is rejected at startup with a `client_error` envelope. v0.1.0 is mainnet-only — local devnet testing requires sed-replacing `constants.rs` and rebuilding the program per Rick's runbook.
 - `PACT_MAINNET_ENABLED=1` — required closed-beta gate. Any on-chain command (`balance`, `approve`, `revoke`, `<url>`) returns `client_error` until set, so a first-invocation accident cannot route real USDC through the production program.
-- `PACT_FACILITATOR_URL` — override the `pact pay` coverage facilitator base URL (default `https://facilitator.pact.network`)
+- `PACT_FACILITATOR_URL` — override the `pact pay` coverage facilitator base URL (default `https://facilitator.pactnetwork.io`)
 - `PACT_AUTO_DEPOSIT_DISABLED=1` — disable auto-approve
 
 Global flag: `--keypair <path>` — load the agent keypair from `<path>` (same format tolerance as `PACT_PRIVATE_KEY`: base58 secret key or `solana-keygen` JSON byte array). Precedence: `--keypair` > `PACT_PRIVATE_KEY` > disk wallet.

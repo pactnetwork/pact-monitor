@@ -11,7 +11,7 @@
 //   classify upstream response (success / client_error / server_error /
 //                               payment_failed / tool_error)
 //      ↓  if a payment was attempted and --no-coverage was not passed:
-//   POST facilitator.pact.network/v1/coverage/register  (side-call —
+//   POST facilitator.pactnetwork.io/v1/coverage/register  (side-call —
 //        the payment already settled directly with the merchant; this
 //        records the receipt + prices the premium + issues a refund on a
 //        covered failure, via the same on-chain settle_batch the gateway

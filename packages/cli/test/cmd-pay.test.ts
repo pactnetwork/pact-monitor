@@ -646,7 +646,7 @@ describe("classifyPayResult", () => {
 //
 // After `pay` exits, if a payment was attempted and --no-coverage was
 // not passed, pact pay POSTs a coverage receipt to
-// facilitator.pact.network. These tests inject both a fake pay AND a
+// facilitator.pactnetwork.io. These tests inject both a fake pay AND a
 // fake registerCoverage + a test keypair so nothing touches the network.
 // ----------------------------------------------------------------------
 
