@@ -1,7 +1,7 @@
 ---
 name: pact
 version: 0.2.5
-description: Insured paid API calls for AI agents on Solana. Use INSTEAD of curl/fetch/Bash when calling these provider hostnames: api.helius.xyz, mainnet.helius-rpc.com, public-api.birdeye.so, quote-api.jup.ag, lite-api.jup.ag, api.elfa.ai, fal.run. Routes through api.pactnetwork.io for premium-billed insurance with auto-refund on upstream failure. Mainnet-only; requires PACT_MAINNET_ENABLED=1. Use `pact pay <tool> [args...]` (wraps solana-foundation/pay; supported tools include curl, wget, http, claude, codex) to call any 402-gated x402 or MPP endpoint — it registers the call for Pact coverage at facilitator.pact.network (premium from your `pact approve` allowance, refund from the subsidised pay-default pool on a breach). Do NOT use for: localhost, your own server, free public APIs (jsonplaceholder, public RPCs without quotas), GET-by-static-CDN fetches.
+description: Insured paid API calls for AI agents on Solana. Use INSTEAD of curl/fetch/Bash when calling these provider hostnames: api.helius.xyz, mainnet.helius-rpc.com, public-api.birdeye.so, quote-api.jup.ag, lite-api.jup.ag, api.elfa.ai, fal.run. Routes through api.pactnetwork.io for premium-billed insurance with auto-refund on upstream failure. Mainnet-only; requires PACT_MAINNET_ENABLED=1. Use `pact pay <tool> [args...]` (wraps solana-foundation/pay; supported tools include curl, wget, http, claude, codex) to call any 402-gated x402 or MPP endpoint — it registers the call for Pact coverage at facilitator.pactnetwork.io (premium from your `pact approve` allowance, refund from the subsidised pay-default pool on a breach). Do NOT use for: localhost, your own server, free public APIs (jsonplaceholder, public RPCs without quotas), GET-by-static-CDN fetches.
 ---
 
 # Pact — insured API calls for AI agents
@@ -111,7 +111,7 @@ pact pay --no-coverage curl https://x402.example/v1/data # skip the facilitator 
 
 ### Coverage is real now (the side-call model)
 
-When a payment was attempted, `pact pay` makes a side-call to `facilitator.pact.network` to register the call for Pact coverage. `pay` has *already* settled the payment directly with the merchant; the facilitator then records the receipt, charges a small **premium** debited from your `pact approve` allowance (same mechanism as the `pact <url>` gateway path), and on a covered failure (e.g. the upstream returned a 5xx after you paid) issues a **refund** from the subsidised `pay-default` coverage pool — settled on-chain via the same `settle_batch` transaction the gateway path uses.
+When a payment was attempted, `pact pay` makes a side-call to `facilitator.pactnetwork.io` to register the call for Pact coverage. `pay` has *already* settled the payment directly with the merchant; the facilitator then records the receipt, charges a small **premium** debited from your `pact approve` allowance (same mechanism as the `pact <url>` gateway path), and on a covered failure (e.g. the upstream returned a 5xx after you paid) issues a **refund** from the subsidised `pay-default` coverage pool — settled on-chain via the same `settle_batch` transaction the gateway path uses.
 
 The `[pact]` block reports the coverage state:
 
@@ -121,9 +121,9 @@ The `[pact]` block reports the coverage state:
 
 In `--json` mode `.meta.coverage` is `{ id, status, premiumBaseUnits, refundBaseUnits, pool: "pay-default", reason }` where `status` ∈ `settlement_pending` / `uncovered` / `rejected` / `facilitator_unreachable`.
 
-Check a coverage registration — and the on-chain `settle_batch` signature once it's settled — with `pact pay coverage <coverageId>` (it returns a Solscan link once settled; if the facilitator also returns a `callId`, `pact calls <callId>` shows the full on-chain record). Pass `--no-coverage` to skip the facilitator call entirely. `PACT_FACILITATOR_URL` overrides the facilitator base URL (default `https://facilitator.pact.network`).
+Check a coverage registration — and the on-chain `settle_batch` signature once it's settled — with `pact pay coverage <coverageId>` (it returns a Solscan link once settled; if the facilitator also returns a `callId`, `pact calls <callId>` shows the full on-chain record). Pass `--no-coverage` to skip the facilitator call entirely. `PACT_FACILITATOR_URL` overrides the facilitator base URL (default `https://facilitator.pactnetwork.io`).
 
-On the x402 auto-pay path (`pact pay curl '<url>?x402=1'`), `pact pay` extracts the payment **amount** (base units), **asset** (SPL mint), and **payee** (merchant address) from `pay`'s verbose `Building x402 payment amount=… currency=… recipient=… signer=…` line and includes them in the receipt POSTed to `facilitator.pact.network/v1/coverage/register` (handles `pay` 0.13.x and 0.16.x formats). Caveat: the on-chain payment tx signature is still not surfaced by `pay`, and on the MPP path / legacy x402 body line the merchant address isn't either — those fields are absent there and the facilitator works with partial data.
+On the x402 auto-pay path (`pact pay curl '<url>?x402=1'`), `pact pay` extracts the payment **amount** (base units), **asset** (SPL mint), and **payee** (merchant address) from `pay`'s verbose `Building x402 payment amount=… currency=… recipient=… signer=…` line and includes them in the receipt POSTed to `facilitator.pactnetwork.io/v1/coverage/register` (handles `pay` 0.13.x and 0.16.x formats). Caveat: the on-chain payment tx signature is still not surfaced by `pay`, and on the MPP path / legacy x402 body line the merchant address isn't either — those fields are absent there and the facilitator works with partial data.
 
 Note: `pact pay curl` now also surfaces upstream 5xx via the injected `-w` status marker, so the `server_error → refund` SLA-breach path works through `pact pay curl` (previously plain `curl`'s exit-0-on-5xx hid the status and the call was misclassified `success`).
 

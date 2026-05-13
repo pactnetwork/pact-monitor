@@ -1,4 +1,4 @@
-// Tests for the facilitator.pact.network client: registerCoverage
+// Tests for the facilitator.pactnetwork.io client: registerCoverage
 // (happy path / uncovered / rejected / unreachable→graceful) and
 // getCoverageStatus. The HTTP layer is mocked via a fetch override; no
 // network is touched.
@@ -209,12 +209,12 @@ describe("registerCoverage: response handling", () => {
 });
 
 describe("resolveFacilitatorUrl", () => {
-  test("defaults to https://facilitator.pact.network", () => {
+  test("defaults to https://facilitator.pactnetwork.io", () => {
     const saved = process.env.PACT_FACILITATOR_URL;
     delete process.env.PACT_FACILITATOR_URL;
     try {
       expect(resolveFacilitatorUrl()).toBe(DEFAULT_FACILITATOR_URL);
-      expect(DEFAULT_FACILITATOR_URL).toBe("https://facilitator.pact.network");
+      expect(DEFAULT_FACILITATOR_URL).toBe("https://facilitator.pactnetwork.io");
     } finally {
       if (saved !== undefined) process.env.PACT_FACILITATOR_URL = saved;
     }
