@@ -6,6 +6,7 @@ import {
   getSettlementAuthorityPda,
 } from "@pact-network/protocol-v1-client";
 import { loadOrCreateWallet } from "../lib/wallet.ts";
+import { loadUnifiedWallet } from "../lib/pay-wallet.ts";
 import { resolveClusterConfig } from "../lib/solana.ts";
 import {
   loadOrCreatePolicy,
@@ -15,6 +16,23 @@ import {
 import type { Envelope } from "../lib/envelope.ts";
 
 type SubmitResult = { tx_signature: string; confirmation_pending: boolean };
+
+// Pick a wallet for SPL approve/revoke. The unified wallet (pay's active
+// account) is the right answer in 0.3.0+ — the agent who pays the merchant
+// via x402 is the agent who grants the SettlementAuthority delegate. If pay
+// isn't set up on this host, fall back to the legacy pact-managed wallet so
+// 0.2.x users aren't forced to install pay.sh mid-flight; once they do, the
+// unified path picks up automatically. PACT_PRIVATE_KEY beats both.
+async function resolveApproveWallet(
+  configDir: string,
+): Promise<{ keypair: import("@solana/web3.js").Keypair }> {
+  try {
+    const unified = await loadUnifiedWallet({ cluster: "mainnet" });
+    return { keypair: unified.keypair };
+  } catch {
+    return loadOrCreateWallet({ configDir });
+  }
+}
 
 export async function approveCommand(opts: {
   amountUsdc: number;
@@ -26,7 +44,11 @@ export async function approveCommand(opts: {
   if ("error" in cfg) {
     return { status: "client_error", body: { error: cfg.error } };
   }
-  const wallet = loadOrCreateWallet({ configDir: opts.configDir });
+  // 0.3.0: prefer pay's active mainnet account so the allowance is granted
+  // by the same wallet that pays the merchant via x402. Fall back to the
+  // legacy pact-managed wallet so existing users on 0.2.x configs keep
+  // working until they migrate to pay.sh.
+  const wallet = await resolveApproveWallet(opts.configDir);
 
   const policy = loadOrCreatePolicy({ configDir: opts.configDir });
   const check = canAutoDeposit({
@@ -94,7 +116,11 @@ export async function revokeCommand(opts: {
   if ("error" in cfg) {
     return { status: "client_error", body: { error: cfg.error } };
   }
-  const wallet = loadOrCreateWallet({ configDir: opts.configDir });
+  // Revoke MUST hit the same wallet that granted the allowance —
+  // resolveApproveWallet picks pay's active account first, legacy fallback
+  // second, so a 0.2.x→0.3.0 user who granted from the legacy wallet still
+  // revokes from it correctly.
+  const wallet = await resolveApproveWallet(opts.configDir);
 
   const submit =
     opts.submitRevoke ??

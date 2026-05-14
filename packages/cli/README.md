@@ -18,13 +18,26 @@ curl -fsSL https://pactnetwork.io/install.sh | sh
 ## Quick start
 
 ```bash
-pact init                              # install Claude skill in this project
+pact init                              # install Claude skill in this project (gateway flow)
 pact --json https://api.helius.xyz/v0/addresses/<addr>/balances
 pact balance                           # ATA balance + granted allowance
 pact approve 5                         # SPL Token Approve to SettlementAuthority
 pact revoke                            # remove the allowance
 pact agents show
-pact pay curl https://api.example.com  # wrap any tool through 402 challenges
+```
+
+For the `pact pay` flow (wrapping any 402-gated tool), the signer is your pay.sh account, not the pact-managed wallet — so the prerequisites are different:
+
+```bash
+# 1. Install + set up pay.sh (one-time; provisions a Solana keypair into the Keychain)
+curl -fsSL https://pay.sh/install.sh | sh
+pay setup
+
+# 2. Grant the SettlementAuthority an allowance from pay's account
+pact approve 5                         # debits from pay's active account, not a pact wallet
+
+# 3. Wrap any tool through 402 challenges (same signer pays + gets coverage)
+pact pay curl https://api.example.com
 ```
 
 ## `--raw` (uninsured direct call)
@@ -43,9 +56,27 @@ Your USDC stays in your own associated token account (ATA). `pact approve <usdc>
 [solana-foundation/pay](https://github.com/solana-foundation/pay): it
 forwards every argument verbatim to the `pay` binary, tee's stdout /
 stderr / exit code straight back to the caller, and after `pay` exits
-classifies the result and registers the call for Pact coverage. The set
-of supported wrapped tools is whatever `pay` itself supports (currently
-`curl`, `wget`, `http` / HTTPie, `claude`, `codex`, `whoami`):
+classifies the result and registers the call for Pact coverage.
+
+As of 0.3.0, `pact pay` and `pact approve` use **pay.sh's wallet** — they
+read `~/.config/pay/accounts.yml`, find the active account, and shell out
+to `pay account export <name> -` to get the signer. The agent that pays
+the merchant is the same agent that holds the `pact approve` allowance,
+gets premium-billed, and gets refunded on a breach. There is no separate
+pact-managed wallet for this flow; `pay.sh` is a prerequisite unless you
+override with `PACT_PRIVATE_KEY` (see [Env vars](#env-vars)). The bare
+`pact <url>` gateway path is unchanged — it still uses
+`~/.config/pact/<project>/wallet.json`.
+
+On macOS the first `pay account export` per session pops a Touch ID
+prompt; Keychain caches the auth for ~5 minutes so subsequent
+invocations are silent. The `[pact]` summary block prints
+`[pact] wallet: pay/<name> (xxxx…yyyy)` so you can see which pay account
+signed the call.
+
+The set of supported wrapped tools is whatever `pay` itself supports
+(currently `curl`, `wget`, `http` / HTTPie, `claude`, `codex`,
+`whoami`):
 
 ```bash
 pact pay curl https://api.example.com/v1/quote/AAPL
@@ -103,6 +134,7 @@ The `[pact]` block reports one of:
 
 - `[pact] base <amt> <asset> + premium <amt> (covered: pool pay-default) (coverage <id>)` — registered; premium + (on a breach) refund settling on-chain. On a breach you also get `[pact] policy: refund_on_<verdict> — refund <amt> settling on-chain (coverage <id>)` and `[pact] check status: pact pay coverage <id>`.
 - `[pact] base <amt> <asset> + premium 0.000 (uncovered: <reason>)` — no coverage applied (e.g. `no_allowance` → run `pact approve` to enable it; the receipt is still recorded for analytics).
+- `[pact] coverage skipped: no wallet — set up pay or PACT_PRIVATE_KEY` — no signer is resolvable. `~/.config/pay/accounts.yml` is missing/empty and `PACT_PRIVATE_KEY` is not set. The wrapped tool still runs; coverage just doesn't register.
 - `[pact] base <amt> <asset> (coverage not recorded: facilitator unreachable)` — the side-call failed; the call still happened and `pay` already settled with the merchant, so this never fails the command or changes the exit code.
 
 With `--json`, a `coverage` block is added to the envelope's `meta`:
@@ -133,13 +165,13 @@ documented non-mainnet flags (`--sandbox`, `--dev`, `--local`); those
 flows route to a local Surfpool / hosted sandbox and carry zero
 mainnet exposure.
 
-The first `pact pay` invocation on macOS triggers pay.sh's own `pay
-setup` flow, which pops a Touch ID prompt to provision a Solana
-keypair into the Keychain. `pact pay` probes for this state via `pay
-account list` before spawning pay and prints a one-line heads-up to
-stderr when no accounts exist yet, so the biometric prompt is
-expected rather than surprising. The warning never blocks the call;
-subsequent invocations are silent.
+On macOS, the first `pact pay` (or `pact approve`) per shell session
+triggers a Touch ID prompt — that's `pay account export` shelling out
+to read the keypair from Keychain. Keychain caches the auth for ~5
+minutes so subsequent invocations are silent. If pay.sh has never been
+configured, `pact pay` probes via `pay account list` before spawning
+and prints a one-line heads-up to stderr telling you to run `pay setup`;
+the warning never blocks the call.
 
 ## Admin: `pact pause`
 
@@ -213,7 +245,7 @@ Project name is resolved from `--project`, `$PACT_PROJECT`, git repo, or cwd bas
 
 ## Env vars
 
-- `PACT_PRIVATE_KEY` — bypass the disk wallet. Accepts a base58-encoded 64-byte secret key (Phantom-style export), a JSON byte-array keypair `[n, …]` of length 64 (the `solana-keygen` / Solana CLI keypair file format), **or a path to a file** containing either of those (e.g. `PACT_PRIVATE_KEY=~/keys/agent.json` or `PACT_PRIVATE_KEY=$(cat agent.json)`). See also the `--keypair <path>` flag.
+- `PACT_PRIVATE_KEY` — supplies the signing key directly. For the gateway path (`pact <url>`, `pact balance`, `pact revoke`, etc.) it bypasses the disk wallet at `~/.config/pact/<project>/wallet.json`. For the `pact pay` / `pact approve` flow (which normally uses pay.sh's active account) it's the **headless fallback** — when set, pact-cli skips the `pay account export` shell-out and uses this key instead, so CI runners and containers without a Keychain still work. Accepts a base58-encoded 64-byte secret key (Phantom-style export), a JSON byte-array keypair `[n, …]` of length 64 (the `solana-keygen` / Solana CLI keypair file format), **or a path to a file** containing either of those (e.g. `PACT_PRIVATE_KEY=~/keys/agent.json` or `PACT_PRIVATE_KEY=$(cat agent.json)`). See also the `--keypair <path>` flag.
 - `PACT_GATEWAY_URL` — override gateway (default `https://api.pactnetwork.io`)
 - `PACT_RPC_URL` — override Solana RPC (default `https://api.mainnet-beta.solana.com`)
 - `PACT_CLUSTER` — only `mainnet` is accepted; any other value is rejected at startup with a `client_error` envelope. v0.1.0 is mainnet-only — local devnet testing requires sed-replacing `constants.rs` and rebuilding the program per Rick's runbook.

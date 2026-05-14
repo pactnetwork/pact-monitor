@@ -202,6 +202,10 @@ describe("pact pay: passthrough (gate open)", () => {
         stderr: PAY_VERBOSE_SUCCESS,
       }),
       summaryStream: summary,
+      // Hermetic: pretend no wallet is resolvable so the breach path
+      // emits the "no wallet" note regardless of whether pay.sh is
+      // installed on the test runner.
+      skipWalletResolution: true,
     });
     expect(result.kind).toBe("passthrough");
     if (result.kind === "passthrough") {
@@ -215,7 +219,7 @@ describe("pact pay: passthrough (gate open)", () => {
     // breach-with-refund paths are exercised in the
     // "pact pay: facilitator coverage" describe block below with a
     // mocked registerCoverage.
-    expect(summary.text).toContain("coverage skipped (no pact wallet)");
+    expect(summary.text).toContain("coverage skipped (no wallet)");
   });
 
   test("upstream 422 → client_error outcome, no refund offered", async () => {
@@ -859,7 +863,7 @@ describe("pact pay: facilitator coverage", () => {
     expect(summary.text).not.toContain("premium");
   });
 
-  test("no signing key resolvable → coverage skipped with 'no pact wallet' note", async () => {
+  test("no signing key resolvable → coverage skipped with 'no wallet' note", async () => {
     const savedKey = process.env.PACT_PRIVATE_KEY;
     delete process.env.PACT_PRIVATE_KEY;
     try {
@@ -872,11 +876,14 @@ describe("pact pay: facilitator coverage", () => {
           stderr: X402_RESOURCE_TRACE + PAY_VERBOSE_SUCCESS,
         }),
         summaryStream: summary,
-        // no keypair, no configDir → resolveSigningKey returns null
+        // Hermetic: simulate "no wallet on host" so the assertion is
+        // deterministic regardless of whether pay.sh is installed on
+        // the test runner.
+        skipWalletResolution: true,
       });
       expect(result.kind).toBe("passthrough");
       if (result.kind === "passthrough") expect(result.coverage).toBeNull();
-      expect(summary.text).toContain("coverage skipped: no pact wallet");
+      expect(summary.text).toContain("coverage skipped: no wallet");
     } finally {
       if (savedKey !== undefined) process.env.PACT_PRIVATE_KEY = savedKey;
     }
