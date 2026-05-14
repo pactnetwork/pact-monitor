@@ -1,33 +1,37 @@
-// Regression test for the bun-compiled binary: `pact init` must succeed
-// against the actual `dist/pact` produced by `bun build --compile`.
+// Regression test for the Node bundle: `pact init` must succeed against
+// the actual `dist/pact.js` produced by `bun build --target=node`.
 //
 // This guards against a class of bugs where skill assets (SKILL.md,
-// claude-md-snippet.md) are not embedded in the bunfs virtual filesystem.
-// The runtime symptom is `ENOENT: no such file or directory, open
-// '/$bunfs/root/skill/SKILL.md'`. Source-only unit tests don't catch it
-// because they read the files directly from disk.
+// claude-md-snippet.md) drift out of sync with the bundle — bun's
+// `import x from "./foo.md" with { type: "text" }` inlines the file at
+// build time, so a stale bundle ships stale content. Source-only unit
+// tests don't catch this because they read the files directly from disk.
+//
+// History: pre-0.2.8 this targeted `dist/pact` (a bun-compiled native
+// binary). 0.2.8 collapsed to a single Node bundle (`dist/pact.js`); the
+// regression model is identical — embedded asset must match source.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const BINARY = join(import.meta.dir, "..", "dist", "pact");
+const BUNDLE = join(import.meta.dir, "..", "dist", "pact.js");
 const SKILL_SOURCE = join(import.meta.dir, "..", "src", "skill", "SKILL.md");
 const SNIPPET_SOURCE = join(import.meta.dir, "..", "src", "skill", "claude-md-snippet.md");
 
-const hasBinary = existsSync(BINARY);
-const describeIfBinary = hasBinary ? describe : describe.skip;
+const hasBundle = existsSync(BUNDLE);
+const describeIfBundle = hasBundle ? describe : describe.skip;
 
-describeIfBinary("compiled binary: pact init", () => {
+describeIfBundle("node bundle: pact init", () => {
   let dir: string;
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "pact-bin-init-"));
+    dir = mkdtempSync(join(tmpdir(), "pact-bundle-init-"));
   });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
   test("writes SKILL.md and CLAUDE.md from bundled assets", () => {
-    const result = spawnSync(BINARY, ["--json", "init"], {
+    const result = spawnSync("node", [BUNDLE, "--json", "init"], {
       cwd: dir,
       env: { ...process.env, PACT_MAINNET_ENABLED: "1" },
       encoding: "utf8",
@@ -53,10 +57,10 @@ describeIfBinary("compiled binary: pact init", () => {
   });
 });
 
-if (!hasBinary) {
-  // Surface a clear note when the binary hasn't been built yet so this test
+if (!hasBundle) {
+  // Surface a clear note when the bundle hasn't been built yet so this test
   // doesn't silently no-op in environments that skip `pnpm build`.
   console.warn(
-    `[binary-init.test] skipping: ${BINARY} not found. Run \`pnpm build\` first.`,
+    `[binary-init.test] skipping: ${BUNDLE} not found. Run \`pnpm build\` first.`,
   );
 }

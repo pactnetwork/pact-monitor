@@ -35,7 +35,7 @@
 
 import { makeEnvelope, type Envelope } from "../lib/envelope.ts";
 import { resolveClusterConfig } from "../lib/solana.ts";
-import { loadOrCreateWallet } from "../lib/wallet.ts";
+import { loadUnifiedWallet, type PayActiveAccount } from "../lib/pay-wallet.ts";
 import {
   runPay,
   withVerboseFlag,
@@ -129,6 +129,12 @@ export interface PayCommandInput {
   // Test override: facilitator base URL (also overridable via
   // PACT_FACILITATOR_URL env var, which registerCoverage reads itself).
   facilitatorUrl?: string;
+  // Test override: skip the production wallet resolution (pay account
+  // export + PACT_PRIVATE_KEY) entirely and treat the host as if no
+  // signing key were available. Used by cmd-pay.test.ts to deterministically
+  // exercise the "no wallet" branch without depending on whether pay.sh
+  // happens to be installed on the test runner.
+  skipWalletResolution?: boolean;
 }
 
 export interface PassthroughResult {
@@ -246,12 +252,17 @@ export async function payCommand(
 
   // 4. Coverage side-call. Only when a payment was actually attempted
   //    (a free passthrough has nothing to cover), --no-coverage was not
-  //    passed, and we can resolve a signing key (the pact wallet, whose
-  //    `pact approve` allowance funds the premium). Best-effort: a
-  //    facilitator outage degrades to a soft line, never fails.
+  //    passed, and we can resolve a signing key — which in 0.3.0+ is
+  //    pay's active account (same wallet that paid the merchant), so the
+  //    facilitator receipt is signed by the agent that actually paid.
+  //    Best-effort: a facilitator outage degrades to a soft line, never
+  //    fails the command or changes its exit code.
   let coverage: CoverageDecision | null = null;
+  let payAccount: PayActiveAccount | null = null;
   if (input.noCoverage !== true && shouldRegisterCoverage(classified)) {
-    const keypair = resolveSigningKey(input);
+    const resolved = await resolveSigningKey(input);
+    const keypair = resolved?.keypair ?? null;
+    payAccount = resolved?.payAccount ?? null;
     if (keypair) {
       const payload = buildCoveragePayload({
         agentPubkey: keypair.publicKey.toBase58(),
@@ -286,7 +297,7 @@ export async function payCommand(
   //    stdout into jq still get clean upstream bytes.
   if (input.emitSummary !== false) {
     const out = input.summaryStream ?? process.stderr;
-    writePactSummary(out, classified, coverage, input.noCoverage === true);
+    writePactSummary(out, classified, coverage, input.noCoverage === true, payAccount);
   }
 
   return {
@@ -300,13 +311,28 @@ export async function payCommand(
   };
 }
 
-function resolveSigningKey(input: PayCommandInput): Keypair | null {
-  if (input.keypair) return input.keypair;
-  // PACT_PRIVATE_KEY works even without a configDir; loadOrCreateWallet
-  // reads it first. A configDir is only needed for the on-disk wallet.
-  if (!input.configDir && !process.env.PACT_PRIVATE_KEY) return null;
+async function resolveSigningKey(
+  input: PayCommandInput,
+): Promise<{ keypair: Keypair; payAccount: PayActiveAccount | null } | null> {
+  // Test injection: callers can pass a keypair directly and skip wallet
+  // resolution entirely (cmd-pay.test.ts does this for hermetic tests).
+  if (input.keypair) return { keypair: input.keypair, payAccount: null };
+
+  // Test override: simulate "no wallet on host" deterministically, so
+  // tests don't depend on whether pay.sh is installed where they run.
+  if (input.skipWalletResolution === true) return null;
+
+  // Production path: prefer pay's active mainnet account; fall back to
+  // PACT_PRIVATE_KEY for CI / headless. Anything else (no pay, no env)
+  // returns null and the facilitator side-call is skipped — pay-shell
+  // already settled the payment with the merchant, we just don't get
+  // coverage recorded.
   try {
-    return loadOrCreateWallet({ configDir: input.configDir ?? "" }).keypair;
+    const result = await loadUnifiedWallet({ cluster: "mainnet" });
+    return {
+      keypair: result.keypair,
+      payAccount: result.payAccount ?? null,
+    };
   } catch {
     return null;
   }
@@ -340,10 +366,20 @@ function writePactSummary(
   classified: ReturnType<typeof classifyPayResult>,
   coverage: CoverageDecision | null,
   noCoverage: boolean,
+  payAccount: PayActiveAccount | null,
 ): void {
   const tag = "[pact]";
   const lines: string[] = [];
   const { payment, outcome, upstreamStatus, reason } = classified;
+
+  // Surface which pay wallet Pact is using (0.3.0+ unified-wallet model).
+  // Absent when the wallet came from PACT_PRIVATE_KEY (CI / headless) or
+  // when no signing happened (passthrough with no payment attempted).
+  if (payment.attempted && payAccount) {
+    lines.push(
+      `${tag} wallet: pay/${payAccount.name} (${payAccount.pubkey.slice(0, 4)}…${payAccount.pubkey.slice(-4)})`,
+    );
+  }
 
   // Base / premium / coverage line, present when a payment was
   // attempted.
@@ -356,9 +392,9 @@ function writePactSummary(
     if (noCoverage) {
       lines.push(`${tag} base ${base} (coverage skipped: --no-coverage)`);
     } else if (coverage === null) {
-      // No signing key resolvable (no pact wallet / PACT_PRIVATE_KEY).
+      // No signing key resolvable (no pay account, no PACT_PRIVATE_KEY).
       lines.push(
-        `${tag} base ${base} (coverage skipped: no pact wallet — run \`pact init\` / set PACT_PRIVATE_KEY)`,
+        `${tag} base ${base} (coverage skipped: no wallet — set up pay or PACT_PRIVATE_KEY)`,
       );
     } else if (coverage.status === "facilitator_unreachable") {
       lines.push(
@@ -427,7 +463,7 @@ function appendBreachLines(
     return;
   }
   if (coverage === null) {
-    lines.push(`${tag} policy: refund_on_${verdict} — coverage skipped (no pact wallet)`);
+    lines.push(`${tag} policy: refund_on_${verdict} — coverage skipped (no wallet)`);
     return;
   }
   if (coverage.status === "facilitator_unreachable") {

@@ -1,7 +1,7 @@
 ---
 name: pact
-version: 0.2.5
-description: Insured paid API calls for AI agents on Solana. Use INSTEAD of curl/fetch/Bash when calling these provider hostnames: api.helius.xyz, mainnet.helius-rpc.com, public-api.birdeye.so, quote-api.jup.ag, lite-api.jup.ag, api.elfa.ai, fal.run. Routes through api.pactnetwork.io for premium-billed insurance with auto-refund on upstream failure. Mainnet-only; requires PACT_MAINNET_ENABLED=1. Use `pact pay <tool> [args...]` (wraps solana-foundation/pay; supported tools include curl, wget, http, claude, codex) to call any 402-gated x402 or MPP endpoint — it registers the call for Pact coverage at facilitator.pactnetwork.io (premium from your `pact approve` allowance, refund from the subsidised pay-default pool on a breach). Do NOT use for: localhost, your own server, free public APIs (jsonplaceholder, public RPCs without quotas), GET-by-static-CDN fetches.
+version: 0.3.0
+description: Insured paid API calls for AI agents on Solana. Use INSTEAD of curl/fetch/Bash when calling these provider hostnames: api.helius.xyz, mainnet.helius-rpc.com, public-api.birdeye.so, quote-api.jup.ag, lite-api.jup.ag, api.elfa.ai, fal.run. Routes through api.pactnetwork.io for premium-billed insurance with auto-refund on upstream failure. Mainnet-only; requires PACT_MAINNET_ENABLED=1. Use `pact pay <tool> [args...]` (wraps solana-foundation/pay; supported tools include curl, wget, http, claude, codex) to call any 402-gated x402 or MPP endpoint — it registers the call for Pact coverage at facilitator.pactnetwork.io. As of 0.3.0, `pact pay` and `pact approve` use pay.sh's active account as the signer (read from `~/.config/pay/accounts.yml`), so the agent paying the merchant is the same agent holding the allowance and receiving refunds; set `PACT_PRIVATE_KEY` for headless/CI overrides. Do NOT use for: localhost, your own server, free public APIs (jsonplaceholder, public RPCs without quotas), GET-by-static-CDN fetches.
 ---
 
 # Pact — insured API calls for AI agents
@@ -12,8 +12,12 @@ You have access to `pact`, a CLI that wraps API calls and insures them automatic
 
 ## Quick start
 
+There are two flows. The **gateway flow** (`pact <url>`) uses a pact-managed wallet at `~/.config/pact/<project>/wallet.json`. The **pay flow** (`pact pay <tool>`) uses pay.sh's active account as the signer — same wallet pays the merchant, holds the `pact approve` allowance, and receives refunds.
+
+### Gateway flow (`pact <url>`)
+
 ```bash
-# 1. Install (Homebrew once available; for now grab the prebuilt binary)
+# 1. Install pact-cli
 curl -sSL https://pact.network/install.sh | sh
 
 # 2. Set the mainnet gate + project name
@@ -24,13 +28,35 @@ export PACT_PROJECT=my-agent
 pact init
 
 # 4. Grant a USDC allowance to the SettlementAuthority delegate
-pact approve 5      # cap settlement debits at $5 USDC
+pact approve 5      # cap settlement debits at $5 USDC (debits from the pact wallet)
 
 # 5. Make insured calls
 pact --json https://api.helius.xyz/v0/addresses/<addr>/balances
 ```
 
 `pact init` writes the skill into `.claude/skills/pact/SKILL.md` and appends a snippet to `CLAUDE.md` / `AGENTS.md` so Claude Code picks it up automatically.
+
+### Pay flow (`pact pay <tool>`)
+
+```bash
+# 1. Install + set up pay.sh (provisions a Solana keypair into the Keychain)
+curl -fsSL https://pay.sh/install.sh | sh
+pay setup
+pay account list                       # confirm an active account exists
+
+# 2. Install pact-cli (same one-liner as above; skip if already installed)
+curl -sSL https://pact.network/install.sh | sh
+export PACT_MAINNET_ENABLED=1
+
+# 3. Grant a USDC allowance from pay's account (no `pact init` needed for this flow)
+pact approve 5                         # debits from pay's active account
+
+# 4. Wrap any 402-gated tool
+# requires pay.sh installed and `pay account list` to show an active account
+pact pay curl https://api.example.com/v1/quote/AAPL
+```
+
+For headless / CI environments without a Keychain, set `PACT_PRIVATE_KEY` instead of running `pay setup` — `pact approve` and `pact pay` will use that key directly.
 
 ## Status table — every closed value, exit code, meaning, remediation
 
@@ -41,7 +67,7 @@ ALWAYS pass `--json`. Parse `.status` first; never grep stdout.
 | `ok`                    | 0    | call succeeded; use `.body`                                        | proceed                                                                                              |
 | `client_error`          | 0    | request was malformed or upstream returned 4xx                     | surface to user; do not retry                                                                        |
 | `server_error`          | 0    | upstream returned 5xx; refund auto-issued                          | retry once if idempotent                                                                             |
-| `needs_funding`         | 10   | USDC ATA balance below estimated premium OR no allowance granted   | `pact approve <usdc>` if policy cap allows; else surface deposit URL from `.body.deposit_url`        |
+| `needs_funding`         | 10   | USDC ATA balance below estimated premium OR no allowance granted   | `pact approve <usdc>` if policy cap allows (gateway flow debits the pact wallet; `pact pay` flow debits your pay account — fund whichever applies); else surface deposit URL from `.body.deposit_url` |
 | `auto_deposit_capped`   | 11   | self-funding cap exhausted                                         | raise `per_deposit_max_usdc` / `session_total_max_usdc` in `~/.config/pact/<project>/policy.yaml` or wait for session reset |
 | `endpoint_paused`       | 12   | per-endpoint kill switch active                                    | pick another provider or wait                                                                        |
 | `no_provider`           | 20   | endpoint not yet onboarded — terminal during private beta          | use `--raw` for an uninsured direct call (no gateway, no Pact signing, no premium), or request access from the Pact team. v0.1.0 has no auto-provision flow; manual onboarding only |
@@ -98,9 +124,12 @@ You may run `pact approve <amount>` automatically as long as `<amount> <= per_de
 
 ## `pact pay` — wrap any CLI through 402 challenges (with coverage)
 
-When the user has a tool that hits a 402-gated paid API not on the insured list (e.g. an x402 or MPP endpoint), use `pact pay`. `pact pay` is a thin wrapper around [solana-foundation/pay](https://github.com/solana-foundation/pay) — the wrapped-tool list is whatever `pay` itself supports (currently `curl`, `wget`, `http` / HTTPie, `claude`, `codex`, `whoami`):
+When the user has a tool that hits a 402-gated paid API not on the insured list (e.g. an x402 or MPP endpoint), use `pact pay`. `pact pay` is a thin wrapper around [solana-foundation/pay](https://github.com/solana-foundation/pay) — the wrapped-tool list is whatever `pay` itself supports (currently `curl`, `wget`, `http` / HTTPie, `claude`, `codex`, `whoami`).
+
+**Wallet model (0.3.0+):** `pact pay` and `pact approve` both use pay.sh's active account as the signer (read from `~/.config/pay/accounts.yml`, fetched via `pay account export <name> -`). The agent paying the merchant is the same agent holding the allowance and receiving refunds — there is no separate pact-managed wallet for this flow. `pay.sh` is therefore a prerequisite; for CI / headless environments, set `PACT_PRIVATE_KEY` to override.
 
 ```bash
+# requires pay.sh installed and `pay account list` to show an active account
 pact pay curl https://debugger.pay.sh/mpp/quote/AAPL
 pact pay wget https://api.example.com/v1/data.json
 pact pay --json curl -s https://x402.example/v1/data    # structured envelope
@@ -116,7 +145,9 @@ When a payment was attempted, `pact pay` makes a side-call to `facilitator.pactn
 The `[pact]` block reports the coverage state:
 
 - `[pact] base <amt> <asset> + premium <amt> (covered: pool pay-default) (coverage <id>)` — registered; premium + (on a breach) refund settling on-chain. On a breach you also get `[pact] policy: refund_on_<verdict> — refund <amt> settling on-chain (coverage <id>)` and `[pact] check status: pact pay coverage <id>`.
+- `[pact] wallet: pay/<name> (xxxx…yyyy)` — accompanies the line above; shows which pay account signed.
 - `[pact] base <amt> <asset> + premium 0.000 (uncovered: <reason>)` — no coverage applied. If `<reason>` is `no_allowance`, run `pact approve <usdc>` to enable coverage; the receipt is still recorded for analytics.
+- `[pact] coverage skipped: no wallet — set up pay or PACT_PRIVATE_KEY` — no signer is resolvable (`~/.config/pay/accounts.yml` is missing/empty and `PACT_PRIVATE_KEY` is not set). The wrapped tool still runs and `pay` may still settle directly; only the Pact side-call is skipped.
 - `[pact] base <amt> <asset> (coverage not recorded: facilitator unreachable)` — the side-call failed; the call still happened and `pay` already settled with the merchant, so the command never fails and the exit code is unchanged.
 
 In `--json` mode `.meta.coverage` is `{ id, status, premiumBaseUnits, refundBaseUnits, pool: "pay-default", reason }` where `status` ∈ `settlement_pending` / `uncovered` / `rejected` / `facilitator_unreachable`.
