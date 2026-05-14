@@ -17,6 +17,12 @@ import {
   buildX402Challenge,
   encodeAcceptHeader,
 } from "./x402.js";
+import {
+  buildRequirements,
+  makeX402Handler,
+  payAIConfigFromEnv,
+  type X402PaymentHandler,
+} from "./x402-payai.js";
 
 const SERVICE = "pact-dummy-upstream";
 const DEFAULT_PRICE = "287.90";
@@ -135,6 +141,27 @@ export function quoteJson(symbol: string): {
 export function createApp(): Hono {
   const app = new Hono();
 
+  // Lazily build the PayAI handler. If `DUMMY_X402_USE_PAYAI=1` is not in
+  // env, this stays null and `?x402=1` falls through to the legacy
+  // emulation. When enabled, ALL `?x402=1` requests go through PayAI:
+  // verify → (settle eagerly on ?fail=1 / ?status=5xx, settle on success
+  // otherwise) → return upstream response. Pool vault as treasury makes
+  // the flow self-balancing for refund-on-breach demos.
+  const payAIConfig = payAIConfigFromEnv();
+  const payAI: X402PaymentHandler | null = payAIConfig
+    ? makeX402Handler(payAIConfig)
+    : null;
+  if (payAIConfig) {
+    // Operator-visible log so deploys can confirm the right mode is on.
+    console.log(
+      `[dummy-upstream] PayAI x402 enabled: network=${payAIConfig.network} ` +
+        `treasury=${payAIConfig.treasuryAddress} ` +
+        `facilitator=${payAIConfig.facilitatorUrl} ` +
+        `rpc=${payAIConfig.rpcUrl} ` +
+        `auth=${payAIConfig.apiKeyId ? "api-key" : "free-tier"}`,
+    );
+  }
+
   app.get("/", (c) => c.html(HTML_INDEX));
 
   app.get("/health", (c) => c.json({ status: "ok", service: SERVICE }));
@@ -152,20 +179,27 @@ export function createApp(): Hono {
     }
 
     // 2. x402 paywall — highest precedence: a paid call should never be
-    //    masked by a ?status= echo. Acts as a (demo) x402 server: a request
-    //    WITHOUT a payment header gets the 402 + challenge; on the retry
-    //    WITH one (X-PAYMENT for standard x402, or PAYMENT-SIGNATURE for the
-    //    "header" flavor pay also speaks) we treat the call as paid and fall
-    //    through to the normal response branches (so `?x402=1&fail=1` lets you
-    //    demo "agent paid, then upstream 5xx'd"). We do NOT verify the payment
-    //    — this is a demo target; the point is exercising the wrapper, not
-    //    settlement.
+    //    masked by a ?status= echo. Two implementations:
+    //
+    //    a) PayAI mode (`DUMMY_X402_USE_PAYAI=1` in env): real x402-exact
+    //       flow via PayAI's hosted facilitator. The on-retry payment is
+    //       VERIFIED against the facilitator (signature, challenge match,
+    //       balance), then either SETTLED eagerly + a failure is returned
+    //       (`?fail=1` / `?status=5xx`) — the "agent paid, got nothing"
+    //       case Pact insures against — or the success branch settles
+    //       AFTER returning 200. When treasury = pay-default pool vault,
+    //       a breach refund repays from the same pool the settlement just
+    //       fed, so the demo is self-balancing modulo Pact's premium.
+    //
+    //    b) Emulation mode (default): unchanged from pre-PayAI behavior.
+    //       402 on no header, "PAYMENT-RESPONSE: accepted; demo=1" stamp
+    //       on the retry, no real verification or settlement. For
+    //       classifier-only testing without burning USDC.
     if (q.x402 === "1") {
-      const hasPayment =
-        c.req.header("x-payment") !== undefined ||
-        c.req.header("payment-signature") !== undefined ||
-        c.req.header("x-payment-signature") !== undefined;
-      if (!hasPayment) {
+      const failureRequested = q.fail === "1" || parseStatus(q.status) !== null;
+
+      if (payAI && payAIConfig) {
+        // ----- PayAI mode -----
         const proto = (c.req.header("x-forwarded-proto") ?? "https").split(",")[0].trim();
         let resourceUrl = c.req.url;
         try {
@@ -175,14 +209,122 @@ export function createApp(): Hono {
         } catch {
           /* keep c.req.url */
         }
-        const accept = buildX402Accept(resourceUrl);
-        const challenge = buildX402Challenge(resourceUrl);
-        c.header("WWW-Authenticate", 'x402 realm="pact-dummy-upstream"');
-        c.header("PAYMENT-REQUIRED", encodeAcceptHeader(accept));
-        return c.json(challenge, 402);
+
+        const paymentHeader = payAI.extractPayment(
+          Object.fromEntries(c.req.raw.headers.entries()),
+        );
+        const requirements = await buildRequirements(
+          payAI,
+          payAIConfig.network,
+          resourceUrl,
+        );
+
+        // No payment header → emit the 402 challenge the SDK builds.
+        if (!paymentHeader) {
+          const r = payAI.create402Response(requirements, resourceUrl);
+          c.header("WWW-Authenticate", 'x402 realm="pact-dummy-upstream"');
+          return c.json(r.body, r.status);
+        }
+
+        // Verify with the facilitator. If invalid (bad signature, wrong
+        // amount, etc.), refuse with another 402 so the client can retry.
+        // We do NOT settle — verification failed means no funds moved.
+        const verified = await payAI.verifyPayment(paymentHeader, requirements);
+        if (!verified.isValid) {
+          return c.json(
+            {
+              error: "payment_invalid",
+              reason: verified.invalidReason ?? "unknown",
+              symbol,
+              source: SERVICE,
+              ts: Date.now(),
+            },
+            402,
+          );
+        }
+
+        // MODE C — failure path. Settle FIRST (so the agent is actually
+        // debited and the pool vault credited), THEN return the requested
+        // failure. This is the "agent paid eagerly, upstream then 5xx'd"
+        // scenario Pact's refund flow protects against. Pact's classifier
+        // will see server_error, queue a settle_batch refund from the
+        // SAME pool vault the funds just landed in, and net the agent to
+        // -premium (typically ~0.0005 USDC) instead of -full-amount.
+        if (failureRequested) {
+          const settled = await payAI.settlePayment(paymentHeader, requirements);
+          if (!settled.success) {
+            // Settlement itself failed — return 500 so Pact's classifier
+            // labels it server_error. No funds moved; no refund needed.
+            return c.json(
+              {
+                error: "settle_failed",
+                reason: settled.errorReason ?? "unknown",
+                symbol,
+                source: SERVICE,
+                ts: Date.now(),
+              },
+              500,
+            );
+          }
+          if (settled.transaction) {
+            c.header(
+              "x-payment-response",
+              Buffer.from(JSON.stringify(settled)).toString("base64"),
+            );
+          }
+          // Fall through to the status / fail branches below — settlement
+          // already happened so any 5xx the upstream branches emit IS the
+          // post-payment failure we want.
+        } else {
+          // MODE A — happy path. Settle AFTER we've decided we're going
+          // to return 200, so a downstream bug between here and the
+          // return doesn't charge the agent for a response we never
+          // actually delivered.
+          const settled = await payAI.settlePayment(paymentHeader, requirements);
+          if (!settled.success) {
+            return c.json(
+              {
+                error: "settle_failed",
+                reason: settled.errorReason ?? "unknown",
+                symbol,
+                source: SERVICE,
+                ts: Date.now(),
+              },
+              500,
+            );
+          }
+          if (settled.transaction) {
+            c.header(
+              "x-payment-response",
+              Buffer.from(JSON.stringify(settled)).toString("base64"),
+            );
+          }
+        }
+      } else {
+        // ----- Emulation mode -----
+        const hasPayment =
+          c.req.header("x-payment") !== undefined ||
+          c.req.header("payment-signature") !== undefined ||
+          c.req.header("x-payment-signature") !== undefined;
+        if (!hasPayment) {
+          const proto = (c.req.header("x-forwarded-proto") ?? "https").split(",")[0].trim();
+          let resourceUrl = c.req.url;
+          try {
+            const u = new URL(c.req.url);
+            u.protocol = `${proto}:`;
+            resourceUrl = u.toString();
+          } catch {
+            /* keep c.req.url */
+          }
+          const accept = buildX402Accept(resourceUrl);
+          const challenge = buildX402Challenge(resourceUrl);
+          c.header("WWW-Authenticate", 'x402 realm="pact-dummy-upstream"');
+          c.header("PAYMENT-REQUIRED", encodeAcceptHeader(accept));
+          return c.json(challenge, 402);
+        }
+        // paid (no verification) — echo a settlement-ish header, fall through.
+        c.header("PAYMENT-RESPONSE", "accepted; demo=1");
       }
-      // paid — echo a settlement-ish header back, then fall through.
-      c.header("PAYMENT-RESPONSE", "accepted; demo=1");
     }
 
     // 3. Arbitrary status echo. Content-less statuses (101/204/205/304, 1xx)
