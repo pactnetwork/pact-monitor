@@ -1,11 +1,13 @@
 // pact pay --krexa — Krexa Compute Gateway x402 flow.
 //
 // Krexa-published x402 services use a `PAYMENT-REQUIRED` header (no `X-`
-// prefix) and a `PAYMENT-SIGNATURE` retry header carrying an on-chain
-// USDC transfer signature, distinct from x402.org canonical. The
-// solana-foundation `pay` binary doesn't recognise Krexa's flavor, so
-// `--krexa` bypasses the normal pay-binary path entirely and runs a
-// self-contained settle + retry flow against curl.
+// prefix). The retry carries the on-chain USDC transfer proof in TWO
+// headers — `PAYMENT-SIGNATURE` and `X-Payment-Token` — both set to
+// `base64(JSON.stringify({signature}))`, mirroring @krexa/cli's `krexa
+// x402 call` retry behaviour. The solana-foundation `pay` binary
+// doesn't recognise Krexa's flavor, so `--krexa` bypasses the normal
+// pay-binary path entirely and runs a self-contained settle + retry
+// flow against curl.
 //
 // Flow:
 //
@@ -15,7 +17,8 @@
 //      ↓  if 402 + PAYMENT-REQUIRED challenge:
 //   build USDC SPL TransferChecked from pact wallet ATA → payTo ATA,
 //   sign, submit, await confirmation
-//      ↓  inject `PAYMENT-SIGNATURE: <txSig>` and re-spawn curl
+//      ↓  inject `PAYMENT-SIGNATURE` and `X-Payment-Token` (both =
+//        base64-JSON `{signature: <txSig>}`) and re-spawn curl
 //      ↓
 //   return Krexa result (signature + retry tool exit + retry status)
 //
@@ -32,6 +35,8 @@ import { makeEnvelope, type Envelope } from "../lib/envelope.ts";
 import { loadOrCreateWallet } from "../lib/wallet.ts";
 import {
   HEADER_KREXA_RETRY,
+  HEADER_KREXA_RETRY_TOKEN,
+  buildKrexaRetryHeaders,
   parseKrexaChallenge,
   selectKrexaSolanaRequirements,
   type KrexaChallenge,
@@ -374,11 +379,17 @@ export async function payKrexaCommand(
   // callers receive the upstream bytes through the result, not
   // straight to process.stdout (the index.ts emit() owns that
   // decision in --json vs passthrough modes).
+  // Retry header value per Krexa publishing-x402-service spec:
+  // base64(JSON.stringify({signature})). Both PAYMENT-SIGNATURE and
+  // X-Payment-Token carry the identical token, matching @krexa/cli's
+  // `krexa x402 call` retry behaviour.
+  const retry = buildKrexaRetryHeaders(settleResult.signature);
   const retryArgs = [
     "-s",
     "-o", "-",
     "-w", "\nHTTP_STATUS:%{http_code}\n",
-    "-H", `${HEADER_KREXA_RETRY}: ${settleResult.signature}`,
+    "-H", `${HEADER_KREXA_RETRY}: ${retry.paymentSignature}`,
+    "-H", `${HEADER_KREXA_RETRY_TOKEN}: ${retry.xPaymentToken}`,
     ...input.args,
   ];
   const second = await spawn(retryArgs);

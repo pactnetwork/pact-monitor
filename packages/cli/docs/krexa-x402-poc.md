@@ -106,3 +106,38 @@ gateway debits against a pre-approved SPL Allowance. Krexa's published
 x402 services don't run a Pact-aware gateway, so they need a
 self-contained on-chain proof per call. Different trust model, separate
 code path.
+
+## Live target status (2026-05-14)
+
+PR #126's wrapper is correct against Krexa's docs at
+https://krexa.mintlify.app/docs/builders/publishing-x402-service —
+it parses the `PAYMENT-REQUIRED` header per the `x402Version: 2`
+envelope and sends both `PAYMENT-SIGNATURE` and `X-Payment-Token` as
+`base64(JSON.stringify({signature}))`, mirroring @krexa/cli@0.2.8's
+`krexa x402 call` retry behaviour.
+
+However, no live service currently publishes that protocol:
+
+- Krexa's first-party `/api/v1/solana/compute/<agent>/complete` is
+  direct-pay (`paymentSignature` inside the request body), not a 402
+  challenge. Hitting it through `pact pay --krexa` returns HTTP 400
+  with a Zod validation error and no on-chain settlement is attempted.
+- The 72 providers in the live `https://pay.sh/api/catalog` registry
+  all use MPP (`WWW-Authenticate: Payment id=…, realm="MPP Payment"`),
+  which `pact pay` already handles via the bundled
+  `solana-foundation/pay` binary. The `request` field there decodes to
+  a partially-built tx (`{amount, currency, methodDetails: {feePayer,
+  feePayerKey, recentBlockhash, splits, tokenProgram}, recipient}`) —
+  a different shape than Krexa's `accepts[]` envelope.
+- The `.paysh.dev` subdomains referenced in some Krexa docs
+  (`gemini.paysh.dev`, `helius.paysh.dev`, etc.) do not resolve.
+
+Negative-path verified on 2026-05-14: pointing `pact pay --krexa` at
+the MPP service
+`https://embeddings.alibaba.gateway-402.com/compatible-mode/v1/embeddings`
+causes the wrapper to fail krexa-challenge detection cleanly and
+return a structured `client_error` envelope with `upstream_status:
+402` and the upstream body preview, without any USDC spend.
+
+The live x402-publishing demo is deferred until a service publishes
+the Krexa-x402 spec end-to-end.

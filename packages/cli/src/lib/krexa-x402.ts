@@ -2,8 +2,12 @@
 //
 // Krexa's x402-published services (per docs/builders/publishing-x402-service.md
 // at krexa.mintlify.app) emit a `PAYMENT-REQUIRED` header — no `X-` prefix,
-// distinct from x402.org's canonical `X-Payment-Required`. The retry header is
-// `PAYMENT-SIGNATURE` carrying the on-chain USDC transfer tx signature.
+// distinct from x402.org's canonical `X-Payment-Required`. The retry carries
+// the on-chain USDC transfer proof in TWO headers: `PAYMENT-SIGNATURE` and
+// `X-Payment-Token`, both set to `base64(JSON.stringify({signature: <txSig>}))`.
+// This matches @krexa/cli@0.2.8's `krexa x402 call` retry behaviour
+// (dist/commands/x402.js), which sends both header names with the same
+// base64-JSON token value.
 //
 // Settlement model is per-request on-chain (not allowance-based like Pact
 // Network): the client builds a USDC SPL transfer from its ATA to the
@@ -13,6 +17,28 @@
 
 const HEADER_KREXA_PAYMENT_REQUIRED = "payment-required";
 export const HEADER_KREXA_RETRY = "PAYMENT-SIGNATURE";
+export const HEADER_KREXA_RETRY_TOKEN = "X-Payment-Token";
+
+// Build the retry header value the Krexa publishing-x402-service spec
+// expects: base64(JSON.stringify({signature})). Both PAYMENT-SIGNATURE
+// and X-Payment-Token carry the same value, mirroring @krexa/cli's
+// x402.js (dist/commands/x402.js → "krexa x402 call" emits both with the
+// identical base64 token).
+export function buildKrexaRetryHeaders(signature: string): {
+  value: string;
+  paymentSignature: string;
+  xPaymentToken: string;
+} {
+  const value = Buffer.from(
+    JSON.stringify({ signature }),
+    "utf8",
+  ).toString("base64");
+  return {
+    value,
+    paymentSignature: value,
+    xPaymentToken: value,
+  };
+}
 
 export interface KrexaPaymentRequirements {
   scheme: string;

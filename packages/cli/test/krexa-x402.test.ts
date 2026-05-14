@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
+  HEADER_KREXA_RETRY,
+  HEADER_KREXA_RETRY_TOKEN,
+  buildKrexaRetryHeaders,
   parseKrexaChallenge,
   selectKrexaSolanaRequirements,
 } from "../src/lib/krexa-x402.ts";
@@ -133,5 +136,41 @@ describe("krexa requirement selection", () => {
     });
     expect(c).not.toBeNull();
     expect(selectKrexaSolanaRequirements(c!)).toBeNull();
+  });
+});
+
+describe("krexa retry header construction", () => {
+  // The Krexa publishing-x402-service spec requires the retry payload to
+  // be carried in TWO headers (PAYMENT-SIGNATURE + X-Payment-Token), both
+  // set to base64(JSON.stringify({signature})) — matching @krexa/cli's
+  // `krexa x402 call` retry behaviour (dist/commands/x402.js).
+  const FAKE_SIG =
+    "5N4iCxJVuVnTcVeqfHrh1uA1Q3rDS1xfP1XQDi9Lj1ggEAcfQ7iqJqRBkpQ8E9zL2dN5GfRwNCqXqEgKQ7nqYx8r";
+
+  test("header names match spec (PAYMENT-SIGNATURE + X-Payment-Token)", () => {
+    expect(HEADER_KREXA_RETRY).toBe("PAYMENT-SIGNATURE");
+    expect(HEADER_KREXA_RETRY_TOKEN).toBe("X-Payment-Token");
+  });
+
+  test("both header values are identical base64-JSON {signature}", () => {
+    const h = buildKrexaRetryHeaders(FAKE_SIG);
+    expect(h.paymentSignature).toBe(h.xPaymentToken);
+    expect(h.value).toBe(h.paymentSignature);
+
+    // Round-trip decode confirms the wire shape.
+    const decoded = JSON.parse(
+      Buffer.from(h.paymentSignature, "base64").toString("utf8"),
+    );
+    expect(decoded).toEqual({ signature: FAKE_SIG });
+
+    // Sanity: bare base58 sig string is NOT what we ship (regression
+    // guard against the old PR #126 implementation).
+    expect(h.paymentSignature).not.toBe(FAKE_SIG);
+  });
+
+  test("different signatures produce different tokens", () => {
+    const a = buildKrexaRetryHeaders(FAKE_SIG);
+    const b = buildKrexaRetryHeaders(FAKE_SIG + "X");
+    expect(a.value).not.toBe(b.value);
   });
 });
