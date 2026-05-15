@@ -32,16 +32,24 @@ type TallyPayload = {
 // case-insensitive and ignores whitespace/punctuation so a question like
 // "What are you building?" still matches whether Tally hands us
 // `what_are_you_building`, `whatBuilding`, or the raw label.
+//
+// Patterns match the published form at tally.so/r/9qRXzQ. The labels in
+// the form's TITLE.safeHTMLSchema were inspected to derive the regex
+// (see schema.sql comment above the beta_applicants ALTERs).
+//
 // Order matters: more specific patterns first. The loop in extractFields
-// stops at the first match, so a generic `/feedback/i` ahead of the
-// specific `/early.tester/i` would shadow it.
+// stops at the first match. The display_name pattern is intentionally
+// placed before email/x/telegram so "How can we call you?" doesn't get
+// swallowed by a generic name-shaped regex if we ever add one.
 const FIELD_MAP: Array<{ test: RegExp; column: keyof Applicant }> = [
   { test: /(what.*building|whatbuilding|building)/i, column: "what_building" },
+  { test: /(how.*can.*we.*call|call.*you|display.*name|your.*name)/i, column: "display_name" },
   { test: /(urgency|when.*integrate|timeline|timing)/i, column: "urgency" },
   { test: /(email|e-mail)/i, column: "email" },
   { test: /(x.?handle|twitter|x.com)/i, column: "x_handle" },
   { test: /(telegram|t\.me)/i, column: "telegram_handle" },
   { test: /(wallet|solana.*address|sol.*pubkey)/i, column: "wallet_pubkey" },
+  { test: /(which.*of.*these|are.*you.*an?\b|persona|role)/i, column: "persona" },
   { test: /(apis.*pay|currently.*pay|paying.*for|which.*apis)/i, column: "apis_currently_paying" },
   { test: /(why.*pact|why.*considering|why.*try)/i, column: "why_pact" },
   { test: /(feedback|early.*tester|provide.*feedback)/i, column: "willing_to_feedback" },
@@ -53,7 +61,9 @@ type Applicant = {
   telegram_handle: string | null;
   wallet_pubkey: string | null;
   what_building: string | null;
+  display_name: string | null;
   urgency: string | null;
+  persona: string | null;
   apis_currently_paying: string | null;
   why_pact: string | null;
   willing_to_feedback: string | null;
@@ -66,7 +76,9 @@ function extractFields(payload: TallyPayload): Applicant {
     telegram_handle: null,
     wallet_pubkey: null,
     what_building: null,
+    display_name: null,
     urgency: null,
+    persona: null,
     apis_currently_paying: null,
     why_pact: null,
     willing_to_feedback: null,
@@ -192,9 +204,10 @@ export async function betaRoutes(app: FastifyInstance): Promise<void> {
     await query(
       `INSERT INTO beta_applicants (
         id, email, x_handle, telegram_handle, wallet_pubkey,
-        what_building, urgency, apis_currently_paying,
-        why_pact, willing_to_feedback, tally_submission_id
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        what_building, display_name, urgency, persona,
+        apis_currently_paying, why_pact, willing_to_feedback,
+        tally_submission_id
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
       [
         id,
         applicant.email,
@@ -202,7 +215,9 @@ export async function betaRoutes(app: FastifyInstance): Promise<void> {
         applicant.telegram_handle,
         applicant.wallet_pubkey,
         applicant.what_building,
+        applicant.display_name,
         applicant.urgency,
+        applicant.persona,
         applicant.apis_currently_paying,
         applicant.why_pact,
         applicant.willing_to_feedback,
@@ -215,10 +230,14 @@ export async function betaRoutes(app: FastifyInstance): Promise<void> {
     const lines = [
       "New Pact beta application",
       `id: ${id}`,
+      `name: ${applicant.display_name ?? "(unspecified)"}`,
+      `persona: ${applicant.persona ?? "(unspecified)"}`,
       `building: ${applicant.what_building ?? "(unspecified)"}`,
-      `urgency: ${applicant.urgency ?? "(unspecified)"}`,
       `contact: ${contact}`,
     ];
+    if (applicant.apis_currently_paying) {
+      lines.push(`current APIs: ${applicant.apis_currently_paying}`);
+    }
     if (applicant.why_pact) lines.push(`why pact: ${applicant.why_pact}`);
     if (applicant.willing_to_feedback) {
       lines.push(`early-tester opt-in: ${applicant.willing_to_feedback}`);
