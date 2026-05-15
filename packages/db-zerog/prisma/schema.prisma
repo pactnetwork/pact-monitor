@@ -23,8 +23,9 @@ datasource db {
 model Endpoint {
   slug                  String     @id @db.VarChar(34)  // 0x + 32 hex chars (bytes16)
   agentTokenId          String     @db.VarChar(78)      // uint256 as decimal string ("0" if no INFT)
-  premiumPerCallWei     BigInt
-  refundOnBreachWei     BigInt
+  flatPremiumWei        BigInt                           // PactCore EndpointConfig.flatPremium
+  percentBps            Int                              // PactCore EndpointConfig.percentBps
+  imputedCostWei        BigInt                           // PactCore EndpointConfig.imputedCost
   latencySloMs          Int
   exposureCapPerHourWei BigInt
   paused                Boolean    @default(false)
@@ -54,9 +55,11 @@ model Call {
   agentAddress          String   @db.VarChar(42)
   endpointSlug          String   @db.VarChar(34)
   premiumWei            BigInt
-  refundWei             BigInt
-  latencyMs             Int
+  refundWei             BigInt                         // = on-chain actualRefund (received)
+  requestedRefundWei    BigInt                         // = on-chain refund (requested); clamp gap
+  latencyMs             Int?                           // 0G Storage evidence; null if read failed
   breach                Boolean
+  breachReason          String?  @db.VarChar(32)       // evidence `outcome` when breach, else null
   status                Int                            // PactCore.SettlementStatus enum
   evidenceRootHash      String   @db.VarChar(66)       // 0x + 64 hex chars (bytes32, 0G Storage)
   source                String?  @db.VarChar(32)
@@ -89,12 +92,15 @@ model Settlement {
 
 model SettlementRecipientShare {
   id              String     @id @default(cuid())
-  settlementTx    String     @db.VarChar(66)
-  recipientKind   Int                                // 0 = Treasury, 1 = Affiliate
+  settlementTx    String     @db.VarChar(66)          // = batch txHash (FK Settlement.txHash)
+  logIndex        Int                                // RecipientPaid log index (idempotency)
+  blockNumber     BigInt
+  recipientKind   Int                                // 0 = Treasury, 1 = Affiliate (write-time)
   recipientAddress String    @db.VarChar(42)
   amountWei       BigInt
   settlement      Settlement @relation(fields: [settlementTx], references: [txHash])
 
+  @@unique([settlementTx, logIndex])
   @@index([recipientAddress])
   @@index([settlementTx])
 }
@@ -104,16 +110,21 @@ model PoolState {
   currentBalanceWei BigInt
   totalDepositsWei  BigInt
   totalPremiumsWei  BigInt
+  totalFeesPaidWei  BigInt   @default(0)
   totalRefundsWei   BigInt
   lastUpdated       DateTime
   endpoint          Endpoint @relation(fields: [endpointSlug], references: [slug])
 }
 
 model RecipientEarnings {
-  recipientAddress      String   @id @db.VarChar(42)
+  endpointSlug          String   @db.VarChar(34)
+  recipientAddress      String   @db.VarChar(42)
   recipientKind         Int
   lifetimeEarnedWei     BigInt
   lastUpdated           DateTime
+
+  @@id([endpointSlug, recipientAddress])
+  @@index([recipientAddress])
 }
 
 // Orphan-blob tracker. Settler appends a row before each settleBatch tx.
@@ -127,4 +138,23 @@ model FailedSettlement {
   settled         Boolean  @default(false)
   errorMessage    String?
   @@index([settled, attemptedAt])
+}
+
+// On-chain fee-recipient projection per endpoint. Rebuilt (delete-by-slug +
+// recreate) on EndpointRegistered / FeeRecipientsUpdated from getFeeRecipients.
+// Source of truth for RecipientPaid kind tagging + the stats treasury split.
+model FeeRecipient {
+  endpointSlug     String   @db.VarChar(34)
+  recipientAddress String   @db.VarChar(42)
+  kind             Int                                // 0 = Treasury, 1 = Affiliate
+  bps              Int
+  @@id([endpointSlug, recipientAddress])
+  @@index([endpointSlug])
+}
+
+// Single-row indexer log cursor. id is always "pactcore".
+model IndexerCursor {
+  id        String   @id
+  lastBlock BigInt
+  updatedAt DateTime
 }
