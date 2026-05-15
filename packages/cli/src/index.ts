@@ -21,6 +21,7 @@ import { pollSettlement, applySettlementToMeta } from "./lib/settlement.ts";
 import { initCommand } from "./cmd/init.ts";
 import { payCommand, coverageMeta } from "./cmd/pay.ts";
 import { payCoverageStatusCommand } from "./cmd/pay-coverage.ts";
+import { payKrexaCommand } from "./cmd/pay-krexa.ts";
 // Bundle skill assets into the compiled binary via Bun text imports.
 // readFileSync(import.meta.url) does not work with `bun build --compile`
 // because raw .md files are not embedded into the bunfs virtual filesystem.
@@ -411,6 +412,44 @@ program
     });
     const projectName = proj.ok ? proj.name : undefined;
     const configDir = projectName ? configDirFor(projectName) : undefined;
+
+    // --krexa: Krexa Compute Gateway x402 flow (PAYMENT-REQUIRED header,
+    // PAYMENT-SIGNATURE retry). Bypasses the pay binary entirely
+    // because `pay` doesn't recognise Krexa's bare-header flavour. The
+    // flag is stripped from the forwarded curl args.
+    const krexaIdx = args.indexOf("--krexa");
+    if (krexaIdx >= 0) {
+      const krexaArgs = [...args.slice(0, krexaIdx), ...args.slice(krexaIdx + 1)];
+      const krexaResult = await payKrexaCommand({
+        args: krexaArgs,
+        configDir,
+      });
+      if (krexaResult.kind === "envelope") {
+        emit(krexaResult.envelope, wantsJson, isQuiet);
+        return;
+      }
+      if (wantsJson) {
+        const env: Envelope = {
+          status: "krexa_payment_made",
+          body: {
+            tool_exit_code: krexaResult.exitCode,
+            upstream_status: krexaResult.upstreamStatus,
+            payment: {
+              kind: "krexa",
+              recipient: krexaResult.recipient,
+              amount: krexaResult.amountBaseUnits,
+              asset: krexaResult.asset,
+              network: krexaResult.network,
+              txSignature: krexaResult.txSignature,
+            },
+          },
+        };
+        process.stdout.write(JSON.stringify(env) + "\n");
+        process.exit(krexaResult.exitCode);
+      }
+      process.stdout.write(krexaResult.stdout);
+      process.exit(krexaResult.exitCode);
+    }
 
     const result = await payCommand({
       args,
