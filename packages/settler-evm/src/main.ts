@@ -1,20 +1,14 @@
-/**
- * Pact-0G settler entrypoint.
- *
- * Reuses the batcher / dedup / event-consumer layers from @pact-network/settler
- * (Solana). Only the submission path is new:
- *   1. ZerogStorageClient.writeEvidence(blob) → rootHash
- *   2. PactCoreClient.settleBatch(records[])  → 0G Chain tx
- *
- * STATUS: skeleton. Wire up Nest module + the submitter service from
- * packages/settler/src/submitter.service.ts patterns in Week 2.
- */
-
 import 'reflect-metadata';
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
 
-async function bootstrap(): Promise<void> {
-  console.log('settler-evm: not yet implemented — see packages/settler/ for the Solana reference');
-  process.exit(0);
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+  // Required for OnModuleDestroy: PipelineService drains the in-flight batch
+  // (and the submitter's awaited FailedSettlement writes) on SIGTERM within
+  // Cloud Run's 10s grace; PrismaService.$disconnect runs after.
+  app.enableShutdownHooks();
+  await app.listen(process.env.PORT ?? 8080);
 }
 
-bootstrap().catch((err) => { console.error(err); process.exit(1); });
+bootstrap();

@@ -5,13 +5,16 @@
   "description": "NestJS service: consume SettlementEvents → upload evidence to 0G Storage → submit settleBatch on 0G Chain.",
   "main": "dist/main.js",
   "scripts": {
+    "deps": "pnpm --filter @pact-network/db-zerog --filter @pact-network/zerog-storage-client --filter @pact-network/protocol-zerog-client --filter @pact-network/wrap build",
     "build": "nest build",
     "start": "nest start",
     "dev": "nest start --watch",
     "start:prod": "node dist/main",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist",
-    "prebuild": "pnpm run clean",
+    "prebuild": "pnpm run clean && pnpm run deps",
+    "pretest": "pnpm run deps",
+    "pretypecheck": "pnpm run deps",
     "test": "vitest run",
     "test:watch": "vitest"
   },
@@ -27,17 +30,21 @@
     "@pact-network/protocol-zerog-client": "workspace:*",
     "@pact-network/wrap": "workspace:*",
     "@pact-network/zerog-storage-client": "workspace:*",
-    "ethers": "^6.13.4",
     "prom-client": "^15.1.3",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
+    "viem": "^2.49.2",
     "zod": "^3.24.0"
   },
   "devDependencies": {
     "@nestjs/cli": "^10.4.0",
+    "@nestjs/schematics": "^10.1.1",
     "@nestjs/testing": "^10.4.0",
-    "@types/node": "^22.0.0",
+    "@types/node": "^22.10.5",
     "typescript": "^5.7.3",
     "vitest": "^2.1.0"
+  },
+  "engines": {
+    "node": ">=22.0"
   }
 }
