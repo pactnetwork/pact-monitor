@@ -1,0 +1,28 @@
+{
+  "name": "@pact-network/protocol-zerog-client",
+  "version": "0.0.1",
+  "private": true,
+  "description": "TypeScript client for Pact-0G: ethers.js bindings for PactCore + EndpointINFT, event decoders, slug + fee-recipient helpers.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "ethers": "^6.13.4"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.0"
+  }
+}

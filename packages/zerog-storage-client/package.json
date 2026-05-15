@@ -1,0 +1,29 @@
+{
+  "name": "@pact-network/zerog-storage-client",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Typed Node-only wrapper over @0gfoundation/0g-storage-ts-sdk. Pact-0G uses this for per-call evidence blobs.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@0gfoundation/0g-storage-ts-sdk": "1.2.9",
+    "ethers": "^6.13.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.0"
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "name": "@pact-network/settler-evm",
+  "version": "0.0.1",
+  "private": true,
+  "description": "NestJS service: consume SettlementEvents → upload evidence to 0G Storage → submit settleBatch on 0G Chain.",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "nest build",
+    "start": "nest start",
+    "dev": "nest start --watch",
+    "start:prod": "node dist/main",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist",
+    "prebuild": "pnpm run clean",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@google-cloud/pubsub": "^4.9.0",
+    "@google-cloud/secret-manager": "^5.6.0",
+    "@nestjs/common": "^10.4.0",
+    "@nestjs/config": "^3.3.0",
+    "@nestjs/core": "^10.4.0",
+    "@nestjs/platform-express": "^10.4.0",
+    "@nestjs/schedule": "^4.1.0",
+    "@pact-network/db-zerog": "workspace:*",
+    "@pact-network/protocol-zerog-client": "workspace:*",
+    "@pact-network/wrap": "workspace:*",
+    "@pact-network/zerog-storage-client": "workspace:*",
+    "ethers": "^6.13.4",
+    "prom-client": "^15.1.3",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.1",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "^10.4.0",
+    "@nestjs/testing": "^10.4.0",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.0"
+  }
+}

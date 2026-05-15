@@ -1,0 +1,130 @@
+// Pact-0G indexer schema. Forked from packages/db/prisma/schema.prisma.
+// Differences from the Solana schema:
+//   - addresses are EVM (42 char 0x-prefixed) not Solana (44 char base58)
+//   - amounts are mUSDC base units (6 decimals), labelled `Wei` instead of `Lamports`
+//   - tx identifiers are 0x-prefixed 66-char hashes (txHash) not 88-char signatures
+//   - calls reference 0G Storage rootHash (bytes32) for evidence
+//   - tx-level keying via (blockNumber, logIndex) for indexer idempotency
+//
+// All amounts use Prisma's String type to hold uint128/uint96 values that don't
+// fit in BigInt's signed 64 bits when serialized — match the existing project
+// pattern in @pact-network/db (BigInt; works because Prisma's BigInt is i64
+// and Solidity uint128 max fits when constrained by mUSDC 6-decimal scale).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("PG_URL_ZEROG")
+}
+
+model Endpoint {
+  slug                  String     @id @db.VarChar(34)  // 0x + 32 hex chars (bytes16)
+  agentTokenId          String     @db.VarChar(78)      // uint256 as decimal string ("0" if no INFT)
+  premiumPerCallWei     BigInt
+  refundOnBreachWei     BigInt
+  latencySloMs          Int
+  exposureCapPerHourWei BigInt
+  paused                Boolean    @default(false)
+  upstreamModel         String?                          // e.g. "qwen/qwen-2.5-7b-instruct"
+  upstreamProvider      String?    @db.VarChar(42)       // 0G Compute provider address
+  upstreamEndpoint      String?
+  displayName           String?
+  registeredAt          DateTime
+  lastUpdated           DateTime
+  calls                 Call[]
+  poolState             PoolState?
+}
+
+model Agent {
+  address               String     @id @db.VarChar(42)
+  displayName           String?
+  totalPremiumsWei      BigInt     @default(0)
+  totalRefundsWei       BigInt     @default(0)
+  callCount             BigInt     @default(0)
+  lastCallAt            DateTime?
+  createdAt             DateTime
+  calls                 Call[]
+}
+
+model Call {
+  callId                String   @id @db.VarChar(34)   // 0x + 32 hex chars (bytes16)
+  agentAddress          String   @db.VarChar(42)
+  endpointSlug          String   @db.VarChar(34)
+  premiumWei            BigInt
+  refundWei             BigInt
+  latencyMs             Int
+  breach                Boolean
+  status                Int                            // PactCore.SettlementStatus enum
+  evidenceRootHash      String   @db.VarChar(66)       // 0x + 64 hex chars (bytes32, 0G Storage)
+  source                String?  @db.VarChar(32)
+  ts                    DateTime
+  settledAt             DateTime
+
+  txHash                String   @db.VarChar(66)
+  blockNumber           BigInt
+  logIndex              Int
+
+  agent    Agent    @relation(fields: [agentAddress],  references: [address])
+  endpoint Endpoint @relation(fields: [endpointSlug], references: [slug])
+
+  @@unique([txHash, logIndex])                          // idempotent indexer ingest
+  @@index([agentAddress, ts(sort: Desc)])
+  @@index([endpointSlug, ts(sort: Desc)])
+  @@index([ts(sort: Desc)])
+  @@index([breach, ts(sort: Desc)])
+}
+
+model Settlement {
+  txHash                String                     @id @db.VarChar(66)
+  blockNumber           BigInt
+  batchSize             Int
+  totalPremiumsWei      BigInt
+  totalRefundsWei       BigInt
+  ts                    DateTime
+  shares                SettlementRecipientShare[]
+}
+
+model SettlementRecipientShare {
+  id              String     @id @default(cuid())
+  settlementTx    String     @db.VarChar(66)
+  recipientKind   Int                                // 0 = Treasury, 1 = Affiliate
+  recipientAddress String    @db.VarChar(42)
+  amountWei       BigInt
+  settlement      Settlement @relation(fields: [settlementTx], references: [txHash])
+
+  @@index([recipientAddress])
+  @@index([settlementTx])
+}
+
+model PoolState {
+  endpointSlug      String   @id @db.VarChar(34)
+  currentBalanceWei BigInt
+  totalDepositsWei  BigInt
+  totalPremiumsWei  BigInt
+  totalRefundsWei   BigInt
+  lastUpdated       DateTime
+  endpoint          Endpoint @relation(fields: [endpointSlug], references: [slug])
+}
+
+model RecipientEarnings {
+  recipientAddress      String   @id @db.VarChar(42)
+  recipientKind         Int
+  lifetimeEarnedWei     BigInt
+  lastUpdated           DateTime
+}
+
+// Orphan-blob tracker. Settler appends a row before each settleBatch tx.
+// On success, mark settled=true. On revert, the orphan blob is still on
+// 0G Storage but unreferenced on-chain — manual GC reads this table.
+model FailedSettlement {
+  id              String   @id @default(cuid())
+  callId          String   @db.VarChar(34)
+  evidenceRootHash String  @db.VarChar(66)
+  attemptedAt     DateTime
+  settled         Boolean  @default(false)
+  errorMessage    String?
+  @@index([settled, attemptedAt])
+}

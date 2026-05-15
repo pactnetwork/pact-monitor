@@ -26,7 +26,23 @@
       "@pact-network/market-dashboard": ["./packages/market-dashboard/app/page.tsx"],
       "@pact-network/market-dashboard/*": ["./packages/market-dashboard/*"],
       "@pact-network/protocol-v1-client": ["./packages/protocol-v1-client/src/index.ts"],
-      "@pact-network/protocol-v1-client/*": ["./packages/protocol-v1-client/src/*"]
+      "@pact-network/protocol-v1-client/*": ["./packages/protocol-v1-client/src/*"],
+      "@pact-network/protocol-zerog-client": ["./packages/protocol-zerog-client/src/index.ts"],
+      "@pact-network/protocol-zerog-client/*": ["./packages/protocol-zerog-client/src/*"],
+      "@pact-network/zerog-storage-client": ["./packages/zerog-storage-client/src/index.ts"],
+      "@pact-network/zerog-storage-client/*": ["./packages/zerog-storage-client/src/*"],
+      "@pact-network/zerog-compute-client": ["./packages/zerog-compute-client/src/index.ts"],
+      "@pact-network/zerog-compute-client/*": ["./packages/zerog-compute-client/src/*"],
+      "@pact-network/db-zerog": ["./packages/db-zerog/src/index.ts"],
+      "@pact-network/db-zerog/*": ["./packages/db-zerog/src/*"],
+      "@pact-network/settler-evm": ["./packages/settler-evm/src/main.ts"],
+      "@pact-network/settler-evm/*": ["./packages/settler-evm/src/*"],
+      "@pact-network/indexer-evm": ["./packages/indexer-evm/src/main.ts"],
+      "@pact-network/indexer-evm/*": ["./packages/indexer-evm/src/*"],
+      "@pact-network/market-proxy-zerog": ["./packages/market-proxy-zerog/src/index.ts"],
+      "@pact-network/market-proxy-zerog/*": ["./packages/market-proxy-zerog/src/*"],
+      "@pact-network/pact-zerog-dashboard": ["./packages/pact-zerog-dashboard/app/page.tsx"],
+      "@pact-network/pact-zerog-dashboard/*": ["./packages/pact-zerog-dashboard/*"]
     }
   }
 }

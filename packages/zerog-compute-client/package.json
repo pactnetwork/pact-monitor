@@ -1,0 +1,29 @@
+{
+  "name": "@pact-network/zerog-compute-client",
+  "version": "0.0.1",
+  "private": true,
+  "description": "CJS wrapper over @0gfoundation/0g-compute-ts-sdk. CJS-only because the SDK's ESM build is broken (verified spike 2, 2026-05-15).",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@0gfoundation/0g-compute-ts-sdk": "0.8.3",
+    "ethers": "^6.13.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.0"
+  }
+}
