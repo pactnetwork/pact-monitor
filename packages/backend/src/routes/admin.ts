@@ -437,6 +437,101 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
     return reply.send({ ok: true, status });
   });
 
+  // ── Private beta gate ─────────────────────────────────
+  // Approves an applicant and mints a Bearer API key bound to that
+  // applicant. Plaintext key is returned ONCE here; we store only the
+  // sha256 hash, matching the existing api_keys convention.
+  app.post<{
+    Body: { applicantId: string; note?: string };
+  }>("/api/v1/admin/beta/approve", async (request, reply) => {
+    const body = request.body ?? { applicantId: "", note: undefined };
+    if (!body.applicantId || typeof body.applicantId !== "string") {
+      return reply.code(400).send({ error: "applicantId is required" });
+    }
+
+    const applicant = await getOne<{ id: string; status: string }>(
+      "SELECT id, status FROM beta_applicants WHERE id = $1",
+      [body.applicantId],
+    );
+    if (!applicant) {
+      return reply.code(404).send({ error: "Applicant not found" });
+    }
+    if (applicant.status === "approved") {
+      return reply.code(409).send({
+        error: "already_approved",
+        applicantId: applicant.id,
+      });
+    }
+
+    // 32 bytes of entropy, base64url-encoded → 43 chars after the prefix.
+    // The `pact_beta_` prefix reserves room for future `pact_live_` /
+    // `pact_test_` cohorts.
+    const apiKey = `pact_beta_${randomBytes(32).toString("base64url")}`;
+    const keyHash = hashKey(apiKey);
+    // Short label keeps the unique index on api_keys.label from clashing
+    // while still being human-readable in admin tooling.
+    const label = `beta_${applicant.id.slice(0, 8)}`;
+
+    // Wrap the api_keys INSERT and the beta_applicants UPDATE in one
+    // transaction. Without this, a failure on the UPDATE leaves an active
+    // orphan api_keys row (with a deterministic label derived from the
+    // applicant id) while the applicant stays `pending` — the operator's
+    // retry then collides on the unique label index, requiring manual
+    // cleanup. BEGIN/COMMIT keeps the two writes consistent.
+    const client = await pool.connect();
+    let keyId: string | null;
+    try {
+      await client.query("BEGIN");
+      const inserted = await client.query<{ id: string }>(
+        `INSERT INTO api_keys (key_hash, label, beta_applicant_id, status)
+         VALUES ($1, $2, $3, 'active')
+         RETURNING id`,
+        [keyHash, label, applicant.id],
+      );
+      await client.query(
+        `UPDATE beta_applicants
+           SET status = 'approved', approved_at = NOW(), note = COALESCE($1, note)
+           WHERE id = $2`,
+        [body.note ?? null, applicant.id],
+      );
+      await client.query("COMMIT");
+      keyId = inserted.rows[0]?.id ?? null;
+    } catch (err) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+
+    return reply.code(201).send({
+      apiKey,
+      applicantId: applicant.id,
+      keyId,
+      label,
+    });
+  });
+
+  // Flips the runtime beta-gate flag on or off. The market-proxy reads
+  // this via a 30-second TTL cache, so the change propagates within ~30s
+  // of write across every Cloud Run instance.
+  app.post<{ Body: { enabled: boolean } }>(
+    "/api/v1/admin/beta/gate",
+    async (request, reply) => {
+      const body = request.body ?? { enabled: undefined };
+      if (typeof body.enabled !== "boolean") {
+        return reply.code(400).send({ error: "enabled must be a boolean" });
+      }
+      await query(
+        `INSERT INTO system_flags (key, enabled, updated_at)
+         VALUES ('beta_gate_enabled', $1, NOW())
+         ON CONFLICT (key) DO UPDATE
+         SET enabled = EXCLUDED.enabled, updated_at = NOW()`,
+        [body.enabled],
+      );
+      return reply.send({ enabled: body.enabled });
+    },
+  );
+
   // Narrow destructive delete for demo-data cleanup. Requires hostname_prefix
   // length >= 3 AND a trailing '-' so a short/empty value can't wipe the
   // whole providers table by accident. Used by the demo-runner's /reset.

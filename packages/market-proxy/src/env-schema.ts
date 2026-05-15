@@ -31,6 +31,10 @@ export const Env = z
     REDIS_STREAM: z.string().optional(),
     ENDPOINTS_RELOAD_TOKEN: z.string().min(16),
     PORT: z.string().default("8080"),
+    // Private-beta-gate feature flag fallback (added by PR #198).
+    // Consulted by `lib/system-flag.ts` when the `system_flags` row read
+    // fails. Default "false" (off) matches the PRD "Feature flag" section.
+    PACT_BETA_GATE_ENABLED: z.string().default("false"),
   })
   .superRefine((val, ctx) => {
     if (val.QUEUE_BACKEND === "pubsub") {

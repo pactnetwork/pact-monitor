@@ -238,5 +238,43 @@ CREATE TABLE IF NOT EXISTS agent_flags (
 CREATE INDEX IF NOT EXISTS idx_agent_flags_agent
   ON agent_flags(agent_id, status);
 
+-- ============================================================
+-- Private beta gate (PRD: private-beta-gate-prd.md)
+-- Off-chain admission layer for market.pactnetwork.io/v1/{slug}/*.
+-- beta_applicants captures Tally form submissions; system_flags carries
+-- the runtime toggle that the proxy consults to enforce or bypass the
+-- gate. api_keys.beta_applicant_id is the foreign key that ties an
+-- issued API key back to the application it was minted for.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS beta_applicants (
+  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  email                 TEXT,
+  x_handle              TEXT,
+  telegram_handle       TEXT,
+  wallet_pubkey         TEXT,
+  what_building         TEXT,
+  urgency               TEXT,
+  apis_currently_paying TEXT,
+  tally_submission_id   TEXT UNIQUE,
+  status                TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'approved', 'rejected')),
+  submitted_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  approved_at           TIMESTAMPTZ,
+  note                  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_beta_applicants_status
+  ON beta_applicants(status, submitted_at);
+
+CREATE TABLE IF NOT EXISTS system_flags (
+  key        TEXT PRIMARY KEY,
+  enabled    BOOLEAN NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE api_keys
+  ADD COLUMN IF NOT EXISTS beta_applicant_id UUID REFERENCES beta_applicants(id);
+CREATE INDEX IF NOT EXISTS idx_api_keys_beta_applicant
+  ON api_keys(beta_applicant_id) WHERE beta_applicant_id IS NOT NULL;
+
 CREATE INDEX IF NOT EXISTS idx_agent_flags_status
   ON agent_flags(status, created_at);
