@@ -1,0 +1,18 @@
+{
+  "name": "spike-compute-broker",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "spike": "tsx src/spike.ts"
+  },
+  "dependencies": {
+    "@0gfoundation/0g-compute-ts-sdk": "0.8.3",
+    "dotenv": "^16.4.5",
+    "ethers": "^6.13.4"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
