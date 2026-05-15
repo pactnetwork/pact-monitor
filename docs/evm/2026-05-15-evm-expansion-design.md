@@ -1,10 +1,13 @@
 # Pact Network — EVM Expansion Design
 
-**Status:** DRAFT — design proposal, not yet implemented.
+**Status:** DECIDED — chain target locked to **Base**. Architecture finalized;
+WP plan ready for execution. Five operational questions remain open (see §9)
+but none block WP-EVM-01 scaffold start.
 **Author:** Pact Network engineering
 **Date:** 2026-05-15
 **Branch:** `feat/evm-expansion-design`
-**Scope:** Research + design only. No Solidity. No new packages. No source changes.
+**Scope:** Design + decided architecture. No Solidity / no source changes in
+this doc; implementation begins at WP-EVM-01.
 
 ---
 
@@ -12,22 +15,31 @@
 
 Pact Network v1 ships on Solana (Pinocchio program at
 `5bCJcdWdKLJ7arrMVMFh3z99rQDxV785fnD9XGcr3xwc` mainnet,
-`5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5` devnet). Rick wants to port the
-protocol to **Ethereum mainnet first**, then extend to other EVM chains. The
-core proposition is that "EVM" to most institutional integrators and treasury
-underwriters means Ethereum L1 — the chain with the deepest USDC liquidity,
-the canonical Circle issuance, and the audit-trail credibility that L2s do not
-yet match.
+`5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5` devnet). Pact is porting the
+protocol to EVM so agents that pay with ERC-20 USDC can also get insured calls.
 
-This doc maps the Solana primitives we already use onto EVM equivalents, sketches
-the Solidity contract shape, examines whether per-call insurance economics
-survive on Ethereum L1 (spoiler: only with heavy batching, large premiums, or
-off-chain accounting), and lays out the work needed without prescribing
-implementation details that should be decided at WP time.
+**Decided target: Base, single-chain v1 EVM launch.** Ethereum mainnet is the
+explicit **v2 destination** — deployed at scale once off-chain premium
+accumulation is hardened and an enterprise / high-value-call premium tier
+exists to sustain L1's ~$5/call gas overhead (full economics in §4.3-§4.6).
+The extension order after Base is fixed: **v1 Base → v1.1 Arbitrum One →
+v1.2 Optimism (opportunistic) → v2 Ethereum mainnet**.
 
-**Document version:** v2 — re-anchored on Ethereum-mainnet-first per Rick, with
-honest L1 gas economics analysis. v1 led with Base/Arbitrum and treated
-Ethereum as a later extension; that did not match Rick's intent.
+This doc maps the Solana primitives onto EVM equivalents, sketches the
+Solidity contract shape, documents the chain-selection analysis that led to
+the Base decision, and lays out the finalized WP plan for the Base v1 launch
+path (§8).
+
+> **Decision evolution (superseded — retained for audit trail).** An earlier
+> revision of this doc led with "Ethereum mainnet first" on the premise that
+> "EVM" means Ethereum L1 to institutional integrators. The §4.3 worked
+> example showed L1 per-call gas economics are fatal for the retail-API
+> insurance use case (~$5.44/call gas vs $0.0001-$0.10 premiums). Rick's
+> read: Ethereum L1 is not economically efficient enough as the *first*
+> EVM investment. The deep chain comparison in §4.6 produced the Base
+> decision now locked above. §4.1-§4.5 preserve the superseded
+> Ethereum-first reasoning so the decision path is auditable; **§4.6 is
+> operative.**
 
 ---
 
@@ -194,6 +206,13 @@ single PactSettler + single PactRegistry per chain.**
 ---
 
 ## 4. Chain selection
+
+> **§4.1-§4.5 are SUPERSEDED — see §4.6 (operative).** These subsections
+> contain the Ethereum-first analysis and the three-option recommendation
+> that preceded the locked decision. They are retained verbatim as the
+> decision audit trail; **do not action anything in §4.1-§4.5.** The chain
+> question is closed: **Base v1, Arbitrum v1.1, Optimism v1.2, Ethereum v2.**
+> Jump to §4.6.
 
 ### 4.1 Hard requirements
 
@@ -377,17 +396,20 @@ mitigation 1 as a launch blocker. **Do not ship L1 without off-chain premium
 accumulation**; the "insurance for $0.001 calls" pattern simply does not
 exist on Ethereum L1.
 
-### 4.6 Deep chain comparison — v1 EVM deployment target
+### 4.6 Chain decision — v1 EVM deployment target (DECIDED)
 
-> **Decision evolution:** §4.5 recommended Option C (Ethereum + Base from day
-> 1). After Rick reviewed the §4.3 worked example, his read was: **Ethereum L1
-> is not economically efficient enough as the first investment.** Ethereum
-> remains a future target — we will deploy there at scale once volumes justify
-> the off-chain accumulation work and a premium-floor reframe — but the FIRST
-> EVM deployment should be the chain that wins on economics + ecosystem fit
-> for the agent-API insurance use case we have today.
+> **STATUS: DECIDED — locked by Rick 2026-05-15.** v1 EVM target is **Base**,
+> single-chain launch. Extension order locked: **v1 Base → v1.1 Arbitrum One
+> → v1.2 Optimism (opportunistic) → v2 Ethereum mainnet (at scale)**. This
+> subsection is operative; §4.1-§4.5 are the superseded audit trail.
 >
-> §4.6 is that analysis. §4.5 stays in the doc as the decision audit trail.
+> **Decision path:** §4.5 had recommended Option C (Ethereum + Base from day
+> 1). The §4.3 worked example showed L1 per-call gas economics (~$5.44/call)
+> are fatal for the retail-API insurance use case. Rick's read: Ethereum L1
+> is not economically efficient enough as the first EVM investment. The
+> analysis below selected Base; Rick confirmed. Ethereum is now the v2
+> destination, deployed at scale once off-chain accumulation + an enterprise
+> premium tier exist.
 
 #### 4.6.1 Candidate set
 
@@ -459,9 +481,9 @@ shipping in 2026:
 > The bottom-tier ranking shuffles within ±0.20 but no chain in positions 4-8
 > overtakes Optimism for #3.
 
-#### 4.6.4 Top-3 ranked recommendation
+#### 4.6.4 Top-3 ranking (decided)
 
-**#1 — Base.** Score 4.66. The decisive edges over Arbitrum (4.24):
+**#1 — Base (SELECTED for v1).** Score 4.66. The decisive edges over Arbitrum (4.24):
 agent-ecosystem alignment (F3 = 5 vs 3) and customer/partner alignment
 (F10 = 5 vs 3). Base is where the agent payment infrastructure stack is
 *actually being built* in 2025-2026:
@@ -511,11 +533,11 @@ unique partner story versus what Base already provides.
 when Superchain interop ships and there's value in being on multiple
 Superchain chains.
 
-#### 4.6.5 #1 recommendation — Base
+#### 4.6.5 Decision — Base (LOCKED)
 
-**Deploy v1 EVM on Base.** Single chain, full conviction.
+**v1 EVM deploys on Base. Single chain. Confirmed by Rick 2026-05-15.**
 
-The defense, in order of force:
+The defense that drove the decision, in order of force:
 
 1. **Agent ecosystem fit is decisive.** We are building an *insurance layer
    for agent API calls.* The chain where agents already pay for API calls
@@ -554,7 +576,7 @@ The defense, in order of force:
   retail meme volume; it's institutional integrators and serious agent
   developers. F10 = 1 reflects that.
 
-#### 4.6.6 Migration / extension path (replaces §4.5 Option C ordering)
+#### 4.6.6 Migration / extension path (LOCKED — replaces §4.5 Option C ordering)
 
 Linear, ordered by force of conviction, not by calendar:
 
@@ -578,28 +600,25 @@ Linear, ordered by force of conviction, not by calendar:
 only." Ethereum moves from §4.5 Option C's day-1 slot to the v2 slot. WPs in
 §8 should renumber accordingly — see §4.6.7.
 
-#### 4.6.7 Impact on the §8 WP plan
+#### 4.6.7 Impact on the §8 WP plan (APPLIED)
 
-Under the §4.6.5 recommendation, the §8 WP list collapses around a single
-chain (Base) for v1:
+The deltas below are **applied** in §8 — the §8 list is now the final clean
+Base v1 launch path. Recorded here for traceability:
 
-- **Drop / defer for v1:** WP-EVM-05b (off-chain premium accumulation —
-  not needed for Base economics; defer to v2 Ethereum work).
-- **Drop / defer for v1:** WP-EVM-07a, WP-EVM-14a (Ethereum Sepolia deploy
-  + demo — defer to v2).
-- **Drop / defer for v1:** WP-EVM-17a (Ethereum mainnet deploy — defer to v2).
-- **Promote to primary path:** WP-EVM-07b → WP-EVM-07 (Base Sepolia deploy,
-  primary); WP-EVM-14b → WP-EVM-14 (Base Sepolia demo, primary).
-- **Renumber:** WP-EVM-17b → WP-EVM-17 (Base mainnet deploy, primary).
-- **Demote / defer:** WP-EVM-18 (Arbitrum) becomes v1.1 work, not part of
-  v1 launch.
-- **Keep as-is:** WP-EVM-04's bitmap-packed dedup (still cheap insurance
-  against any future chain that has higher per-event costs) and WP-EVM-06's
-  `forge snapshot` gas-regression tests (still valuable).
+- **Deferred to v2 (Ethereum):** WP-EVM-05b (off-chain premium accumulation
+  — not needed for Base economics), old WP-EVM-07a (Ethereum Sepolia
+  deploy), old WP-EVM-14a (Ethereum Sepolia demo), old WP-EVM-17a (Ethereum
+  mainnet deploy). Captured in §8's "Deferred to v2" note.
+- **Promoted to primary path:** old WP-EVM-07b → **WP-EVM-07** (Base Sepolia
+  deploy); old WP-EVM-14b → **WP-EVM-14** (Base Sepolia demo, the demo gate);
+  old WP-EVM-17b → **WP-EVM-17** (Base mainnet deploy).
+- **Moved to a marked v1.1 section:** old WP-EVM-18 (Arbitrum) — see §8's
+  "v1.1 — Arbitrum One" subsection. Not part of the v1 launch.
+- **Kept:** WP-EVM-04's bitmap-packed dedup (cheap insurance for future
+  higher-gas chains) and WP-EVM-06's `forge snapshot` gas-regression tests.
 
-§8 is **not** rewritten in this commit — the §8 list still reflects §4.5
-Option C. The renumbering happens in a follow-up commit once Rick confirms
-the §4.6 recommendation.
+§8 below is the final renumbered list; there is no "pending Rick confirm"
+state remaining.
 
 ### 4.7 Multi-chain pool consolidation
 
@@ -794,169 +813,178 @@ packages/
 
 ## 8. Effort breakdown (WP / phase list)
 
-Ordered so the **demo path** (Base testnet end-to-end) comes first. Each WP is a
-discrete shippable unit. No time estimates per repo convention.
+**Final plan — Base single-chain v1.** Demo-path-first: WP-EVM-01..14 take
+us to a Base Sepolia end-to-end demo (the demo gate); WP-EVM-15..17 are the
+Base mainnet production path. Each WP is a discrete shippable unit. No time
+estimates per repo convention. Chain target is locked (§4.6.5); there is no
+optional/conditional WP in the v1 path.
 
-The WPs assume **§4.5 Option C** (Ethereum + Base from day 1). Single
-codebase, single audit, two deployments. If Rick picks Option A (Ethereum
-only) drop the Base-specific WPs (07b, 14b, 17b). If he picks Option B
-(Base first, Ethereum later) reorder so the Ethereum-mainnet deploy moves
-to the production-path tail.
+### 8.1 v1 — Base launch path
+
+**Demo path (WP-EVM-01..14):**
 
 1. **WP-EVM-01 — Solidity scaffold.** Foundry project at
    `packages/program-evm/protocol-evm-v1/`. Empty contract stubs for Registry,
-   Pool, Settler. Foundry config, basic CI integration.
+   Pool, Settler. Foundry config, basic CI integration. **No open question
+   blocks this WP — it can start immediately.**
 2. **WP-EVM-02 — PactRegistry.** Solidity port of `EndpointConfig` +
    `ProtocolConfig` + fee-recipient validation rules from `register_endpoint.rs`,
    `update_endpoint_config.rs`, `update_fee_recipients.rs`,
    `initialize_protocol_config.rs`, `pause_endpoint.rs`, `pause_protocol.rs`.
    Events for every state change.
-3. **WP-EVM-03 — PactPool.** Solidity port of `CoveragePool` + `top_up_coverage_pool.rs`.
-   Holds USDC; tracks per-slug `PoolState`.
+3. **WP-EVM-03 — PactPool.** Solidity port of `CoveragePool` +
+   `top_up_coverage_pool.rs`. Holds USDC; tracks per-slug `PoolState`.
 4. **WP-EVM-04 — PactSettler core.** `settleBatch` with premium-in via
    `transferFrom`, fee fan-out, refund on breach. Mirror the per-call
    `SettlementStatus` enum and emit `CallSettled` per event in the batch.
-   **L1-aware:** include the bitmap-packed dedup map from §4.4 mitigation 3
-   from the start (cheap to add now, painful later).
+   Include the bitmap-packed dedup map from §4.4 mitigation 3 from the start
+   (cheap now, painful later; also future-proofs higher-gas chains).
 5. **WP-EVM-05 — Settler hardening.** Exposure cap (hourly bucket per
    endpoint), `DelegateFailed` recovery via `try/catch` around `transferFrom`,
    `PoolDepleted` accounting, dedup via packed bitmap.
-6. **WP-EVM-05b — Off-chain premium accumulation (NEW, L1 launch blocker).**
-   Settler ledger of signed per-call receipts; `settleNetPositions(agent[],
-   netDebit[], slug[])` instruction for periodic on-chain net settlement;
-   on-chain dispute window for agents to challenge a recorded debit. Required
-   before Ethereum mainnet launch under §4.5 Option A or C; not required for
-   Base-only (Option B). See §4.4 mitigation 1.
-7. **WP-EVM-06 — Foundry test suite.** Mirror the LiteSVM test plan from
+6. **WP-EVM-06 — Foundry test suite.** Mirror the LiteSVM test plan from
    `pact-network-v1-pinocchio/tests/`. Fuzz the bps fan-out and exposure cap.
-   Add gas-snapshot tests so per-call gas regressions get caught at PR time
-   (`forge snapshot`).
-8. **WP-EVM-07a — Deploy scripts + Sepolia deploy (Ethereum Sepolia).**
-   `forge script` targeting Ethereum Sepolia. Operator runbook for
-   `transferOwnership` to a Safe.
-9. **WP-EVM-07b — Sepolia deploy (Base Sepolia).** Same `forge script` with
-   a different RPC + chain-id. Verifies the bytecode is portable and the
-   address registry pattern works.
-10. **WP-EVM-08 — TS client (`protocol-evm-v1-client`).** ABI exports,
-    per-chain address registry (Ethereum + Base entries from day 1), viem-based
-    balance + allowance helpers, typed `settleBatch` + `settleNetPositions`
-    wrappers.
-11. **WP-EVM-09 — `wrap` `BalanceCheck.evm` implementation.** Reads
-    `balanceOf` + `allowance` via viem. Pass-through into existing `wrapFetch`.
-    Chain selected per endpoint config.
-12. **WP-EVM-10 — `settler` `EvmSettlerAdapter`.** Behind a `ChainAdapter`
-    interface. Per-chain submission queues; shared batcher + idempotency.
-    Routing logic: cheap calls (premium < $1) get rejected on Ethereum
-    endpoints with a clear error; routed to Base endpoints if integrator
-    registered both.
-13. **WP-EVM-11 — `indexer` per-chain event poller.** `eth_getLogs` (or viem
-    `watchEvent`) for `CallSettled`, `PoolToppedUp`, `EndpointRegistered`.
-    Two pollers (Ethereum + Base) writing to the same Postgres schema with a
-    `chain` column.
-14. **WP-EVM-12 — Postgres schema migration.** Add `chain` enum column to
+   Add `forge snapshot` gas-regression tests so per-call gas regressions are
+   caught at PR time.
+7. **WP-EVM-07 — Deploy scripts + Base Sepolia deploy.** `forge script`
+   targeting Base Sepolia. Operator runbook for `transferOwnership` to a
+   Safe. (Depends on §9 Q-test: Sepolia-first is the assumed default.)
+8. **WP-EVM-08 — TS client (`protocol-evm-v1-client`).** ABI exports, Base
+   address registry entry, viem-based balance + allowance helpers, typed
+   `settleBatch` wrapper. Registry structured to accept Arbitrum/Optimism
+   entries later without a breaking change.
+9. **WP-EVM-09 — `wrap` `BalanceCheck.evm` implementation.** Reads
+   `balanceOf` + `allowance(agent, PactSettler)` via viem. Pass-through into
+   existing chain-agnostic `wrapFetch`.
+10. **WP-EVM-10 — `settler` `EvmSettlerAdapter`.** Behind a `ChainAdapter`
+    interface (sibling to the existing Solana adapter). Shared batcher +
+    idempotency (call_id dedup) + retry policy; the adapter is the only
+    chain-aware seam.
+11. **WP-EVM-11 — `indexer` Base event poller.** `eth_getLogs` (or viem
+    `watchEvent`) for `CallSettled`, `PoolToppedUp`, `EndpointRegistered`,
+    `FeeRecipientsUpdated`, `EndpointPaused`, `ProtocolPaused`. Writes to the
+    existing Postgres schema with the `chain` column from WP-EVM-12. The
+    existing bearer-gated `/events` POST stays for the Solana path.
+12. **WP-EVM-12 — Postgres schema migration.** Add `chain` enum column to
     `Call`, `Settlement`, `PoolState`, `EndpointConfig`, `RecipientEarnings`.
-    Backfill with `'solana'` for existing rows. Enum members:
-    `solana | ethereum | base | arbitrum`.
-15. **WP-EVM-13 — `market-dashboard` chain switcher.** Drop-down in the
-    dashboard header; per-chain filter on all stats panels. "Show Ethereum
-    pools" defaulted on so Rick's primary intent is the visible default.
-16. **WP-EVM-14a — Ethereum Sepolia demo end-to-end.** Real agent calls a
-    real high-value insured endpoint on Ethereum Sepolia (premium ≥ $5/call
-    so the economics demonstrate cleanly), settler runs net-position
-    settlement hourly, breach triggers refund within the next window,
-    dashboard shows the call labeled "Ethereum". **Primary demo-gate.**
-17. **WP-EVM-14b — Base Sepolia demo end-to-end.** Same agent, same flow,
-    but a low-cost retail endpoint on Base Sepolia with per-call settlement.
-    Demonstrates the "L2 fallback for cheap calls" narrative.
-18. **WP-EVM-15 — Audit prep + Safe rotation.** Mainnet readiness audit doc
-    for the EVM contracts; same format as
-    `docs/audits/2026-05-05-mainnet-readiness.md`. Add an
-    L1-economics-blocker section noting the ~$5/call gas floor and the
-    off-chain accumulation requirement. Rotate deployer EOA → Safe multisig
-    on both chains.
-19. **WP-EVM-16 — Third-party audit window.** One firm (Spearbit / Trail of
-    Bits / OpenZeppelin). Hold mainnet deploy until written report + fix-PR.
-    Audit covers the bytecode that ships to *both* chains — single audit,
-    two deployment verifications.
-20. **WP-EVM-17a — Ethereum mainnet deploy.** Primary chain per Rick's intent.
-21. **WP-EVM-17b — Base mainnet deploy.** L2 fallback for cheap calls.
-22. **WP-EVM-18 — Arbitrum mainnet deploy (deferred).** Same contract
-    bytecode; new addresses; new entry in the address registry. Not
-    launch-blocking; ship after we have one full ops cycle on Ethereum + Base.
+    Backfill existing rows with `'solana'`. Enum members:
+    `solana | base | arbitrum | optimism | ethereum` (full set defined now so
+    later chains need no migration).
+13. **WP-EVM-13 — `market-dashboard` chain switcher.** Drop-down in the
+    dashboard header; per-chain filter on all stats panels. Defaults: Solana
+    + Base visible.
+14. **WP-EVM-14 — Base Sepolia demo end-to-end.** A real agent calls a real
+    insured endpoint on Base Sepolia, premium debited from Sepolia-USDC,
+    breach triggers refund, dashboard shows the call labeled "Base".
+    **Demo gate.**
 
-WP-01..WP-14b is the demo path. WP-15..18 is the production path. WP-05b is
-a launch blocker for Ethereum specifically; it can be skipped if Rick picks
-Option B (Base-only initial launch).
+**Production path (WP-EVM-15..17):**
+
+15. **WP-EVM-15 — Audit prep + Safe rotation.** Base mainnet readiness audit
+    doc; same format as `docs/audits/2026-05-05-mainnet-readiness.md`.
+    Rotate the deployer EOA → Safe multisig on Base. (Depends on §9
+    Q-audit-firm + Q-audit-budget.)
+16. **WP-EVM-16 — Third-party audit window.** One firm (see §9
+    Q-audit-firm). Hold Base mainnet deploy until written report + fix-PR
+    merged. The audited bytecode is the same bytecode that will later ship to
+    Arbitrum/Optimism — one audit covers the family.
+17. **WP-EVM-17 — Base mainnet deploy.** v1 EVM launch. Address registered in
+    `protocol-evm-v1-client`. Post-deploy: smoke a real insured call on Base
+    mainnet, confirm indexer picks up the on-chain `CallSettled` event.
+
+### 8.2 v1.1 — Arbitrum One (NOT part of v1 launch)
+
+Marked separate so it is unambiguous this is post-v1 work. Same audited
+bytecode; trigger-driven per §4.6.6 (a specific integrator asks, or ~3
+months of stable Base ops).
+
+18. **WP-EVM-18 — Arbitrum One mainnet deploy.** Reuse the WP-EVM-07 deploy
+    script with an Arbitrum RPC + chain-id. New address-registry entry in
+    `protocol-evm-v1-client`. Add an Arbitrum poller instance to the indexer
+    (WP-EVM-11 generalizes — no new code, new config). No new audit (identical
+    bytecode). Safe multisig rotation on Arbitrum before go-live.
+
+### 8.3 Deferred to v2 — Ethereum mainnet (at scale)
+
+Not in the v1 or v1.1 scope. Ethereum L1 deployment requires, as hard
+prerequisites (per §4.3-§4.6):
+
+- **Off-chain premium accumulation** — settler ledger of signed per-call
+  receipts; `settleNetPositions(agent[], netDebit[], slug[])` for periodic
+  on-chain net settlement; on-chain dispute window. (This was the old
+  WP-EVM-05b; it is v2 work, not v1.)
+- **Enterprise / high-value-call premium tier** — a product-level reframe so
+  the ~$5/call L1 gas overhead is a small fraction of the premium.
+- **Ethereum Sepolia deploy + demo** (old WP-EVM-07a / 14a) and **Ethereum
+  mainnet deploy** (old WP-EVM-17a) — all v2.
+
+These are tracked as the v2 EVM expansion and intentionally left
+unsequenced here; they get their own plan when v2 starts.
 
 ---
 
 ## 9. Open questions for Rick
 
-Tight list — each is load-bearing for the WP plan.
+### 9.1 RESOLVED (closed — recorded for traceability)
 
-- **v1 chain selection — confirm Base (replaces all earlier chain
-  questions).** Per §4.6, the recommendation is **Base, single-chain v1
-  launch.** Defended in §4.6.5 on five grounds (agent ecosystem fit,
-  Coinbase relationship, gas economics, mechanical fallback to Optimism,
-  Ethereum preserved on roadmap). Confirm? Or is there a partner / customer
-  / commercial reason that pushes us elsewhere — Arbitrum specifically (DeFi
-  treasury-side conversations? a specific integrator already on Arb?), or
-  Optimism (Superchain partnership ask?), or do you want to push back
-  against the §4.6.5 anti-arguments?
+- ~~**v1 chain target.**~~ **RESOLVED: Base.** Single-chain v1 EVM launch.
+  Locked by Rick 2026-05-15. See §4.6.5.
+- ~~**Extension order.**~~ **RESOLVED: v1 Base → v1.1 Arbitrum One → v1.2
+  Optimism (opportunistic) → v2 Ethereum mainnet.** See §4.6.6.
+- ~~**Ethereum-first vs L2-first.**~~ **RESOLVED:** Ethereum L1 deferred to
+  v2 at scale; not economically efficient as the first EVM investment
+  (§4.3 worked example: ~$5.44/call gas vs $0.0001-$0.10 premiums).
+- ~~**Off-chain premium accumulation in v1.**~~ **RESOLVED: deferred to v2.**
+  Base economics don't require it (§4.6.5 point 3). It is a v2 / Ethereum
+  prerequisite, tracked in §8.3 — not v1 work.
+- ~~**Pool bridging.**~~ **RESOLVED: independent per-chain pools, no
+  bridging.** Holds for every chain in the extension path (§5).
+- ~~**Package naming.**~~ **RESOLVED: `@pact-network/protocol-evm-v1`**
+  (chain-agnostic; bytecode is shared across Base/Arbitrum/Optimism).
+  Sibling to Solana's `@pact-network/protocol-v1-client`.
 
-- **Extension order — confirm v1.1 = Arbitrum, v1.2 = Optimism (opportunistic),
-  v2 = Ethereum.** §4.6.6 walks the rationale. The major call inside this
-  question is whether Arbitrum-as-v1.1 should be calendar-driven (~3 months
-  after Base prod) or trigger-driven (only when an integrator asks).
+### 9.2 STILL OPEN — the only blockers before WP-EVM-01 kickoff
 
-- **Coinbase concentration risk — explicit signoff.** Single-chain v1 on
-  Base couples Pact to Coinbase's L2 roadmap and commercial decisions. The
-  mitigation is OP Stack portability (Optimism is a one-day redeploy,
-  Arbitrum a one-week port). Acceptable? Or do you want a parallel-track
-  Optimism deploy as a hedge from day 1 (small extra ops cost; same audit)?
+These five are genuinely unanswered. None block the WP-EVM-01 scaffold
+itself (§8.1 notes WP-EVM-01 can start immediately), but each gates a
+specific downstream WP as noted:
 
-- **Off-chain premium accumulation — defer to v2.** §4.5's WP-EVM-05b is
-  no longer a v1 launch blocker under §4.6 (Base economics don't require
-  it). Confirm we deprioritize this work to the v2 / Ethereum slot, or do
-  you want it built into v1 anyway as a forward-investment for v2?
+1. **Coinbase concentration hedge.** Single-chain v1 on Base couples Pact
+   to Coinbase's L2 roadmap + commercial decisions. Default mitigation:
+   accept OP Stack portability (Optimism = ~1-day redeploy, Arbitrum =
+   ~1-week port). **Accept that, or do you want a parallel-track Optimism
+   deploy from day 1 as a live hedge** (small extra ops + monitoring cost,
+   same audited bytecode)? — *Gates whether §8.2 stays v1.1 or a second
+   chain enters the v1 path.*
 
-- **Specific concerns about Base.** Anything you've heard from Coinbase,
-  Circle, x402 team, or your investors that would change the §4.6.5 read?
-  (Examples: a Coinbase commercial term you're uncomfortable with, an x402
-  roadmap conflict, a known Base outage incident I'm not factoring.)
+2. **Mainnet vs Base Sepolia testnet first.** Default assumed in §8.1:
+   Base Sepolia end-to-end demo (WP-EVM-14) before spending audit budget,
+   then Base mainnet. **Confirm Sepolia-first, or push straight to Base
+   mainnet with a fresh audit?** — *Gates WP-EVM-07 target + WP-EVM-15
+   sequencing.*
 
-- **Mainnet vs testnet first.** Demo on Sepolia (Ethereum + Base both)
-  end-to-end before spending audit budget? (Recommended.) Or push straight
-  to mainnet with a fresh audit?
+3. **ERC-4337 paymaster for gasless agent UX.** Do agents on Base pay
+   their own gas, or do we sponsor a paymaster so the flow is "USDC in,
+   USDC out, no ETH"? On Base the gas is sub-cent so the economics are
+   trivial either way — this is purely an agent-UX call. Recommend **yes**
+   (Base has mature paymaster infra: Coinbase Smart Wallet, Pimlico,
+   Biconomy). **Confirm yes/no?** — *Gates an added paymaster-integration
+   WP between WP-EVM-09 and WP-EVM-10 if yes.*
 
-- **Gasless / paymaster option.** Do agents on EVM pay their own gas, or
-  do we offer a sponsored UX via ERC-4337 paymaster so the agent flow is
-  "USDC in, USDC out, no ETH"? Note from §4.4: paymasters fix UX (no
-  native-ETH requirement) but **do not change L1 economics** — the gas
-  cost is still extracted from someone, typically marked-up against the
-  agent's USDC. Useful but not a fix for the L1 gas problem. Recommend
-  yes-on-Base for UX, optional-on-Ethereum given the call-value tier.
+4. **Audit budget ceiling + preferred firm.** Rough USD ceiling for the
+   third-party audit, and a firm preference? Options: Spearbit /
+   OpenZeppelin (both Base-experienced), Trail of Bits (gold standard,
+   slower + pricier), Sherlock / Cantina (contest model, cheaper, slower
+   to schedule). — *Gates WP-EVM-15 + WP-EVM-16 calendar.*
 
-- **Pool bridging.** Confirm **independent per-chain pools** (no bridging
-  of liquidity)? Or do you want a hub-and-spoke design? (Strong
-  recommendation: independent, regardless of which Option A/B/C you pick.)
+5. **Base-specific concerns from Coinbase / Circle / x402 conversations.**
+   Anything you've heard that would change the §4.6.5 read — a Coinbase
+   commercial term you're uncomfortable with, an x402 roadmap conflict, a
+   known Base incident we're not factoring, a Circle USDC-on-Base caveat?
+   — *Gates whether the decision needs a revisit before WP-EVM-01.*
 
-- **Audit budget + firm.** Rough USD ceiling for the third-party EVM audit,
-  and do you have a preferred firm? (Spearbit and OpenZeppelin both have
-  Base + Ethereum experience; Trail of Bits is gold-standard but slower +
-  pricier. Sherlock / Cantina contest model is cheaper but slower to
-  schedule.) This gates WP-EVM-16's calendar.
-
-- **CCTP for treasury rebalancing.** Plan to use Circle CCTP for moving
-  treasury USDC between chains (Solana ↔ Ethereum ↔ Base), or stick with a
-  manual ops process for v1?
-
-- **Naming.** Confirm `@pact-network/protocol-evm-v1` for the Solidity
-  package (chain-agnostic), sibling to the existing Solana
-  `@pact-network/protocol-v1-client`? Or a different naming convention
-  (e.g., `protocol-eth-v1` / `protocol-base-v1` if you want chain-specific
-  surfaces)? Recommend the chain-agnostic name since the bytecode is
-  shared.
+CCTP-for-treasury-rebalancing is **not** a v1 blocker (no second chain in
+v1) — it returns as an open question at v1.1 when Arbitrum lands.
 
 ---
 
