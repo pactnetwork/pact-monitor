@@ -129,36 +129,54 @@ If Railway auto-deploys in the wrong order, that's fine — just let it settle, 
 
 ## 8. Solana on-chain init
 
-The devnet program is already deployed at `5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5`, but the PDAs (ProtocolConfig, Treasury, SettlementAuthority, helius EndpointConfig + CoveragePool) may need re-init if devnet has been wiped or this is the first integrated run:
+The devnet program is already deployed at `5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5`, but the PDAs (ProtocolConfig, Treasury, SettlementAuthority, helius EndpointConfig + CoveragePool) need one-time bring-up. Run from your laptop where the keypair lives — NOT from the dev VM.
+
+The init script and its full procedure live at `scripts/devnet/`. See `scripts/devnet/README.md` for the complete keypair-prep + run sequence. Short version:
 
 ```sh
-# From your laptop where the keypair lives — NOT from the dev VM.
+# 1. Prep keypairs (one-time)
+mkdir -p ~/pact-devnet-keys && chmod 700 ~/pact-devnet-keys
+cp ~/.config/solana/id.json ~/pact-devnet-keys/pact-devnet-upgrade-authority.json
+cp ~/.config/solana/id.json ~/pact-devnet-keys/settlement-authority.json
+cp ~/.config/solana/pact-network-v1-program-keypair.json ~/pact-devnet-keys/
+solana-keygen new --no-bip39-passphrase --silent --outfile ~/pact-devnet-keys/treasury-vault.json
+solana-keygen new --no-bip39-passphrase --silent --outfile ~/pact-devnet-keys/pool-vault-helius.json
+chmod 600 ~/pact-devnet-keys/*.json
+
+# 2. Fund the upgrade authority on devnet
+solana airdrop 1 $(solana-keygen pubkey ~/pact-devnet-keys/pact-devnet-upgrade-authority.json) --url devnet
+
+# 3. Verify devnet program is reachable
 solana program show 5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5 --url devnet
 
-bun packages/protocol-v1-client/scripts/check-init.ts --cluster devnet
-# If anything is uninitialized:
-bun packages/protocol-v1-client/scripts/init-protocol.ts \
-  --cluster devnet \
-  --authority 47Fg5JqMsCeuRyDsFtD7Ra7YTdzVmTr2mZ1R2dUkZyfS \
-  --treasury-bps 100
+# 4. Rehearsal — print plan, send nothing
+cd /path/to/pact-monitor/scripts/devnet
+pnpm install
+DRY_RUN=1 pnpm init
 
-# Register the `helius` endpoint with the settler signer as fee recipient.
-# Replace <SETTLER_SIGNER_PUBKEY> with the pubkey corresponding to the
-# SETTLEMENT_AUTHORITY_KEY value you set on the settler service.
-bun packages/protocol-v1-client/scripts/register-endpoint.ts \
-  --cluster devnet \
-  --slug helius \
-  --fee-recipient <SETTLER_SIGNER_PUBKEY> \
-  --flat-premium 1000 \
-  --sla-latency-ms 200
+# 5. Real init (idempotent — safe to re-run if it fails partway)
+pnpm init
 ```
 
-Fund the settler signer with ≥ 0.05 devnet SOL (~5,000 settles at 10k lamports each — mainnet Bug 1 mitigation):
+The script fires 4 instructions: `initialize_protocol_config`, `initialize_treasury`, `initialize_settlement_authority`, `register_endpoint("helius")`. State (PDAs + tx signatures) lands at `scripts/devnet/.devnet-state.json`.
+
+**Fund the settler signer with ≥ 0.05 devnet SOL** (~5,000 settle txs at 10k lamports each — mainnet Bug 1 mitigation):
 
 ```sh
-solana airdrop 1 <SETTLER_SIGNER_PUBKEY> --url devnet
+solana airdrop 1 $(solana-keygen pubkey ~/pact-devnet-keys/settlement-authority.json) --url devnet
 # Devnet faucet caps at 1 SOL/call with ~12h cooldown per IP; retry if rate-limited.
 ```
+
+**Optional — bootstrap the `pay-default` coverage pool** if you want `dummy-upstream` running in PayAI mode (real x402 settlement). Skip if leaving dummy-upstream in emulation mode (default). The existing `scripts/pay-default-bootstrap.ts` supports devnet out of the box:
+
+```sh
+PACT_PRIVATE_KEY=~/pact-devnet-keys/pact-devnet-upgrade-authority.json \
+PACT_RPC_URL="https://api.devnet.solana.com" \
+PROGRAM_ID=5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5 \
+  pnpm exec tsx scripts/pay-default-bootstrap.ts --confirm
+```
+
+The script prints the pay-default pool's authority wallet pubkey — paste that into `DUMMY_X402_PAY_TO` on the dummy-upstream Railway service and flip `DUMMY_X402_USE_PAYAI=1`.
 
 ---
 
