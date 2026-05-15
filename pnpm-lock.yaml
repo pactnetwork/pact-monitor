@@ -549,21 +549,21 @@ importers:
       '@pact-network/zerog-compute-client':
         specifier: workspace:*
         version: link:../zerog-compute-client
-      ethers:
-        specifier: ^6.13.4
-        version: 6.16.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)
       hono:
         specifier: ^4.7.0
         version: 4.12.16
       lru-cache:
         specifier: ^11.0.2
         version: 11.3.6
+      viem:
+        specifier: ^2.49
+        version: 2.49.2(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)(zod@3.25.76)
       zod:
         specifier: ^3.24.0
         version: 3.25.76
     devDependencies:
       '@types/node':
-        specifier: ^22.10.2
+        specifier: ^22.10.5
         version: 22.19.17
       tsx:
         specifier: ^4.19.3

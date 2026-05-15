@@ -1,7 +1,8 @@
 import { ethers, type Wallet } from 'ethers';
-// The SDK's ESM build is broken in v0.8.3 (spike 2). The CJS build is fine,
-// so we deliberately depend on CommonJS resolution from this package's
-// `tsconfig.json` (module: CommonJS) and import the public surface here.
+// This package compiles `module: CommonJS` for build stability against the
+// SDK's `require`-conditional export. ESM consumers must import us via the
+// Node-guaranteed default form (`import pkg from '...'; const { X } = pkg`),
+// since CJS named-export synthesis is not guaranteed across toolchains.
 import { createZGComputeNetworkBroker } from '@0gfoundation/0g-compute-ts-sdk';
 
 export interface ComputeNetworkConfig {
@@ -64,10 +65,15 @@ export class ZerogComputeClient {
     try {
       await this.broker.ledger.depositFund(this.network.minLedgerDeposit0G);
     } catch (err) {
-      // "No ledger exists yet… requires minimum of 3 0G" — only thrown when amount < min.
-      // "Account already initialized" — fine, swallow.
+      // The ONLY benign case is the SDK's exact "Ledger already exists"
+      // (verified in @0gfoundation/0g-compute-ts-sdk@0.8.3 lib.commonjs —
+      // depositFund throws `Ledger already exists, with balance: …` when the
+      // account is already funded). Every other error (incl. the sub-min
+      // "No ledger exists yet … requires minimum of 3 0G", RPC failures, or
+      // an unrelated message that merely contains "already") MUST propagate
+      // so init fails loud.
       const msg = (err as Error).message ?? '';
-      if (!/already/i.test(msg)) throw err;
+      if (!/ledger already exists/i.test(msg)) throw err;
     }
   }
 
@@ -96,8 +102,11 @@ export class ZerogComputeClient {
   }
 
   /**
-   * POST a single chat-completion request through 0G Compute.
-   * Mirrors what market-proxy-zerog will do per insured call.
+   * POST a single chat-completion request through 0G Compute, resolving the
+   * provider's endpoint+model on the fly. Convenience for one-off scripts.
+   * For latency-sensitive callers (the insured proxy) use
+   * `callInferenceWith` with pre-resolved, cached metadata so the timed
+   * window excludes the `getServiceMetadata` contract round-trip.
    */
   async callInference(opts: {
     provider:   string;
@@ -105,16 +114,41 @@ export class ZerogComputeClient {
     teeVerify?: boolean;
   }): Promise<InferenceResult> {
     await this.init();
-    const { provider, messages, teeVerify = false } = opts;
+    const meta = await this.broker.inference.getServiceMetadata(opts.provider);
+    return this.callInferenceWith({
+      provider:  opts.provider,
+      endpoint:  meta.endpoint,
+      model:     meta.model,
+      messages:  opts.messages,
+      teeVerify: opts.teeVerify,
+    });
+  }
 
-    const meta    = await this.broker.inference.getServiceMetadata(provider);
+  /**
+   * Same as `callInference` but with the provider's `endpoint`/`model`
+   * supplied by the caller (resolved once via `listChatbotServices` and
+   * cached). The ONLY network in this path is the per-call signed
+   * `getRequestHeaders` (a local ECDSA sign) + the inference `fetch` — so a
+   * stopwatch around this method measures inference latency, not provider
+   * discovery (market-proxy-zerog SLA correctness, plan 5.A).
+   */
+  async callInferenceWith(opts: {
+    provider:   string;
+    endpoint:   string;
+    model:      string;
+    messages:   Array<{ role: string; content: string }>;
+    teeVerify?: boolean;
+  }): Promise<InferenceResult> {
+    await this.init();
+    const { provider, endpoint, model, messages, teeVerify = false } = opts;
+
     const headers = await this.broker.inference.getRequestHeaders(provider);
 
     const t0  = Date.now();
-    const res = await fetch(`${meta.endpoint}/chat/completions`, {
+    const res = await fetch(`${endpoint}/chat/completions`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json', ...headers },
-      body:    JSON.stringify({ model: meta.model, messages }),
+      body:    JSON.stringify({ model, messages }),
     });
     const body      = await res.json();
     const latencyMs = Date.now() - t0;

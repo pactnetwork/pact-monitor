@@ -3,13 +3,19 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "description": "Hono proxy: wraps 0G Compute inference calls with Pact insurance. ECDSA agent auth, ERC20 balance check, wrapFetch to settler.",
+  "description": "Hono proxy: insures 0G Compute inference calls with Pact-0G. ECDSA agent auth, ERC20 balance check, wrapFetch → Pub/Sub → settler-evm.",
   "scripts": {
+    "deps": "pnpm --filter @pact-network/wrap --filter @pact-network/protocol-zerog-client --filter @pact-network/zerog-compute-client build",
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "clean": "rm -rf dist",
+    "prebuild": "pnpm run clean && pnpm run deps",
+    "pretest": "pnpm run deps",
+    "pretypecheck": "pnpm run deps",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@google-cloud/pubsub": "^4.9.0",
@@ -17,15 +23,18 @@
     "@pact-network/protocol-zerog-client": "workspace:*",
     "@pact-network/wrap": "workspace:*",
     "@pact-network/zerog-compute-client": "workspace:*",
-    "ethers": "^6.13.4",
     "hono": "^4.7.0",
     "lru-cache": "^11.0.2",
+    "viem": "^2.49",
     "zod": "^3.24.0"
   },
   "devDependencies": {
-    "@types/node": "^22.10.2",
+    "@types/node": "^22.10.5",
     "tsx": "^4.19.3",
     "typescript": "^5.7.3",
     "vitest": "^2.1.0"
+  },
+  "engines": {
+    "node": ">=22.0"
   }
 }

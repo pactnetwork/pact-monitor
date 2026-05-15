@@ -31,3 +31,5 @@ scripts/smoke-tier2/.smoke-keys/
 scripts/smoke-tier2/.smoke-state/
 scripts/smoke-tier2/.surfpool-data/
 scripts/smoke-tier2/.logs/
+
+.turbo

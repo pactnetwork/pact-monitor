@@ -2,7 +2,7 @@
   "name": "@pact-network/zerog-compute-client",
   "version": "0.0.1",
   "private": true,
-  "description": "CJS wrapper over @0gfoundation/0g-compute-ts-sdk. CJS-only because the SDK's ESM build is broken (verified spike 2, 2026-05-15).",
+  "description": "Typed wrapper over @0gfoundation/0g-compute-ts-sdk. Compiled CommonJS for build stability against the SDK's require-conditional export; ESM consumers import via the default form.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {

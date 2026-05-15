@@ -4,11 +4,34 @@ CommonJS-only typed wrapper over [`@0gfoundation/0g-compute-ts-sdk`](https://www
 
 ## Why CJS
 
-The SDK's ESM build at v0.8.3 is broken — `lib.esm/index.mjs` re-exports symbols (`C`, `F`, `H`, …) that don't actually exist in the bundled chunk. Importing from an ESM consumer fails at module instantiation with `SyntaxError: does not provide an export named 'C'`. The CJS build at `lib.commonjs/` works correctly.
+This package compiles as `module: CommonJS` so the SDK's `require`-conditional
+export resolves with the most build-stable toolchain path.
 
-This package compiles as `module: CommonJS` so the SDK's `require`-conditional export is resolved. **Importers in ESM packages can still consume us** because Node's ESM-from-CJS interop handles named exports automatically.
+**ESM importers must use the Node-guaranteed default form:**
 
-Verified by spike 2 (2026-05-15). See [spikes/RESULTS.md](../../spikes/RESULTS.md).
+```ts
+import zc from '@pact-network/zerog-compute-client';
+const { ZerogComputeClient, GALILEO_TESTNET } = zc;
+```
+
+Node's CJS→ESM named-export *synthesis* (`import { X } from …`) is not
+guaranteed across toolchains; only the default export (`module.exports`) is.
+Use the default-import destructure above and the consumer stays portable.
+
+## ensureLedger error handling
+
+`ensureLedger()` swallows **only** the SDK's exact benign message
+`Ledger already exists, with balance: …` (verified in
+`@0gfoundation/0g-compute-ts-sdk@0.8.3` `lib.commonjs`). Every other
+error — including the sub-minimum `No ledger exists yet … requires minimum
+of 3 0G` and any RPC failure — propagates so callers fail loud.
+
+## Ledger contract addresses
+
+`networks.ts` `ledgerContract` is **informational only** — the broker is
+constructed with no explicit ledger CA, so the SDK auto-detects per chain id.
+The values are the SDK's own `CONTRACT_ADDRESSES.{testnet,mainnet}.ledger`
+(the original scaffold value was the *inference serving* contract).
 
 ## Status
 
@@ -17,7 +40,8 @@ Verified by spike 2 (2026-05-15). See [spikes/RESULTS.md](../../spikes/RESULTS.m
 ## API
 
 ```ts
-import { ZerogComputeClient, GALILEO_TESTNET } from '@pact-network/zerog-compute-client';
+import zc from '@pact-network/zerog-compute-client';
+const { ZerogComputeClient, GALILEO_TESTNET } = zc;
 
 const compute = new ZerogComputeClient(GALILEO_TESTNET, process.env.PRIVATE_KEY!);
 
