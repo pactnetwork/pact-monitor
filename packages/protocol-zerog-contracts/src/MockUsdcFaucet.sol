@@ -25,7 +25,9 @@ contract MockUsdcFaucet {
 
     function drip() external {
         uint256 last = lastDripAt[msg.sender];
-        if (block.timestamp < last + cooldown) {
+        // First-time callers (last == 0) bypass the cooldown gate; otherwise
+        // raw `0 + cooldown` would block new users when block.timestamp < cooldown.
+        if (last != 0 && block.timestamp < last + cooldown) {
             revert CooldownActive(last + cooldown - block.timestamp);
         }
         lastDripAt[msg.sender] = block.timestamp;
