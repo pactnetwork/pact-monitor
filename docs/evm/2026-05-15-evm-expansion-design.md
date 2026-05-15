@@ -13,12 +13,21 @@
 Pact Network v1 ships on Solana (Pinocchio program at
 `5bCJcdWdKLJ7arrMVMFh3z99rQDxV785fnD9XGcr3xwc` mainnet,
 `5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5` devnet). Rick wants to port the
-protocol to one or more EVM chains so agents that pay with ERC-20 USDC can also
-get insured calls.
+protocol to **Ethereum mainnet first**, then extend to other EVM chains. The
+core proposition is that "EVM" to most institutional integrators and treasury
+underwriters means Ethereum L1 — the chain with the deepest USDC liquidity,
+the canonical Circle issuance, and the audit-trail credibility that L2s do not
+yet match.
 
 This doc maps the Solana primitives we already use onto EVM equivalents, sketches
-the Solidity contract shape, picks a target chain, and lays out the work needed
-without prescribing implementation details that should be decided at WP time.
+the Solidity contract shape, examines whether per-call insurance economics
+survive on Ethereum L1 (spoiler: only with heavy batching, large premiums, or
+off-chain accounting), and lays out the work needed without prescribing
+implementation details that should be decided at WP time.
+
+**Document version:** v2 — re-anchored on Ethereum-mainnet-first per Rick, with
+honest L1 gas economics analysis. v1 led with Base/Arbitrum and treated
+Ethereum as a later extension; that did not match Rick's intent.
 
 ---
 
@@ -186,63 +195,213 @@ single PactSettler + single PactRegistry per chain.**
 
 ## 4. Chain selection
 
-Hard requirements:
+### 4.1 Hard requirements
 
-1. Canonical (or Circle-bridged) USDC available with 6 decimals.
-2. Per-call gas cost low enough that the premium > gas (premium floor is
-   100 lamports = $0.0001 USDC; clearly gas must be sub-cent).
-3. EOA-friendly UX so agents don't need to learn a new wallet stack.
-4. Mature tooling — Foundry, Etherscan-compatible explorer, public RPC.
+1. Canonical (or Circle-issued) USDC with 6 decimals.
+2. Per-call gas cost reconcilable with premium economics — the v1 floor is
+   100 lamports = $0.0001 USDC on Solana. **On Ethereum L1 this floor is not
+   reachable;** §4.3 quantifies how much it has to move.
+3. EOA-friendly UX so agents don't need to learn a new wallet stack
+   (or a clean ERC-4337 paymaster path if we want USDC-only UX).
+4. Mature tooling — Foundry, Etherscan, public RPC, established audit-firm
+   familiarity.
 
-Scoring (1 = poor, 5 = excellent):
+### 4.2 Scoring (Ethereum mainnet primary)
 
-| Chain | USDC | Gas/call | Ecosystem fit | Audit support | Bridge story | Total |
+Scoring (1 = poor, 5 = excellent). Rick's stated intent puts Ethereum mainnet
+at the top; the table below scores it honestly rather than against the L2 set:
+
+| Chain | USDC | Per-call gas economics | Ecosystem fit | Audit support | Bridge story | Total |
 |---|---|---|---|---|---|---|
-| **Base** | 5 (native, Circle) | 5 (~$0.001 typical L2 tx) | 5 (Coinbase-aligned; biggest agent dev community) | 5 (most-audited L2) | 5 (Circle CCTP direct) | **25** |
+| **Ethereum mainnet** | 5 (native Circle USDC; deepest liquidity by 10x) | **2** (≈$3-7 per settled call at typical 15 gwei; only viable with massive batches or premiums >$5/call — see §4.3) | 5 (every audit firm, every wallet, every treasury) | 5 (gold standard) | 5 (CCTP origin) | **22** |
+| **Base** | 5 (native, Circle) | 5 (~$0.001-0.01 per settled call) | 5 (Coinbase-aligned; agent dev community) | 5 (most-audited L2) | 5 (CCTP) | **25** |
 | **Arbitrum** | 5 (native, Circle) | 5 | 5 (deep DeFi liquidity) | 5 | 5 (CCTP) | **25** |
 | **Optimism** | 5 (native, Circle) | 5 | 4 | 5 | 5 (CCTP) | **24** |
-| **Polygon PoS** | 3 (USDC.e bridged + native USDC since 2024 — must use native) | 4 | 3 | 4 | 4 | **18** |
+| **Polygon PoS** | 3 (USDC.e legacy + native USDC since 2024) | 4 | 3 | 4 | 4 | **18** |
 | **Polygon zkEVM** | 3 (native USDC limited) | 4 | 2 | 3 | 3 | **15** |
 | **Linea** | 3 (Circle USDC live but lower liquidity) | 4 | 2 | 3 | 3 | **15** |
 | **BNB Chain** | 4 (BSC-USD ≠ USDC; bridged USDC has lower trust) | 4 | 2 | 3 | 3 | **16** |
 
-**Recommendation: ship Base first, Arbitrum second.**
+The numerical totals favor L2s **only because of the gas-per-call axis.** On
+every other axis Ethereum mainnet ties or wins. The decision therefore reduces
+to: **does the gas math work on L1, or does it not?** §4.3 answers that.
 
-Rationale:
+### 4.3 Ethereum L1 economics — worked example
 
-- **Base** is the highest-leverage launch chain for an AI-agent payment
-  product. Coinbase pushes Base hard for agent/AI use cases; Circle USDC is
-  native; CDP-issued wallet keys are already EVM-native for many agent
-  frameworks (LangChain, Vercel AI SDK demos default to Base).
-- **Arbitrum** is the natural follow-up: same UX, larger DeFi treasury pool of
-  potential underwriters (when v2 lands), CCTP makes cross-chain USDC
-  movement trivial.
-- **Skip Polygon and BNB for v1 EVM.** Polygon zkEVM has thin USDC liquidity;
-  BNB Chain's USDC is bridged and the chain has a different audit/trust
-  posture than the L2 set.
+The protocol's per-call debit is gas-hostile on L1. Below is an honest model of
+what a settlement actually costs, so we can decide whether L1 is the primary
+home or the prestige listing.
 
-Cross-chain rebalancing of pool USDC (Base ↔ Arbitrum) can use **Circle CCTP**
-once both deployments exist — burns on source, mints on dest, no third-party
-bridge risk.
+**Per-event gas budget inside `settleBatch`:**
+
+| Operation | Gas (warm slots, typical) | Notes |
+|---|---|---|
+| `transferFrom(agent, pool, premium)` | 30,000-50,000 | Cold agent allowance the first time, warm after |
+| Update `PoolState` (4-5 packed uint64 fields) | 5,000-15,000 | Warm storage slot per slug |
+| Mark `settled[callId] = true` (cold SSTORE) | 20,000 | One-shot dedup mapping write |
+| Fee fan-out to 1-3 recipients (`transfer`) | 30,000-90,000 | Cold dest the first time |
+| Refund on breach (`transfer` from pool) | 0 or ~30,000 | Only when `breach = true` |
+| Emit `CallSettled` event (LOG3, ~100 bytes data) | ~3,000 | Cheap |
+| **Per-event total (no breach)** | **~88,000-178,000** | Mid-estimate ~110-130k |
+| **Per-event total (with breach)** | **~118,000-208,000** | Mid-estimate ~140-160k |
+
+Plus a fixed per-batch overhead of ~21,000 (tx base) + ~30,000 (calldata + role
+check + first warm-up).
+
+**Worked scenario — current Solana premium pattern ported as-is:**
+
+Assumptions: ETH = $3,000, gas price = 15 gwei, premium per call = $0.001
+(roughly the current v1 ceiling for low-cost endpoints), batch size = 50 calls,
+~10% breach rate.
+
+- Gas per batch: 21k + 30k + 50 × 120k = **~6.05M gas**
+- Cost per batch: 6.05M × 15 gwei × $3,000 / 1e18 ETH = **≈ $272**
+- Per-call gas overhead: $272 / 50 = **≈ $5.44 per call**
+- Per-call premium revenue: $0.001
+- **Loss per call: ~$5.44.** Pool is bled dry in days.
+
+**Worked scenario — what would actually break even:**
+
+Same assumptions, asking: at what point does premium income cover gas?
+
+| Batch size | Gas/batch | Gas $/batch | Min premium for breakeven |
+|---|---|---|---|
+| 50 | 6.05M | ~$272 | ~$5.45 per call |
+| 250 | 30M | ~$1,350 | ~$5.40 per call |
+| 1,000 | 120M | exceeds block gas limit (~30M) | not feasible in one tx |
+| 5,000 (split across batches) | 600M total | ~$27,000/day | ~$5.40 per call |
+
+The per-call gas overhead is **roughly flat at ~$5/call** because the
+bottleneck is per-event work (`transferFrom` + storage writes), not the
+fixed batch overhead. **You cannot batch your way out of L1 gas.** Larger
+batches just amortize the 21k tx base, which is already negligible.
+
+**Implication:** Ethereum L1 only works for Pact in one of these regimes:
+
+- **A. Premium ≥ ~$5 per call.** Insurance for high-value, low-frequency
+  endpoints (e.g., a $50-per-query enterprise data API with a 10% premium).
+  Most current Pact integrators are <$0.10/call retail APIs — they do not
+  fit this regime.
+- **B. Off-chain premium accumulation.** Agent's per-call premiums accrue
+  off-chain in a signed receipt log (the settler tracks them); on-chain
+  `settleBatch` runs hourly/daily and only settles **net positions** — one
+  `transferFrom` per agent per period, one fee fan-out per endpoint per
+  period. This collapses 10,000 per-call ops into ~10 net-position ops.
+  Adds settler trust (the off-chain ledger must be auditable + slashable),
+  adds a refund-finalization delay (agent waits for next settle window).
+- **C. Hybrid.** Cheap calls go to L2 (Base/Arbitrum); high-value calls go
+  to L1 for the audit-trail credibility. Same contract bytecode,
+  per-chain endpoint routing in `EndpointConfig`.
+
+### 4.4 Gas mitigations — full menu
+
+In rough order of leverage on L1:
+
+1. **Off-chain premium accumulation + periodic on-chain net settlement.**
+   Highest leverage. Reduces L1 ops by 100-1,000x. Cost: settler becomes a
+   trust point (mitigated by signed receipts + on-chain dispute window) and
+   refund latency goes from per-call to per-period. Materially changes the
+   protocol's claim of "every settlement on-chain" — see §4.5 caveat.
+2. **Heavy batching.** Already in v1. Helps amortize fixed overhead but does
+   nothing for per-event work; on L1 the per-event work *is* the cost. Cap
+   useful batch size around block gas limit (~30M / 120k per event ≈ 250
+   events max per tx). Modest leverage.
+3. **Storage-slot packing tricks.** Pack `CallRecord` dedup into a `bitmap`
+   instead of a `mapping(bytes16 => bool)` — replaces 20k SSTORE-zero-to-set
+   with ~5k SSTORE-warm. Saves ~15k per call ≈ ~$0.70/call on L1. Useful but
+   not transformative. Easy at WP time.
+4. **ERC-4337 paymaster.** Lets agents pay gas in USDC instead of ETH. Does
+   **not reduce gas; only shifts who pays.** Useful for UX (no native ETH
+   required) but the same $5/call cost is still extracted from somewhere —
+   typically the paymaster operator marks it up and bills the agent's USDC,
+   so agents still effectively pay ~$5/call gas. Solves UX, not economics.
+5. **EIP-7702 / smart-account sponsored flows.** Same UX win as paymaster
+   without a separate contract; same economic limit.
+6. **L2 fallback — deploy the same contracts on Base / Arbitrum.** The
+   pragmatic escape hatch if L1 economics break for the customer base we
+   actually have. Same Solidity, same audit, separate per-chain pool.
+
+### 4.5 Recommendation — three options on the table
+
+Rick's stated intent is Ethereum-mainnet-first. The honest read of the gas
+economics produces three coherent options:
+
+**Option A — Ethereum mainnet first, premiums sized for L1.**
+Deploy on Ethereum L1. Set the protocol's effective minimum premium at
+~$5/call, position Pact as an insurance layer for **enterprise / high-value
+agent calls** (think: $20-200 per query, 5-10% premium). Layer in off-chain
+premium accumulation (mitigation 1) so the L1 footprint is hourly/daily
+settlements, not per-call settlements. Most ambitious; matches Rick's intent
+literally; requires a major reframing of the Pact go-to-market away from
+"insure every retail API call" toward "insure every high-value enterprise
+agent transaction." Audit cost highest.
+
+**Option B — Base first as the EVM beachhead, Ethereum mainnet second once
+volume justifies.**
+Deploy the same Solidity on Base, ship the demo there, prove out the indexer
+and settler EVM paths, then deploy the **same contract bytecode** on Ethereum
+mainnet for high-value endpoints once the off-chain accumulation work is in.
+Treats Base as the L2 staging environment for the L1 contract. Lowest
+implementation friction; gives integrators the choice; preserves Rick's
+ultimate goal of Ethereum presence without forcing a go-to-market reframe in
+the same release.
+
+**Option C — Deploy on Ethereum + Base simultaneously from day 1.**
+Same Solidity, same audit, two address registry entries. Endpoints register
+per chain (or per chain set). Integrator picks based on their call value:
+high-value retail and enterprise → Ethereum, micro-call retail → Base.
+Internally we operate two pools with separate liquidity. Doubles the deploy
++ ops surface from day 1 but no extra contract work since the bytecode is
+identical. Audit cost is one audit (single codebase) but two deployment
+verifications.
+
+**Recommendation: Option C, with the caveat that Ethereum endpoints must
+launch with off-chain premium accumulation enabled (mitigation 1).**
+
+Reasoning:
+- Option A alone gambles the v1 EVM launch on a major product reframe in the
+  same cycle as a chain port. Two big bets in one release is a
+  documented anti-pattern for hackathon-cycle work and we already have a
+  May 11 mainnet flip on the Solana side.
+- Option B alone defers Rick's primary intent. He explicitly does not want
+  "Base instead of Ethereum"; he wants Ethereum, with other chains as
+  extensions.
+- Option C honors Rick's intent (Ethereum from day 1) without forcing the
+  premium-floor reframe to be the *only* answer — Base is there for
+  endpoints that don't fit the L1 economics. Same Solidity, same audit
+  scope, modest extra ops cost. Integrators self-select by chain based on
+  their call value.
+
+If Rick rejects "Base on day 1" entirely, fall back to **Option A** with
+mitigation 1 as a launch blocker. **Do not ship L1 without off-chain premium
+accumulation**; the "insurance for $0.001 calls" pattern simply does not
+exist on Ethereum L1.
+
+### 4.6 Multi-chain pool consolidation
+
+Cross-chain rebalancing of pool USDC (Ethereum ↔ Base ↔ Arbitrum) can use
+**Circle CCTP** — burns on source, mints on dest, no third-party bridge risk.
+Treasury and integrator earnings withdraw separately per chain. See §5.
 
 ---
 
 ## 5. Cross-chain shape — multi-chain, not cross-chain
 
 **Strong recommendation: independent deployments per chain, no bridging of
-pool liquidity at the protocol level.**
+pool liquidity at the protocol level.** Same recommendation regardless of
+which §4.5 option we pick — applies to Ethereum + Base + Arbitrum equally.
 
 | Option | Description | Verdict |
 |---|---|---|
 | **A. Multi-chain independent** (recommended) | Each chain has its own `PactRegistry` + `PactPool` + `PactSettler`. Liquidity, endpoints, and call records are chain-local. Treasury and integrators withdraw separately per chain. | Simple, audit-friendly, no bridge attack surface. Each chain failure is contained. |
 | **B. Cross-chain pool** | Pool liquidity on chain A backs calls served on chain B. Requires a messaging bridge (CCIP, LayerZero, Wormhole) to relay settlement events and unlock refunds. | Adds a CRITICAL trust assumption (the bridge). 2024-2025 saw multiple eight-figure bridge exploits. Not worth it for v1. |
-| **C. Hub-and-spoke (Solana hub)** | Solana stays canonical; EVM is a "spoke" that mirrors Solana state and only emits intent. Settlement still happens on Solana. | Worst of both: agents on EVM pay gas for nothing on-chain, and we still depend on a bridge. |
+| **C. Hub-and-spoke (Solana or Ethereum hub)** | One chain stays canonical; the other EVM chains are "spokes" that mirror state and emit intent. Settlement still happens on the hub. | Worst of both: agents on the spoke pay gas for nothing on-chain, and we still depend on a bridge. |
 
 Multi-chain independent matches the product reality: an agent picks a chain
 based on where its wallet + USDC live; the pool that insures the call lives on
-the same chain. If the same integrator wants endpoints on Base AND Arbitrum,
+the same chain. If the same integrator wants endpoints on Ethereum AND Base,
 they `registerEndpoint` twice — once per chain — and treat them as separate
-revenue streams.
+revenue streams. With §4.5 Option C this is the explicit pattern.
 
 Cross-chain consolidation of integrator earnings or treasury rebalancing is an
 off-chain ops concern, solved with CCTP transfers, not a protocol primitive.
@@ -413,6 +572,12 @@ packages/
 Ordered so the **demo path** (Base testnet end-to-end) comes first. Each WP is a
 discrete shippable unit. No time estimates per repo convention.
 
+The WPs assume **§4.5 Option C** (Ethereum + Base from day 1). Single
+codebase, single audit, two deployments. If Rick picks Option A (Ethereum
+only) drop the Base-specific WPs (07b, 14b, 17b). If he picks Option B
+(Base first, Ethereum later) reorder so the Ethereum-mainnet deploy moves
+to the production-path tail.
+
 1. **WP-EVM-01 — Solidity scaffold.** Foundry project at
    `packages/program-evm/protocol-evm-v1/`. Empty contract stubs for Registry,
    Pool, Settler. Foundry config, basic CI integration.
@@ -426,41 +591,77 @@ discrete shippable unit. No time estimates per repo convention.
 4. **WP-EVM-04 — PactSettler core.** `settleBatch` with premium-in via
    `transferFrom`, fee fan-out, refund on breach. Mirror the per-call
    `SettlementStatus` enum and emit `CallSettled` per event in the batch.
+   **L1-aware:** include the bitmap-packed dedup map from §4.4 mitigation 3
+   from the start (cheap to add now, painful later).
 5. **WP-EVM-05 — Settler hardening.** Exposure cap (hourly bucket per
    endpoint), `DelegateFailed` recovery via `try/catch` around `transferFrom`,
-   `PoolDepleted` accounting, dedup via `mapping(bytes16 => bool) settled`.
-6. **WP-EVM-06 — Foundry test suite.** Mirror the LiteSVM test plan from
+   `PoolDepleted` accounting, dedup via packed bitmap.
+6. **WP-EVM-05b — Off-chain premium accumulation (NEW, L1 launch blocker).**
+   Settler ledger of signed per-call receipts; `settleNetPositions(agent[],
+   netDebit[], slug[])` instruction for periodic on-chain net settlement;
+   on-chain dispute window for agents to challenge a recorded debit. Required
+   before Ethereum mainnet launch under §4.5 Option A or C; not required for
+   Base-only (Option B). See §4.4 mitigation 1.
+7. **WP-EVM-06 — Foundry test suite.** Mirror the LiteSVM test plan from
    `pact-network-v1-pinocchio/tests/`. Fuzz the bps fan-out and exposure cap.
-7. **WP-EVM-07 — Deploy scripts + Base Sepolia deploy.** `forge script`
-   targeting Base Sepolia. Operator runbook for `transferOwnership` to a Safe.
-8. **WP-EVM-08 — TS client (`protocol-evm-v1-client`).** ABI exports,
-   per-chain address registry, viem-based balance + allowance helpers, typed
-   `settleBatch` wrapper.
-9. **WP-EVM-09 — `wrap` `BalanceCheck.evm` implementation.** Reads
-   `balanceOf` + `allowance` via viem. Pass-through into existing `wrapFetch`.
-10. **WP-EVM-10 — `settler` `EvmSettlerAdapter`.** Behind a `ChainAdapter`
-    interface. Sequential per-chain submission; share batcher + idempotency.
-11. **WP-EVM-11 — `indexer` per-chain event poller.** `eth_getLogs` (or viem
+   Add gas-snapshot tests so per-call gas regressions get caught at PR time
+   (`forge snapshot`).
+8. **WP-EVM-07a — Deploy scripts + Sepolia deploy (Ethereum Sepolia).**
+   `forge script` targeting Ethereum Sepolia. Operator runbook for
+   `transferOwnership` to a Safe.
+9. **WP-EVM-07b — Sepolia deploy (Base Sepolia).** Same `forge script` with
+   a different RPC + chain-id. Verifies the bytecode is portable and the
+   address registry pattern works.
+10. **WP-EVM-08 — TS client (`protocol-evm-v1-client`).** ABI exports,
+    per-chain address registry (Ethereum + Base entries from day 1), viem-based
+    balance + allowance helpers, typed `settleBatch` + `settleNetPositions`
+    wrappers.
+11. **WP-EVM-09 — `wrap` `BalanceCheck.evm` implementation.** Reads
+    `balanceOf` + `allowance` via viem. Pass-through into existing `wrapFetch`.
+    Chain selected per endpoint config.
+12. **WP-EVM-10 — `settler` `EvmSettlerAdapter`.** Behind a `ChainAdapter`
+    interface. Per-chain submission queues; shared batcher + idempotency.
+    Routing logic: cheap calls (premium < $1) get rejected on Ethereum
+    endpoints with a clear error; routed to Base endpoints if integrator
+    registered both.
+13. **WP-EVM-11 — `indexer` per-chain event poller.** `eth_getLogs` (or viem
     `watchEvent`) for `CallSettled`, `PoolToppedUp`, `EndpointRegistered`.
-    Writes to existing Postgres schema with a `chain` column added.
-12. **WP-EVM-12 — Postgres schema migration.** Add `chain` enum column to
+    Two pollers (Ethereum + Base) writing to the same Postgres schema with a
+    `chain` column.
+14. **WP-EVM-12 — Postgres schema migration.** Add `chain` enum column to
     `Call`, `Settlement`, `PoolState`, `EndpointConfig`, `RecipientEarnings`.
-    Backfill with `'solana'` for existing rows.
-13. **WP-EVM-13 — `market-dashboard` chain switcher.** Drop-down in the
-    dashboard header; per-chain filter on all stats panels.
-14. **WP-EVM-14 — Base Sepolia demo end-to-end.** A real agent calls a real
-    insured endpoint on Base Sepolia, premium debited from sepolia-USDC,
-    breach triggers refund, dashboard shows the call. **Demo-gate.**
-15. **WP-EVM-15 — Audit prep + Safe rotation.** Mainnet readiness audit doc
+    Backfill with `'solana'` for existing rows. Enum members:
+    `solana | ethereum | base | arbitrum`.
+15. **WP-EVM-13 — `market-dashboard` chain switcher.** Drop-down in the
+    dashboard header; per-chain filter on all stats panels. "Show Ethereum
+    pools" defaulted on so Rick's primary intent is the visible default.
+16. **WP-EVM-14a — Ethereum Sepolia demo end-to-end.** Real agent calls a
+    real high-value insured endpoint on Ethereum Sepolia (premium ≥ $5/call
+    so the economics demonstrate cleanly), settler runs net-position
+    settlement hourly, breach triggers refund within the next window,
+    dashboard shows the call labeled "Ethereum". **Primary demo-gate.**
+17. **WP-EVM-14b — Base Sepolia demo end-to-end.** Same agent, same flow,
+    but a low-cost retail endpoint on Base Sepolia with per-call settlement.
+    Demonstrates the "L2 fallback for cheap calls" narrative.
+18. **WP-EVM-15 — Audit prep + Safe rotation.** Mainnet readiness audit doc
     for the EVM contracts; same format as
-    `docs/audits/2026-05-05-mainnet-readiness.md`. Squads → Safe.
-16. **WP-EVM-16 — Third-party audit window.** One firm (Spearbit / Trail of
+    `docs/audits/2026-05-05-mainnet-readiness.md`. Add an
+    L1-economics-blocker section noting the ~$5/call gas floor and the
+    off-chain accumulation requirement. Rotate deployer EOA → Safe multisig
+    on both chains.
+19. **WP-EVM-16 — Third-party audit window.** One firm (Spearbit / Trail of
     Bits / OpenZeppelin). Hold mainnet deploy until written report + fix-PR.
-17. **WP-EVM-17 — Base mainnet deploy.**
-18. **WP-EVM-18 — Arbitrum mainnet deploy.** Same contract bytecode; new
-    addresses; new entry in the address registry.
+    Audit covers the bytecode that ships to *both* chains — single audit,
+    two deployment verifications.
+20. **WP-EVM-17a — Ethereum mainnet deploy.** Primary chain per Rick's intent.
+21. **WP-EVM-17b — Base mainnet deploy.** L2 fallback for cheap calls.
+22. **WP-EVM-18 — Arbitrum mainnet deploy (deferred).** Same contract
+    bytecode; new addresses; new entry in the address registry. Not
+    launch-blocking; ship after we have one full ops cycle on Ethereum + Base.
 
-WP-01..WP-14 is the demo path. WP-15..18 is the production path.
+WP-01..WP-14b is the demo path. WP-15..18 is the production path. WP-05b is
+a launch blocker for Ethereum specifically; it can be skipped if Rick picks
+Option B (Base-only initial launch).
 
 ---
 
@@ -468,31 +669,68 @@ WP-01..WP-14 is the demo path. WP-15..18 is the production path.
 
 Tight list — each is load-bearing for the WP plan.
 
-- **Chain priority.** Confirm **Base first, Arbitrum second**? Or do you have a
-  partnership/customer reason to prioritize Arbitrum, Optimism, or somewhere
-  else? (Skip Polygon/BNB unless you push back.)
-- **Mainnet vs testnet first.** Demo on **Base Sepolia** end-to-end before
-  spending audit budget? (Recommended.) Or push straight to Base mainnet with
-  a fresh audit?
-- **Gasless / paymaster option.** Do agents on EVM pay their own gas, or do we
-  offer a sponsored UX via ERC-4337 paymaster (Pimlico, Biconomy) so the agent
-  flow is "USDC in, USDC out, no ETH"? This is the **agent UX call** —
-  recommend yes-with-paymaster, but it adds a WP (paymaster integration +
-  custody of gas reserves) and a vendor dependency.
-- **Pool bridging.** Confirm **independent per-chain pools** (no bridging of
-  liquidity)? Or do you want a hub-and-spoke design where Solana stays
-  canonical and EVM mirrors? (Strong recommendation: independent.)
-- **Audit budget + firm.** Rough USD ceiling for the third-party EVM audit, and
-  do you have a preferred firm? (Spearbit and OpenZeppelin both have Base
-  experience; Trail of Bits is gold-standard but slower + pricier.) This
-  gates WP-EVM-16's calendar.
+- **Chain priority — pick one of three (replaces v1 Q1).**
+  Per the §4.5 analysis, your "Ethereum first" intent collides with L1 gas
+  economics (~$5/call gas overhead, regardless of batch size). Options:
+  - **A.** Ethereum mainnet only. Requires repositioning Pact toward
+    high-value enterprise calls (premium ≥ $5/call) and shipping off-chain
+    premium accumulation (WP-EVM-05b) as a launch blocker.
+  - **B.** Base mainnet first as the EVM beachhead, Ethereum mainnet
+    follow-on once volume justifies. Lowest implementation friction; defers
+    your stated primary intent.
+  - **C.** Ethereum + Base from day 1 (recommended). Same Solidity, same
+    audit, two deployments. Integrators self-select per chain by call value.
+    Honors Ethereum-first intent without forcing the premium reframe.
+
+- **Per-call gas / minimum-premium ceiling (NEW).**
+  What's the maximum acceptable per-call gas cost for an Ethereum-side
+  insured call, expressed either as $ per call or as a fraction of the
+  premium? And what's the minimum premium you're willing to enforce on
+  Ethereum endpoints? The §4.3 worked example assumes ~$5/call gas at 15
+  gwei — is that acceptable for any meaningful slice of the integrator
+  pipeline, or does the answer force us into Option B?
+
+- **Off-chain premium accumulation.**
+  If we go Option A or C, do you accept the trust tradeoff that on Ethereum
+  the settler holds signed per-call receipts off-chain and only settles
+  net positions on-chain hourly/daily? This breaks the literal "every
+  settlement on-chain" claim from the Solana product and replaces it with
+  "every settlement is on-chain provable, with a dispute window." Mitigated
+  by signed-receipt verification + on-chain dispute period, but it is a
+  product-level shift worth your explicit signoff.
+
+- **Mainnet vs testnet first.** Demo on Sepolia (Ethereum + Base both)
+  end-to-end before spending audit budget? (Recommended.) Or push straight
+  to mainnet with a fresh audit?
+
+- **Gasless / paymaster option.** Do agents on EVM pay their own gas, or
+  do we offer a sponsored UX via ERC-4337 paymaster so the agent flow is
+  "USDC in, USDC out, no ETH"? Note from §4.4: paymasters fix UX (no
+  native-ETH requirement) but **do not change L1 economics** — the gas
+  cost is still extracted from someone, typically marked-up against the
+  agent's USDC. Useful but not a fix for the L1 gas problem. Recommend
+  yes-on-Base for UX, optional-on-Ethereum given the call-value tier.
+
+- **Pool bridging.** Confirm **independent per-chain pools** (no bridging
+  of liquidity)? Or do you want a hub-and-spoke design? (Strong
+  recommendation: independent, regardless of which Option A/B/C you pick.)
+
+- **Audit budget + firm.** Rough USD ceiling for the third-party EVM audit,
+  and do you have a preferred firm? (Spearbit and OpenZeppelin both have
+  Base + Ethereum experience; Trail of Bits is gold-standard but slower +
+  pricier. Sherlock / Cantina contest model is cheaper but slower to
+  schedule.) This gates WP-EVM-16's calendar.
+
 - **CCTP for treasury rebalancing.** Plan to use Circle CCTP for moving
-  treasury USDC between chains (Solana ↔ Base ↔ Arbitrum), or stick with a
+  treasury USDC between chains (Solana ↔ Ethereum ↔ Base), or stick with a
   manual ops process for v1?
+
 - **Naming.** Confirm `@pact-network/protocol-evm-v1` for the Solidity
-  package, sibling to the existing Solana `@pact-network/protocol-v1-client`?
-  Or a different naming convention (e.g., `protocol-base-v1` /
-  `protocol-arbitrum-v1` if we want chain-specific surfaces)?
+  package (chain-agnostic), sibling to the existing Solana
+  `@pact-network/protocol-v1-client`? Or a different naming convention
+  (e.g., `protocol-eth-v1` / `protocol-base-v1` if you want chain-specific
+  surfaces)? Recommend the chain-agnostic name since the bytecode is
+  shared.
 
 ---
 
