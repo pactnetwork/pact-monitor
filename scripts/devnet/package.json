@@ -1,0 +1,21 @@
+{
+  "name": "@pact-network/scripts-devnet",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:deps": "pnpm --filter @pact-network/protocol-v1-client run build",
+    "init": "pnpm run build:deps && tsx init-devnet.ts",
+    "init:dry": "pnpm run build:deps && DRY_RUN=1 tsx init-devnet.ts",
+    "typecheck": "pnpm run build:deps && tsc --noEmit"
+  },
+  "dependencies": {
+    "@pact-network/protocol-v1-client": "workspace:*",
+    "@solana/web3.js": "^1.95.8",
+    "tsx": "^4.19.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "typescript": "^5.7.2"
+  }
+}

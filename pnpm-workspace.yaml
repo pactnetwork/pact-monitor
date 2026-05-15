@@ -4,3 +4,4 @@ packages:
   - "scripts/smoke-tier2"
   - "scripts/mainnet"
   - "scripts/mainnet-smoke"
+  - "scripts/devnet"
