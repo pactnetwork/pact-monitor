@@ -239,7 +239,7 @@ Est. all-in: $15–25/mo light traffic.
 4. Register `helius` endpoint with settler signer's pubkey as fee recipient
 5. Fund settler signer ≥ 0.05 devnet SOL via `solana airdrop`
 
-Settler signer keypair: freshly generated, stored only in Railway env (encrypted at rest) + `~/pact-devnet-keys/settler.json` on Rick's laptop (FileVault).
+Settler signer keypair: reuse existing dev hot key at `~/.config/solana/` (Rick's laptop). Convert to base58 via `solana-keygen pubkey --outfile /dev/stdout <keypair.json> | base58` (or equivalent). Paste base58 into Railway `SETTLEMENT_AUTHORITY_KEY` env var on the `settler` service. Pubkey gets registered as `helius` endpoint fee recipient in step 4. See §12 note on the deliberate dev/mainnet separation difference.
 
 ---
 
@@ -390,14 +390,12 @@ If any fail → execute §10.5 rollback.
 
 ---
 
-## 12. Open questions
+## 12. Settled decisions
 
-1. **Settler signer keypair:** generate fresh devnet keypair on Rick's laptop (recommended) or reuse the existing dev hot key?
-2. **Helius API key:** new devnet key under existing Helius project (recommended) or new project?
-3. **Region:** `asia-southeast1` (recommended, matches mainnet) or other?
-
-### Settled
 - **Branch strategy:** Railway watches `develop` directly. No dedicated `devnet` branch. `develop` is the single source of truth feeding both devnet (auto) and mainnet (manual `workflow_dispatch`). Drift impossible by construction.
+- **Settler signer keypair:** reuse existing dev hot key at `~/.config/solana/` (Rick's laptop). Pubkey captured before Railway env setup. **Note:** on mainnet, the settlement authority is a distinct keypair from the program upgrade authority (`pact-settler-sa` runtime SA + `FuT7kRVwHb…` signer vs upgrade auth `JB7rp9wMer…`). Devnet reuses one key for both roles for simplicity — acceptable for devnet, deliberate departure from mainnet's separation. Do not mirror this conflation back to mainnet.
+- **Helius API key:** new devnet API key created under the existing Helius project. Same dashboard, separate key, separate analytics + rate limits.
+- **Region:** `asia-southeast1` to match mainnet GCP region and minimize RPC RTT delta.
 
 ---
 
