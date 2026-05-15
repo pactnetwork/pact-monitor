@@ -2,7 +2,8 @@
   "name": "@pact-network/protocol-zerog-client",
   "version": "0.0.1",
   "private": true,
-  "description": "TypeScript client for Pact-0G: ethers.js bindings for PactCore + EndpointINFT, event decoders, slug + fee-recipient helpers.",
+  "description": "TypeScript client for Pact-0G: viem bindings for PactCore + EndpointINFT, event decoders, error map, slug + fee-recipient + callId helpers.",
+  "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
@@ -12,16 +13,21 @@
     }
   },
   "scripts": {
+    "generate": "wagmi generate",
+    "prebuild": "pnpm --filter @pact-network/protocol-zerog-contracts build && pnpm generate",
     "build": "tsc",
-    "clean": "rm -rf dist",
+    "clean": "rm -rf dist src/generated",
     "typecheck": "tsc --noEmit",
+    "pretest": "pnpm --filter @pact-network/protocol-zerog-contracts build && pnpm generate",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "dependencies": {
-    "ethers": "^6.13.4"
+    "viem": "^2.49.2"
   },
   "devDependencies": {
+    "@types/node": "^22.10.5",
+    "@wagmi/cli": "^2.6.0",
     "typescript": "^5.7.3",
     "vitest": "^2.1.0"
   }
