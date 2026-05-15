@@ -11,6 +11,8 @@ import { MemData } from '@0gfoundation/0g-storage-ts-sdk';
 export async function computeRootHash(blob: Uint8Array): Promise<`0x${string}`> {
   const mem = new MemData(blob);
   const [tree, err] = await mem.merkleTree();
-  if (err !== null) throw new Error(`merkleTree error: ${err}`);
+  if (err !== null || tree === null) {
+    throw new Error(`merkleTree error: ${err ?? 'null tree'}`);
+  }
   return tree.rootHash() as `0x${string}`;
 }
