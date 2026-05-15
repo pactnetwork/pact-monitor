@@ -1,9 +1,11 @@
 # Pact Network — EVM Expansion Design
 
-**Status:** DRAFT (evolving) — v1 target pivoted to **Circle Arc testnet**
-(USDC-native L1) per Rick 2026-05-15; see **§4.8 (operative)**. Base (§4.6)
-is retained as the mainnet-fallback / hedge analysis. No mainnet this pass.
-Initial-draft scope for the Arc pass per Rick.
+**Status:** DRAFT (evolving) — v1 target = **Circle Arc testnet**
+(USDC-native L1) per Rick 2026-05-15; see **§4.8 (operative)**. WP-EVM-00
+Arc availability spike **COMPLETE — VERDICT: GO** (§4.8.4, verified against
+Circle official docs 2026-05-15; public permissionless testnet, no access
+gating). WP-EVM-01 unblocked. Base (§4.6) retained as mainnet-fallback /
+hedge. No mainnet this pass.
 **Author:** Pact Network engineering
 **Date:** 2026-05-15
 **Branch:** `feat/evm-expansion-design`
@@ -746,18 +748,64 @@ unsoftened risk:
   affordances) that could interact awkwardly with a permissionless
   insurance protocol that auto-refunds arbitrary agents.
 
-#### 4.8.4 Availability check (the #1 thing to verify)
+#### 4.8.4 Availability check — VERIFIED (WP-EVM-00 spike, checked 2026-05-15)
 
-I **cannot confirm** Arc testnet public availability as of early 2026 from
-reliable knowledge. Circle announced Arc in 2025 with a testnet planned;
-whether a public testnet is live, permissioned-access, or not-yet-shipped
-at the time of WP-EVM-01 is **unknown to me and must be verified first.**
+> ## VERDICT: **GO.** WP-EVM-01 (Foundry scaffold targeting Arc Testnet) can
+> start now. No hard blocker. Arc Testnet is a **public, permissionless**
+> network with confirmed RPC + chain ID + faucet + block explorer + official
+> Foundry/Hardhat support, and USDC-as-gas confirmed in Circle's own docs.
+> **No access gating → no signup action item for Rick.** The earlier
+> "cannot confirm availability" caveat is resolved; this spike replaces
+> speculation with cited facts.
 
-**This is the #1 pre-WP-EVM-01 verification item.** Concretely, before any
-scaffold work commits to Arc: confirm (1) public testnet RPC + chain-id +
-faucet exist and are reachable; (2) Foundry can deploy + verify on it;
-(3) testnet USDC is obtainable for gas + premiums. If any of those is "no,"
-the v1 path falls back to §4.6 (Base Sepolia) until Arc testnet is real.
+**Verified network facts (all from official Circle / Arc documentation,
+checked 2026-05-15 — see Sources, §4.8.7):**
+
+| Item | Verified value | Source |
+|---|---|---|
+| Testnet status | **Public testnet LIVE.** Launched 2025-10-28; still public-testnet phase mid-2026; mainnet planned 2026 (beta first). | Circle pressroom; arc.io blog |
+| Testnet name | **Arc Testnet** | docs.arc.io connect-to-arc |
+| EVM chain ID | **`5042002`** | docs.arc.io connect-to-arc |
+| RPC endpoint | **`https://rpc.testnet.arc.network`** (also Blockdaemon / dRPC / QuickNode mirrors) | docs.arc.io connect-to-arc |
+| WebSocket | `wss://rpc.testnet.arc.network` | docs.arc.io connect-to-arc |
+| Block explorer | **`https://testnet.arcscan.app`** | docs.arc.io connect-to-arc |
+| Faucet | **`https://faucet.circle.com`** — *"public and permissionless for anyone to use. There's no account required"*; dispenses testnet USDC + EURC; Arc Testnet is first network in the list | faucet.circle.com |
+| Testnet USDC address | **`0x3600000000000000000000000000000000000000`** | docs.arc.io contract-addresses |
+| Gas in USDC | Confirmed, exact wording: *"Arc denominates all transaction fees in USDC, the native gas token."* Native gas accounting **18 decimals**; the **ERC-20 interface is 6 decimals** for app-level transfers — *"not two separate tokens — they share the same underlying balance."* | docs.arc.io gas-and-fees |
+| EVM compatibility | Targets the **Prague** EVM hard fork *"with minor differences in execution and consensus behavior."* Documented opcode changes: `SELFDESTRUCT` disallowed during deployment; `PARENT_BEACON_BLOCK_ROOT` returns exec-payload-header hash (no beacon chain); `PREV_RANDAO` always `0`. EIP-4844 blobs **currently disabled**. No custom precompiles documented. | docs.arc.io evm-compatibility |
+| Tooling | Official: *"the same tools … such as Solidity, Foundry, and Hardhat."* Third-party: Alchemy, Chainlink, Thirdweb, MetaMask, Anthropic Claude Agent SDK. | docs.arc.io evm-compatibility; arc.io blog |
+| Consensus / finality | **Malachite BFT** (Byzantine Fault Tolerant). Deterministic finality **"in under one second"**, "final on commit." Block time not officially documented. | docs.arc.io deterministic-finality |
+| Access maturity | **Public testnet, permissionless.** No allowlist / waitlist for testnet or faucet. | Circle pressroom; faucet.circle.com |
+
+**Resolved-from-VERIFY:** USDC-as-gas (confirmed verbatim), EVM-equivalence
+level (Prague, with the three documented opcode deltas), consensus engine
+(Malachite BFT), finality (<1s), Foundry/Hardhat support (official),
+explorer (arcscan), faucet + testnet USDC (permissionless).
+
+**Still genuinely unknown / carry forward as WP-EVM-01 smoke checks (not
+blockers):**
+
+- **Block time** — not in official docs (only finality <1s is stated).
+  Confirm empirically during WP-EVM-01.
+- **`forge verify` against arcscan** — explorer exists; the exact contract
+  verification flow (Etherscan-compatible API key vs custom) is not yet
+  confirmed. Standard risk; resolve in WP-EVM-07.
+- **USDC decimal model interaction** — IMPORTANT: our contracts treat USDC
+  as the **6-decimal ERC-20** (matches Solana lamport-USDC parity, §2 row
+  7). Docs confirm the ERC-20 interface is 6-decimal; 18-decimal gas
+  accounting is chain-level and does not touch our premium math. Add an
+  explicit assertion test in WP-EVM-06 so a decimals mismatch fails loudly.
+- **Opt-in privacy vs event indexing** — Arc has opt-in confidential
+  transfers (§4.8.1). Default is transparent, so `CallSettled` events and
+  USDC transfers are visible by default, but confirm during WP-EVM-11 the
+  indexer's `eth_getLogs` path is unaffected for non-private txs.
+- **"Minor differences in execution/consensus behavior"** — the docs hedge
+  beyond the three named opcodes. WP-EVM-01 scaffold + WP-EVM-06 test
+  suite is the place this surfaces; the named deltas don't affect Pact's
+  contract logic (we don't use `SELFDESTRUCT`, beacon root, or on-chain
+  randomness).
+
+No item above blocks the scaffold. **GO stands.**
 
 #### 4.8.5 Revised recommendation + migration path
 
@@ -766,7 +814,8 @@ Re-anchored per Rick's pivot:
 1. **v1 — Arc testnet.** Validate the USDC-native thesis cheaply and
    end-to-end on testnet. No mainnet this pass (Rick: "no need mainnet for
    now"). Deliverable: the §8.1 contracts deployed to Arc testnet with a
-   real insured-call demo. Gated on §4.8.4 availability.
+   real insured-call demo. **§4.8.4 availability gate: CLEARED (GO,
+   2026-05-15).**
 2. **Mainnet beachhead — Base (the §4.6 analysis, now the fallback/hedge
    plan).** When Pact needs a production mainnet and Arc mainnet is not
    ready (or Arc-first proves unviable on §4.8.3 risk), Base is the
@@ -806,6 +855,34 @@ Initial-draft level only, per Rick. §8 is **not** renumbered this pass.
 - **WP-EVM-15..17** (audit / mainnet): **deferred** — no mainnet this pass.
   Becomes either the Arc-mainnet-when-ready path or the Base-fallback path
   per §4.8.5.
+
+Post-spike update to this sketch: §4.8.4 resolved the open VERIFY items.
+WP-EVM-07's "depends on §4.8.4" is **satisfied** (GO). WP-EVM-08's viem
+VERIFY remains (Arc may need a custom viem `defineChain`; not a blocker).
+WP-EVM-11's `eth_getLogs` VERIFY downgraded to a smoke check (Arc exposes
+standard JSON-RPC; opt-in privacy is off by default).
+
+#### 4.8.7 Sources (WP-EVM-00 spike, checked 2026-05-15)
+
+All facts in §4.8.4 trace to these. Date checked: **2026-05-15**.
+
+- Circle pressroom — Arc public testnet launch (2025-10-28), maturity,
+  mainnet timeline: https://www.circle.com/pressroom/circle-launches-arc-public-testnet
+- Arc — public testnet announcement / tooling partners:
+  https://www.arc.io/blog/circle-launches-arc-public-testnet
+- Arc docs — network details (RPC, chain ID `5042002`, WSS, explorer,
+  faucet): https://docs.arc.io/arc/references/connect-to-arc
+- Arc docs — EVM compatibility (Prague target, opcode deltas, Foundry/
+  Hardhat): https://docs.arc.io/arc/references/evm-compatibility
+- Arc docs — gas & fees (USDC-as-gas exact wording, 18 vs 6 decimals):
+  https://docs.arc.io/arc/references/gas-and-fees
+- Arc docs — deterministic finality (Malachite BFT, <1s):
+  https://docs.arc.io/arc/concepts/deterministic-finality
+- Arc docs — contract addresses (testnet USDC
+  `0x3600000000000000000000000000000000000000`, CCTP, Gateway):
+  https://docs.arc.io/arc/references/contract-addresses
+- Circle faucet — permissionless testnet USDC/EURC, Arc Testnet supported:
+  https://faucet.circle.com
 
 ---
 
@@ -1116,11 +1193,12 @@ mainnet-fallback track.
    that's the intent and there's no near-term Arc mainnet expectation we
    should be planning around.
 
-2. **Arc availability — the hard blocker.** §4.8.4: I cannot confirm Arc
-   public testnet is live as of early 2026. This is the **#1 thing to
-   verify before any WP commits to Arc.** Does Rick / does Circle contact
-   have confirmed access to an Arc testnet (RPC, chain-id, faucet, Foundry
-   support)? If not, this is the first thing the WP-EVM-00 spike resolves.
+2. ~~**Arc availability — the hard blocker.**~~ **RESOLVED 2026-05-15 by
+   the WP-EVM-00 spike — see §4.8.4. VERDICT: GO.** Arc Testnet is public +
+   permissionless (chain ID `5042002`, RPC `rpc.testnet.arc.network`,
+   faucet `faucet.circle.com`, explorer `testnet.arcscan.app`, official
+   Foundry/Hardhat support, USDC-as-gas confirmed in Circle docs). No
+   access gating, so no signup action item. WP-EVM-01 can start.
 
 3. **Mainnet fallback if Arc mainnet slips.** §4.8.5 open question: when
    Pact needs production mainnet and Arc mainnet is not
