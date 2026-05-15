@@ -88,13 +88,14 @@ function stringifyValue(v: unknown): string | null {
 
 function verifyTallySignature(rawBody: Buffer, signatureHex: string, secret: string): boolean {
   if (!signatureHex || !secret) return false;
+  // Pre-filter on the hex alphabet so malformed input is rejected before
+  // it ever touches the HMAC compare. `Buffer.from(hex)` silently truncates
+  // on the first non-hex byte instead of throwing, so without this guard a
+  // signature like "deadbe??" would parse to 3 valid bytes and only get
+  // rejected later by the length compare.
+  if (!/^[0-9a-fA-F]+$/.test(signatureHex)) return false;
   const expected = createHmac("sha256", secret).update(rawBody).digest();
-  let provided: Buffer;
-  try {
-    provided = Buffer.from(signatureHex, "hex");
-  } catch {
-    return false;
-  }
+  const provided = Buffer.from(signatureHex, "hex");
   if (provided.length !== expected.length) return false;
   return timingSafeEqual(provided, expected);
 }
@@ -111,15 +112,22 @@ function notifyTelegram(summary: string): void {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ chat_id: chatId, text: summary }),
-  }).catch(() => {
-    /* swallow — telemetry-only path */
+  }).catch((err) => {
+    // Surface Telegram outages in logs so the ops team can spot a dead
+    // notification channel; never re-throw — this path is telemetry-only
+    // and must not affect the webhook response.
+    console.warn("[beta] telegram notify failed", err instanceof Error ? err.message : err);
   });
 }
 
 export async function betaRoutes(app: FastifyInstance): Promise<void> {
-  // Scope a raw-body parser to this plugin only so the rest of the backend
-  // continues to receive parsed JSON from the default parser. We need the
-  // raw bytes for HMAC verification.
+  // Scope a raw-body parser to this plugin so the rest of the backend keeps
+  // its parsed-JSON behavior. Fastify encapsulates `addContentTypeParser`
+  // when the plugin is registered via `app.register` WITHOUT a
+  // `fastify-plugin` wrapper. **DO NOT** wrap `betaRoutes` in `fp(...)` —
+  // doing so would lift the buffer parser into the parent context and
+  // every other JSON route in the app would start receiving `Buffer`
+  // request bodies instead of objects.
   app.addContentTypeParser(
     "application/json",
     { parseAs: "buffer" },

@@ -320,4 +320,41 @@ describe("private beta gate", () => {
       assert.equal(row?.enabled, false);
     });
   });
+
+  // Regression test: betaRoutes installs a `parseAs: "buffer"` parser for
+  // application/json. Fastify encapsulation should keep that parser scoped
+  // to the betaRoutes plugin instance — even if a future caller registers
+  // adminRoutes AFTER betaRoutes, the admin handlers must still receive a
+  // parsed JSON object on their bodies, not a raw Buffer. If anyone ever
+  // wraps betaRoutes in `fastify-plugin`, this test will fail because the
+  // buffer parser will leak to admin's context.
+  describe("content-type parser encapsulation", () => {
+    it("does not leak Buffer-body parsing to admin routes registered later", async () => {
+      const scoped = Fastify();
+      // Reverse the order from the production app so this test specifically
+      // exercises the "betaRoutes registered first, admin registered after"
+      // case the reviewer flagged.
+      await scoped.register(betaRoutes);
+      await scoped.register(adminRoutes);
+      try {
+        const res = await scoped.inject({
+          method: "POST",
+          url: "/api/v1/admin/beta/gate",
+          headers: {
+            authorization: `Bearer ${ADMIN_TOKEN}`,
+            "content-type": "application/json",
+          },
+          payload: { enabled: true },
+        });
+        // If the buffer parser had leaked into admin's context, the route
+        // handler would have seen `request.body` as a Buffer, the
+        // `typeof body.enabled !== "boolean"` guard would have fired, and
+        // we'd see a 400. A 200 here proves admin still gets parsed JSON.
+        assert.equal(res.statusCode, 200);
+        assert.deepEqual(res.json(), { enabled: true });
+      } finally {
+        await scoped.close();
+      }
+    });
+  });
 });

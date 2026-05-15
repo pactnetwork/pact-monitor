@@ -469,29 +469,44 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
     const apiKey = `pact_beta_${randomBytes(32).toString("base64url")}`;
     const keyHash = hashKey(apiKey);
     // Short label keeps the unique index on api_keys.label from clashing
-    // while still being human-readable in admin tooling. Collisions are
-    // astronomically unlikely on a UUID prefix, but if it does happen the
-    // unique-index violation surfaces as a 500 and the operator simply
-    // re-tries — beta admissions are manual, not high-throughput.
+    // while still being human-readable in admin tooling.
     const label = `beta_${applicant.id.slice(0, 8)}`;
 
-    const inserted = await query<{ id: string }>(
-      `INSERT INTO api_keys (key_hash, label, beta_applicant_id, status)
-       VALUES ($1, $2, $3, 'active')
-       RETURNING id`,
-      [keyHash, label, applicant.id],
-    );
-    await query(
-      `UPDATE beta_applicants
-         SET status = 'approved', approved_at = NOW(), note = COALESCE($1, note)
-         WHERE id = $2`,
-      [body.note ?? null, applicant.id],
-    );
+    // Wrap the api_keys INSERT and the beta_applicants UPDATE in one
+    // transaction. Without this, a failure on the UPDATE leaves an active
+    // orphan api_keys row (with a deterministic label derived from the
+    // applicant id) while the applicant stays `pending` — the operator's
+    // retry then collides on the unique label index, requiring manual
+    // cleanup. BEGIN/COMMIT keeps the two writes consistent.
+    const client = await pool.connect();
+    let keyId: string | null;
+    try {
+      await client.query("BEGIN");
+      const inserted = await client.query<{ id: string }>(
+        `INSERT INTO api_keys (key_hash, label, beta_applicant_id, status)
+         VALUES ($1, $2, $3, 'active')
+         RETURNING id`,
+        [keyHash, label, applicant.id],
+      );
+      await client.query(
+        `UPDATE beta_applicants
+           SET status = 'approved', approved_at = NOW(), note = COALESCE($1, note)
+           WHERE id = $2`,
+        [body.note ?? null, applicant.id],
+      );
+      await client.query("COMMIT");
+      keyId = inserted.rows[0]?.id ?? null;
+    } catch (err) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
 
     return reply.code(201).send({
       apiKey,
       applicantId: applicant.id,
-      keyId: inserted.rows[0]?.id ?? null,
+      keyId,
       label,
     });
   });
