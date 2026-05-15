@@ -38,8 +38,10 @@ async function main() {
 
   const net      = await provider.getNetwork();
   console.log('chain id:', net.chainId.toString());
-  if (net.chainId !== 16661n) {
-    console.warn('  not on 0G mainnet (16661). Continuing — verify RPC_URL.');
+  if (net.chainId !== 16602n && net.chainId !== 16661n) {
+    console.warn('  not on 0G (testnet=16602, mainnet=16661). Continuing — verify RPC_URL.');
+  } else {
+    console.log('  network:', net.chainId === 16602n ? 'Galileo testnet' : 'Aristotle mainnet');
   }
 
   console.log('\n--- step 1: create broker');

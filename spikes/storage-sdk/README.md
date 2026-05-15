@@ -7,16 +7,21 @@
 ## Prereqs
 
 - Node 22+, pnpm
-- Funded mainnet wallet (small amount of `0G` — Storage charges by blob size + a flow fee)
+- Wallet funded with testnet 0G from [faucet.0g.ai](https://faucet.0g.ai) (small amount — Storage charges by blob size + a flow fee)
+- Default targets Galileo testnet. For mainnet validation, swap URLs in `.env`.
 
-## Endpoints (mainnet)
+## Endpoints
 
-| | URL |
-|---|---|
-| RPC | `https://evmrpc.0g.ai` |
-| Storage Indexer (turbo) | `https://indexer-storage-turbo.0g.ai` |
+| | Testnet (default) | Mainnet (Day 18 only) |
+|---|---|---|
+| RPC | `https://evmrpc-testnet.0g.ai` | `https://evmrpc.0g.ai` |
+| Storage Indexer (turbo) | `https://indexer-storage-testnet-turbo.0g.ai` | `https://indexer-storage-turbo.0g.ai` |
+| Explorer | `https://chainscan-galileo.0g.ai` | `https://chainscan.0g.ai` |
+| Storage Explorer | `https://storagescan-galileo.0g.ai` | (none documented yet) |
 
-Source: https://docs.0g.ai/developer-hub/mainnet/mainnet-overview
+Sources:
+- https://docs.0g.ai/developer-hub/testnet/testnet-overview
+- https://docs.0g.ai/developer-hub/mainnet/mainnet-overview
 
 ## Run
 

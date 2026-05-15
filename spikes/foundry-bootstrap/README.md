@@ -1,13 +1,15 @@
-# Spike 1 — Foundry bootstrap on 0G mainnet
+# Spike 1 — Foundry bootstrap on 0G (Galileo testnet first, mainnet at submission)
 
-**Proves:** A no-op contract deploys + verifies on 0G Aristotle (chain 16661) with `evm_version = cancun`.
+**Proves:** A no-op contract deploys + verifies on 0G with `evm_version = cancun`.
 
 **Why this matters:** The plan assumes Foundry, cancun EVM, and the public RPC work end-to-end. If any link breaks we discover it before writing 800 LOC of `PactCore.sol`.
+
+**Default target:** Galileo testnet (chain **16602**) — free via `https://faucet.0g.ai`. Mainnet (chain **16661**) is only used for the Day-18 submission deploy.
 
 ## Prereqs
 
 - `foundryup` installed (`curl -L https://foundry.paradigm.xyz | bash && foundryup`)
-- A funded mainnet wallet (~0.05 0G is plenty for one `Hello` deploy)
+- Wallet funded via [faucet.0g.ai](https://faucet.0g.ai) on Galileo (or `~0.05 0G` of real mainnet for the submission deploy)
 
 ## Run
 
@@ -30,20 +32,22 @@ forge script script/Deploy.s.sol --rpc-url $RPC_URL
 # real deploy
 forge script script/Deploy.s.sol --rpc-url $RPC_URL --broadcast
 
-# verify on explorer (if forge etherscan integration works against chainscan)
+# verify on explorer (testnet)
 # forge verify-contract <ADDRESS> src/Hello.sol:Hello \
-#   --chain-id 16661 \
-#   --verifier-url https://chainscan.0g.ai/api \
+#   --chain-id 16602 \
+#   --verifier-url https://chainscan-galileo.0g.ai/api \
 #   --etherscan-api-key $ZEROG_EXPLORER_API_KEY \
 #   --constructor-args $(cast abi-encode "constructor(string)" "hello 0g")
+#
+# for mainnet, swap --chain-id 16661 and https://chainscan.0g.ai/api
 ```
 
 ## Pass criteria
 
 - `forge build` succeeds with no cancun-related warnings.
-- `forge script ... --broadcast` returns a tx hash that resolves on `https://chainscan.0g.ai/tx/<hash>`.
+- `forge script ... --broadcast` returns a tx hash that resolves on `https://chainscan-galileo.0g.ai/tx/<hash>` (testnet) or `https://chainscan.0g.ai/tx/<hash>` (mainnet).
 - The deployed address shows the `Hello` bytecode and `message() → "hello 0g"` via `cast call`.
-- `forge verify-contract` succeeds and shows verified source on the explorer. **If verify fails, document the exact error** — the submission requires verified contracts on mainnet.
+- `forge verify-contract` succeeds and shows verified source on the explorer. **If verify fails, document the exact error** — the submission requires verified contracts on mainnet, so getting it working on testnet first de-risks Day 18.
 
 ## Fail signals worth noting
 

@@ -7,7 +7,8 @@
 ## Prereqs
 
 - Node 22+, pnpm
-- Funded mainnet wallet (≥4 0G — 3 for the deposit, ≈1 for tx fees + per-call locked balance)
+- Wallet funded with ≥4 0G testnet from [faucet.0g.ai](https://faucet.0g.ai) (3 for the broker deposit, ~1 for tx fees + per-call locked balance). The faucet may rate-limit — pull multiple drips if needed.
+- Target defaults to Galileo testnet. To validate against mainnet, uncomment the mainnet `RPC_URL` in `.env` and ensure the wallet has real `0G` instead of testnet.
 
 ## Run
 
