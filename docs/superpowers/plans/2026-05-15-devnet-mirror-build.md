@@ -60,8 +60,10 @@ Three things deliberately do **not** mirror:
 | Program ID | `5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5` (already deployed) |
 | Upgrade authority | `47Fg5JqMsCeuRyDsFtD7Ra7YTdzVmTr2mZ1R2dUkZyfS` (devnet hot key OK) |
 | USDC mint | `Gh9ZwEmdLJ8DscKNTkTqPbNwLNNBjuSzaG9Vp2KGtKJr` (devnet USDC) |
-| Branch | `develop` (must include PR #113 BigInt fix) |
-| Deploy trigger | Railway watches `develop`; per-service Dockerfile + watch paths |
+| Source-of-truth branch | `develop` — single branch feeding both environments. No separate `devnet` branch. |
+| Devnet deploy trigger | Railway watches `develop` directly; auto-deploys every push (per-service Dockerfile + watch paths gate which service rebuilds) |
+| Mainnet deploy trigger | `workflow_dispatch` on `deploy-pact-network.yaml` (manual, unchanged from today). Builds from `develop` HEAD when Rick clicks "Run workflow" → `production` |
+| Drift property | Structurally zero — both environments draw from the same commit graph. Devnet is always == `develop`. Mainnet pins to whatever SHA Rick last deployed. |
 
 ---
 
@@ -392,8 +394,10 @@ If any fail → execute §10.5 rollback.
 
 1. **Settler signer keypair:** generate fresh devnet keypair on Rick's laptop (recommended) or reuse the existing dev hot key?
 2. **Helius API key:** new devnet key under existing Helius project (recommended) or new project?
-3. **Branch:** Railway tracks `develop` directly (recommended) or dedicated `devnet` branch?
-4. **Region:** `asia-southeast1` (recommended, matches mainnet) or other?
+3. **Region:** `asia-southeast1` (recommended, matches mainnet) or other?
+
+### Settled
+- **Branch strategy:** Railway watches `develop` directly. No dedicated `devnet` branch. `develop` is the single source of truth feeding both devnet (auto) and mainnet (manual `workflow_dispatch`). Drift impossible by construction.
 
 ---
 
@@ -409,7 +413,21 @@ If any fail → execute §10.5 rollback.
 
 ## 14. Boundary recap (mirror of §0 for skim-readability)
 
-**Mainnet is on GCP and stays on GCP. Devnet is on Railway. They do not share runtime, secrets, infrastructure, or deployment workflows.** The only intersection is the source tree on `develop` after the queue-adapter PR lands — and that PR is engineered so mainnet's default code path (`QUEUE_BACKEND` unset) is byte-identical to today's behavior. Mainnet's running Cloud Run image SHA stays frozen until Rick explicitly triggers a `production` deploy.
+**Mainnet is on GCP and stays on GCP. Devnet is on Railway. They do not share runtime, secrets, infrastructure, or deployment workflows.**
+
+```
+            develop  ←  single source of truth
+              │
+       ┌──────┴──────┐
+       │             │
+ auto / push    manual / dispatch
+       │             │
+       ▼             ▼
+    devnet        mainnet
+   (Railway)      (GCP, frozen until Rick deploys)
+```
+
+Both environments draw from `develop`, but at different cadences: devnet auto-deploys every push; mainnet's image SHA stays frozen until Rick explicitly triggers a `workflow_dispatch` → `production` build. The queue-adapter PR is engineered so mainnet's default code path (`QUEUE_BACKEND` unset) is byte-identical to today's behavior — so even when Rick eventually deploys a post-adapter image to mainnet, behavior is unchanged.
 
 ---
 
