@@ -1,9 +1,11 @@
 // Tally webhook receiver for the private beta gate.
-// Tally posts JSON to POST /api/v1/beta/apply and signs the raw body with
-// HMAC-SHA256(TALLY_WEBHOOK_SECRET), sending the hex digest in the
-// `tally-signature` header. We verify the signature against the raw bytes
-// before parsing, persist the applicant idempotently on `tally_submission_id`,
-// and fire-and-forget a Telegram notification to the Pact Ops chat.
+// Tally posts JSON to POST /api/v1/beta/apply and signs the body with
+// HMAC-SHA256(TALLY_WEBHOOK_SECRET), sending the BASE64 digest in the
+// `tally-signature` header (case-insensitive). Tally's signing input is
+// the JSON-serialized payload that it then sends on the wire, so verifying
+// against `request.body` as a raw Buffer matches what Tally signed.
+// We verify before parsing, persist the applicant idempotently on
+// `tally_submission_id`, and fire-and-forget a Telegram notification.
 
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import type { FastifyInstance } from "fastify";
@@ -86,16 +88,16 @@ function stringifyValue(v: unknown): string | null {
   return null;
 }
 
-function verifyTallySignature(rawBody: Buffer, signatureHex: string, secret: string): boolean {
-  if (!signatureHex || !secret) return false;
-  // Pre-filter on the hex alphabet so malformed input is rejected before
-  // it ever touches the HMAC compare. `Buffer.from(hex)` silently truncates
-  // on the first non-hex byte instead of throwing, so without this guard a
-  // signature like "deadbe??" would parse to 3 valid bytes and only get
-  // rejected later by the length compare.
-  if (!/^[0-9a-fA-F]+$/.test(signatureHex)) return false;
+function verifyTallySignature(rawBody: Buffer, signatureB64: string, secret: string): boolean {
+  if (!signatureB64 || !secret) return false;
+  // Pre-filter on the base64 alphabet so malformed input is rejected before
+  // it ever touches the HMAC compare. `Buffer.from(s, "base64")` silently
+  // skips invalid characters instead of throwing, so without this guard a
+  // signature like "deadbe??" would parse to a short buffer and only get
+  // rejected later by the length check.
+  if (!/^[A-Za-z0-9+/]+=*$/.test(signatureB64)) return false;
   const expected = createHmac("sha256", secret).update(rawBody).digest();
-  const provided = Buffer.from(signatureHex, "hex");
+  const provided = Buffer.from(signatureB64, "base64");
   if (provided.length !== expected.length) return false;
   return timingSafeEqual(provided, expected);
 }

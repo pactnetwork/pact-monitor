@@ -19,7 +19,9 @@ async function buildApp() {
 }
 
 function sign(body: string, secret: string): string {
-  return createHmac("sha256", secret).update(body).digest("hex");
+  // Tally signs `JSON.stringify(payload)` with HMAC-SHA256 and sends the
+  // signature base64-encoded in `tally-signature`. Match that exactly.
+  return createHmac("sha256", secret).update(body).digest("base64");
 }
 
 const ADMIN_TOKEN = `admin-beta-test-${randomUUID()}`;
