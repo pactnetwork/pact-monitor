@@ -1,0 +1,10 @@
+{
+  "name": "@pact-network/protocol-evm-v1",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Pact Network EVM protocol contracts (Foundry) — Arc Testnet target. WP-EVM-01 scaffold.",
+  "scripts": {
+    "build": "forge build",
+    "test": "forge test"
+  }
+}
