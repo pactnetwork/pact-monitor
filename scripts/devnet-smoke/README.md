@@ -61,7 +61,7 @@ export INDEXER_URL="https://indexer-devnet.pactnetwork.io"
 export MARKET_PROXY_URL="https://api-devnet.pactnetwork.io"
 export TEST_AGENT_KEYPAIR_PATH="~/pact-devnet-keys/test-agent.json"
 export MAINNET_PROGRAM_ID="5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5"
-export USDC_MINT="Gh9ZwEmdLJ8DscKNTkTqPbNwLNNBjuSzaG9Vp2KGtKJr"
+export USDC_MINT="4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
 
 pnpm tsx scripts/mainnet-smoke/00-preflight.ts
 pnpm tsx scripts/mainnet-smoke/01-fire-10-calls.ts

@@ -64,7 +64,7 @@ describe("settler env schema — redis-streams backend (devnet)", () => {
     SOLANA_RPC_URL: "https://devnet.helius-rpc.com/?api-key=redacted",
     SETTLEMENT_AUTHORITY_KEY: "0123456789abcdef".repeat(2),
     PROGRAM_ID: "5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5",
-    USDC_MINT: "Gh9ZwEmdLJ8DscKNTkTqPbNwLNNBjuSzaG9Vp2KGtKJr",
+    USDC_MINT: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
     INDEXER_URL: "https://indexer-devnet.pactnetwork.io",
     INDEXER_PUSH_SECRET: "0123456789abcdef0123456789abcdef",
     QUEUE_BACKEND: "redis-streams",
