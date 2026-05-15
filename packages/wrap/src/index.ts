@@ -25,12 +25,15 @@ export {
   MemoryEventSink,
   HttpEventSink,
   PubSubEventSink,
+  RedisStreamsEventSink,
 } from "./eventSink";
 export type {
   EventSink,
   HttpEventSinkOptions,
   PubSubEventSinkOptions,
   PubSubTopicPublisher,
+  RedisStreamsEventSinkOptions,
+  RedisStreamPublisher,
 } from "./eventSink";
 
 export { HEADERS, attachPactHeaders } from "./headers";

@@ -3,7 +3,7 @@ import type { BalanceCheck, EventSink } from "@pact-network/wrap";
 import { EndpointRegistry } from "./endpoints.js";
 import { Allowlist } from "./allowlist.js";
 import { createBalanceCheck } from "./balance.js";
-import { createPubSubSink } from "./events.js";
+import { createEventSink } from "./events.js";
 import { createSystemFlagReader, type SystemFlagReader } from "./system-flag.js";
 import { env } from "../env.js";
 
@@ -44,7 +44,13 @@ export async function initContext(): Promise<AppContext> {
     usdcMint: env.USDC_MINT,
   });
 
-  const sink = createPubSubSink(env.PUBSUB_PROJECT, env.PUBSUB_TOPIC);
+  const sink = createEventSink({
+    backend: env.QUEUE_BACKEND,
+    pubsubProject: env.PUBSUB_PROJECT,
+    pubsubTopic: env.PUBSUB_TOPIC,
+    redisUrl: env.REDIS_URL,
+    redisStream: env.REDIS_STREAM,
+  });
 
   // 30s TTL by default. Env fallback uses `PACT_BETA_GATE_ENABLED` when
   // the Postgres lookup fails (see PRD "Feature flag" / Risks accepted).

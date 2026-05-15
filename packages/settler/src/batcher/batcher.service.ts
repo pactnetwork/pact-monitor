@@ -48,7 +48,7 @@ export class BatcherService {
       this.logger.debug(
         `Skipping zero-premium event ${data["callId"]} outcome=${data["outcome"]}`,
       );
-      message.raw.ack();
+      message.ack();
       return;
     }
 
