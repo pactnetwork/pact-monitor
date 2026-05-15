@@ -15,9 +15,9 @@ This directory lives **outside** the pnpm workspace
 
 | # | Spike | What it proves | Status |
 |---|---|---|---|
-| 1 | [`foundry-bootstrap/`](./foundry-bootstrap/) | A no-op contract deploys to 0G via Foundry with `evm_version = cancun` (Galileo testnet by default, mainnet at Day 18) | pending |
+| 1 | [`foundry-bootstrap/`](./foundry-bootstrap/) | A no-op contract deploys to 0G via Foundry with `evm_version = cancun` (Galileo testnet by default, mainnet at Day 18) | ✅ deploy / ⚠️ verify — see [RESULTS.md](./RESULTS.md) |
 | 2 | [`compute-broker/`](./compute-broker/) | `@0gfoundation/0g-compute-ts-sdk` round-trips: deposit → list provider → `getRequestHeaders()` → POST → `processResponse()` | pending |
-| 3 | [`storage-sdk/`](./storage-sdk/) | `@0gfoundation/0g-storage-ts-sdk` uploads a blob via `Indexer.upload(MemData)` and returns `{ rootHash, txHash }` | pending |
+| 3 | [`storage-sdk/`](./storage-sdk/) | `@0gfoundation/0g-storage-ts-sdk` uploads a blob via `Indexer.upload(MemData)` and returns `{ rootHash, txHash, txSeq }` | ✅ pass — see [RESULTS.md](./RESULTS.md) |
 | 4 | [`inft-erc7857/`](./inft-erc7857/) | An ERC-7857 reference contract is reachable and mints cleanly (or we know we need to write our own) | done — research-only |
 
 ## Workflow: testnet first, mainnet at submission
