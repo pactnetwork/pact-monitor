@@ -6,21 +6,29 @@
 
 ## Reference implementation
 
-**Repo:** [`0gfoundation/0g-agent-nft`](https://github.com/0gfoundation/0g-agent-nft) (branch [`eip-7857-draft`](https://github.com/0gfoundation/0g-agent-nft/tree/eip-7857-draft))
+**Repo:** [`0gfoundation/0g-agent-nft`](https://github.com/0gfoundation/0g-agent-nft)
 
 **License:** CC0-1.0 (public domain — copy/fork freely)
 **Language:** Solidity, upgradeable
-**Last push:** 2026-03-04
 
-**File layout:**
+**Branch to fork:** `main` (last push 2026-02-02). Earlier notes pointed at
+`eip-7857-draft`, but that branch is **stale by 9 months** (last commit
+2025-05-27). The `main` branch is the active one and includes the newer
+`ERC7857Upgradeable.sol` + `TeeVerifier.sol`.
+
+**File layout (`main` branch):**
 
 ```
 contracts/
-  AgentNFT.sol         — 17 KB, the ERC-7857 implementation
-  Utils.sol            — 1 KB helpers
-  interfaces/          — IERC7857, IERC7857Metadata, IERC7857DataVerifier
-  proxy/               — upgradeable proxy
-  verifiers/           — data verifier implementations
+  AgentNFT.sol             — main ERC-7857 implementation
+  AgentMarket.sol          — secondary market (we don't need this)
+  ERC7857Upgradeable.sol   — base upgradeable contract
+  TeeVerifier.sol          — TEE-proof verifier (we replace with AlwaysOkVerifier)
+  Utils.sol
+  extensions/
+  interfaces/              — IERC7857, IERC7857Metadata, IERC7857DataVerifier
+  proxy/
+  verifiers/
 ```
 
 ## Surface that matters for Pact-0G
@@ -88,7 +96,7 @@ Install via:
 
 ```bash
 forge install OpenZeppelin/openzeppelin-contracts --no-commit
-forge install 0gfoundation/0g-agent-nft@eip-7857-draft --no-commit
+forge install 0gfoundation/0g-agent-nft --no-commit   # defaults to main branch (latest)
 ```
 
 ## Plan amendment

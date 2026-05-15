@@ -16,5 +16,5 @@ zerog_testnet = "https://evmrpc-testnet.0g.ai"
 # Default below is Galileo testnet (chain 16602). Switch to mainnet only for
 # the Day-18 submission deploy by uncommenting the mainnet block.
 [etherscan]
-zerog = { key = "${ZEROG_EXPLORER_API_KEY}", url = "https://chainscan-galileo.0g.ai/api", chain = 16602 }
-# zerog = { key = "${ZEROG_EXPLORER_API_KEY}", url = "https://chainscan.0g.ai/api", chain = 16661 }
+zerog = { key = "${ZEROG_EXPLORER_API_KEY}", url = "https://chainscan-galileo.0g.ai/open/api", chain = 16602 }
+# zerog = { key = "${ZEROG_EXPLORER_API_KEY}", url = "https://chainscan.0g.ai/open/api", chain = 16661 }

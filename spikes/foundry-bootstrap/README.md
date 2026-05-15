@@ -33,13 +33,17 @@ forge script script/Deploy.s.sol --rpc-url $RPC_URL
 forge script script/Deploy.s.sol --rpc-url $RPC_URL --broadcast
 
 # verify on explorer (testnet)
+# IMPORTANT: endpoint is /open/api (not /api) and requires --verifier custom.
+# Spike 1 originally failed because forge defaulted to etherscan mode +
+# wrong path; this is the fix per docs.0g.ai/developer-hub/building-on-0g/contracts-on-0g/deploy-contracts
 # forge verify-contract <ADDRESS> src/Hello.sol:Hello \
 #   --chain-id 16602 \
-#   --verifier-url https://chainscan-galileo.0g.ai/api \
+#   --verifier custom \
+#   --verifier-url https://chainscan-galileo.0g.ai/open/api \
 #   --etherscan-api-key $ZEROG_EXPLORER_API_KEY \
 #   --constructor-args $(cast abi-encode "constructor(string)" "hello 0g")
 #
-# for mainnet, swap --chain-id 16661 and https://chainscan.0g.ai/api
+# for mainnet, swap --chain-id 16661 and https://chainscan.0g.ai/open/api
 ```
 
 ## Pass criteria

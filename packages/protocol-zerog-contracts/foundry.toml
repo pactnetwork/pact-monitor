@@ -7,7 +7,7 @@ evm_version    = "cancun"
 optimizer      = true
 optimizer_runs = 200
 remappings     = [
-  "@openzeppelin/=lib/openzeppelin-contracts/contracts/",
+  "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
   "@0gfoundation/inft/=lib/0g-agent-nft/contracts/",
   "forge-std/=lib/forge-std/src/",
 ]
@@ -24,6 +24,13 @@ zerog         = "${RPC_URL}"
 zerog_mainnet = "https://evmrpc.0g.ai"
 zerog_testnet = "https://evmrpc-testnet.0g.ai"
 
+# Verifier endpoint is `/open/api`, NOT `/api`. The plain `/api` path returns
+# the React SPA HTML (spike 1 dead-end). Use --verifier custom on the CLI:
+#   forge verify-contract <ADDR> src/PactCore.sol:PactCore \
+#     --chain-id 16602 --verifier custom \
+#     --verifier-url https://chainscan-galileo.0g.ai/open/api \
+#     --etherscan-api-key $ZEROG_EXPLORER_API_KEY
+# Source: https://docs.0g.ai/developer-hub/building-on-0g/contracts-on-0g/deploy-contracts
 [etherscan]
-zerog_testnet = { key = "${ZEROG_EXPLORER_API_KEY}", url = "https://chainscan-galileo.0g.ai/api", chain = 16602 }
-zerog_mainnet = { key = "${ZEROG_EXPLORER_API_KEY}", url = "https://chainscan.0g.ai/api",         chain = 16661 }
+zerog_testnet = { key = "${ZEROG_EXPLORER_API_KEY}", url = "https://chainscan-galileo.0g.ai/open/api", chain = 16602 }
+zerog_mainnet = { key = "${ZEROG_EXPLORER_API_KEY}", url = "https://chainscan.0g.ai/open/api",         chain = 16661 }
