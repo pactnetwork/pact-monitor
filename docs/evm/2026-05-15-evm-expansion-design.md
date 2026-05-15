@@ -1,13 +1,15 @@
 # Pact Network — EVM Expansion Design
 
-**Status:** DECIDED — chain target locked to **Base**. Architecture finalized;
-WP plan ready for execution. Five operational questions remain open (see §9)
-but none block WP-EVM-01 scaffold start.
+**Status:** DRAFT (evolving) — v1 target pivoted to **Circle Arc testnet**
+(USDC-native L1) per Rick 2026-05-15; see **§4.8 (operative)**. Base (§4.6)
+is retained as the mainnet-fallback / hedge analysis. No mainnet this pass.
+Initial-draft scope for the Arc pass per Rick.
 **Author:** Pact Network engineering
 **Date:** 2026-05-15
 **Branch:** `feat/evm-expansion-design`
-**Scope:** Design + decided architecture. No Solidity / no source changes in
-this doc; implementation begins at WP-EVM-01.
+**Scope:** Design + evolving architecture draft. No Solidity / no source
+changes in this doc; implementation begins after the §4.8.4 Arc availability
+spike.
 
 ---
 
@@ -18,12 +20,14 @@ Pact Network v1 ships on Solana (Pinocchio program at
 `5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5` devnet). Pact is porting the
 protocol to EVM so agents that pay with ERC-20 USDC can also get insured calls.
 
-**Decided target: Base, single-chain v1 EVM launch.** Ethereum mainnet is the
-explicit **v2 destination** — deployed at scale once off-chain premium
-accumulation is hardened and an enterprise / high-value-call premium tier
-exists to sustain L1's ~$5/call gas overhead (full economics in §4.3-§4.6).
-The extension order after Base is fixed: **v1 Base → v1.1 Arbitrum One →
-v1.2 Optimism (opportunistic) → v2 Ethereum mainnet**.
+**Operative v1 target: Circle Arc testnet (USDC-native L1)** — Rick pivoted
+2026-05-15. Full analysis in **§4.8** (operative). Arc pays gas in USDC,
+which collapses the dual-token / paymaster problem that dominated the EVM
+analysis (§4.8.2). Testnet only this pass; no mainnet. **Base (§4.6) is
+retained as the mainnet-fallback / hedge** if Arc mainnet is not ready.
+Provisional ordering: **v1 Arc testnet → mainnet beachhead Base (fallback)
+→ Arbitrum / Ethereum later**. The §4.8.5 open question — mainnet story if
+Arc mainnet slips — is unresolved.
 
 This doc maps the Solana primitives onto EVM equivalents, sketches the
 Solidity contract shape, documents the chain-selection analysis that led to
@@ -396,9 +400,17 @@ mitigation 1 as a launch blocker. **Do not ship L1 without off-chain premium
 accumulation**; the "insurance for $0.001 calls" pattern simply does not
 exist on Ethereum L1.
 
-### 4.6 Chain decision — v1 EVM deployment target (DECIDED)
+### 4.6 Chain decision — Base (now the mainnet-fallback / hedge analysis)
 
-> **STATUS: DECIDED — locked by Rick 2026-05-15.** v1 EVM target is **Base**,
+> **SUPERSEDED AS v1 TARGET by §4.8 (Arc).** Rick pivoted 2026-05-15 to
+> Circle Arc (USDC-native L1) as the operative v1 testnet target. §4.6 is
+> retained and **repurposed as the mainnet-fallback / hedge analysis** — it
+> stays fully valid for "where do we go to production mainnet if Arc mainnet
+> isn't ready." Read §4.8 for the operative v1 plan; read §4.6 for the
+> fallback.
+
+> **STATUS: Base was locked by Rick 2026-05-15, then superseded same day by
+> the Arc pivot (§4.8).** v1 EVM target was **Base**,
 > single-chain launch. Extension order locked: **v1 Base → v1.1 Arbitrum One
 > → v1.2 Optimism (opportunistic) → v2 Ethereum mainnet (at scale)**. This
 > subsection is operative; §4.1-§4.5 are the superseded audit trail.
@@ -622,10 +634,178 @@ state remaining.
 
 ### 4.7 Multi-chain pool consolidation
 
-Cross-chain rebalancing of pool USDC (Base ↔ Arbitrum ↔ Ethereum, when
+Cross-chain rebalancing of pool USDC (Arc ↔ Base ↔ Arbitrum ↔ Ethereum, when
 deployed) can use **Circle CCTP** — burns on source, mints on dest, no
 third-party bridge risk. Treasury and integrator earnings withdraw separately
 per chain. See §5.
+
+### 4.8 Arc — Circle USDC-native L1 (v1 target, per Rick 2026-05-15)
+
+> **STATUS: OPERATIVE v1 TARGET (draft).** Rick pivoted 2026-05-15 (verbatim):
+> *"i think do arc first ser if you can / arc is the usdc chain / no need
+> mainnet for now / just an initial draft will do."* §4.8 is the operative
+> v1 plan: **Arc testnet, no mainnet this pass.** §4.6 (Base) is retained
+> and **demoted to the mainnet-fallback / hedge analysis** — still valuable
+> if Arc mainnet is not ready or Arc-first proves unviable. This is a
+> deliberately focused draft, not the full 10-factor rigor of §4.6.
+
+#### 4.8.1 What Arc is
+
+Circle Arc is an L1 blockchain announced by Circle (the USDC issuer) in 2025,
+purpose-built for stablecoin finance and payments. Key properties from
+general knowledge — **VERIFY-tagged items are not confirmed and must be
+checked before WP-EVM-01**:
+
+- **USDC is the native gas token.** Gas is paid in USDC, not a separate
+  native coin. This is the single most relevant property for Pact (see
+  §4.8.2). High confidence — this is Arc's headline design point.
+- **EVM-compatible.** Solidity contracts run on Arc. **VERIFY:** exact EVM
+  equivalence level (full-equivalence vs minor opcode/precompile
+  differences), and whether gas-in-USDC changes any opcode gas accounting
+  that affects our `forge snapshot` assumptions.
+- **Built-in stablecoin / FX primitives.** Arc was described as having a
+  native on-chain FX engine for stablecoin↔stablecoin exchange. Not
+  directly used by Pact v1 but relevant later for multi-stablecoin pools.
+  **VERIFY** specifics.
+- **Opt-in privacy.** Arc was described as supporting confidential /
+  opt-in-private transfers. **VERIFY** the mechanism and whether it
+  interacts with our event-emission indexing model (if transfers can be
+  shielded, the indexer's `CallSettled` event sourcing assumptions need
+  re-checking).
+- **Consensus / finality.** I believe Arc uses a Malachite-based BFT
+  consensus targeting fast deterministic finality. **VERIFY** — I am not
+  certain of the consensus engine, block time, or finality latency. Do not
+  design around specific numbers until confirmed.
+- **Validator set.** Likely permissioned at launch (Circle + partners) with
+  a stated decentralization path. **VERIFY** — unconfirmed.
+
+**Knowledge-limit honesty:** Arc is very new and post-dates most of my
+reliable knowledge. I have NOT asserted block times, precompile addresses,
+RPC quirks, testnet endpoints, or exact consensus parameters because I do
+not reliably know them. Everything material is VERIFY-tagged. Treat §4.8 as
+a thesis to validate, not a settled spec.
+
+#### 4.8.2 Why Arc fits Pact uniquely — the dual-token problem disappears
+
+The §4.3/§4.4 analysis kept running into a structural EVM problem: gas is
+paid in the chain's native token (ETH), but Pact's economic unit is USDC.
+That forces a paymaster, an ETH funding step, and dual-asset accounting.
+**On Arc, gas IS USDC.** That collapses the entire problem class:
+
+- **(a) No paymaster WP.** The §9.2 Q3 "ERC-4337 paymaster for gasless UX"
+  question becomes moot. Agents never need a non-USDC asset. The whole
+  paymaster integration WP (and its vendor dependency on Pimlico/Biconomy)
+  is **dropped**.
+- **(b) No ETH funding step for agents.** An agent that holds USDC to pay
+  premiums already holds the asset that pays gas. Zero onboarding friction
+  beyond "have USDC" — which the agent needs anyway.
+- **(c) Premium debit + gas are the same asset.** `transferFrom` premium-in
+  and gas are both USDC; no FX, no two-balance pre-flight in `BalanceCheck`
+  (it checks USDC balance + allowance only — the native-gas-balance check
+  other chains need disappears).
+- **(d) Settlement accounting simplifies.** The settler's gas reserve is
+  USDC, denominated in the same unit as the pool and premiums. No ETH
+  treasury to top up / hedge / account for separately. (The settler still
+  needs a USDC gas float — note, not eliminated, just same-asset.)
+
+For a protocol whose entire value proposition is denominated in USDC, a
+USDC-native chain is a structurally better fit than any ETH-gas L2 — *if*
+the chain itself is trustworthy enough to hold pooled funds (§4.8.3).
+
+#### 4.8.3 Risks of Arc-first — stated plainly
+
+A fund-holding insurance protocol on a brand-new L1 carries real,
+unsoftened risk:
+
+- **No production track record.** Arc has no multi-year track record of
+  holding value under adversarial conditions. Pact pools hold real USDC;
+  a consensus or client bug on a young chain is a total-loss risk for the
+  pool. This is the single biggest downside.
+- **Testnet/mainnet availability + timeline unknown.** I cannot confirm
+  Arc testnet is publicly live as of early 2026 (see §4.8.4). If it is not,
+  the v1 path is blocked until it is. Mainnet timeline is unknown — Rick's
+  "no mainnet for now" is well-aligned with this uncertainty, but our
+  eventual mainnet story is unresolved (§4.8.5).
+- **Audit + tooling ecosystem immaturity.** **VERIFY** Foundry / Hardhat
+  work cleanly against Arc (forge script deploy, RPC, gas snapshots).
+  Audit firms almost certainly have little-to-no Arc-specific experience —
+  the §9 audit-firm question gets harder, not easier, on a novel L1.
+- **Bridge / USDC on-ramp.** **VERIFY** how USDC arrives on Arc (Circle
+  Mint native issuance? CCTP?) and how an agent funds an Arc address. If
+  the on-ramp is immature, agent onboarding is harder despite the
+  single-asset simplification.
+- **Circle dependency concentration — larger than the Coinbase/Base case.**
+  On Base, Coinbase controls the chain. On Arc, Circle controls **both the
+  chain and the USDC asset itself.** Pact would be coupled to a single
+  entity across its settlement chain, its gas token, and its unit of
+  account simultaneously. This is the deepest single-vendor concentration
+  in any option considered. Mitigation is weaker than Base's "OP Stack
+  portability" — there is no drop-in equivalent chain.
+- **Regulatory / compliance surface.** **VERIFY** whether Arc has
+  protocol-level compliance hooks (allowlists, freeze, travel-rule
+  affordances) that could interact awkwardly with a permissionless
+  insurance protocol that auto-refunds arbitrary agents.
+
+#### 4.8.4 Availability check (the #1 thing to verify)
+
+I **cannot confirm** Arc testnet public availability as of early 2026 from
+reliable knowledge. Circle announced Arc in 2025 with a testnet planned;
+whether a public testnet is live, permissioned-access, or not-yet-shipped
+at the time of WP-EVM-01 is **unknown to me and must be verified first.**
+
+**This is the #1 pre-WP-EVM-01 verification item.** Concretely, before any
+scaffold work commits to Arc: confirm (1) public testnet RPC + chain-id +
+faucet exist and are reachable; (2) Foundry can deploy + verify on it;
+(3) testnet USDC is obtainable for gas + premiums. If any of those is "no,"
+the v1 path falls back to §4.6 (Base Sepolia) until Arc testnet is real.
+
+#### 4.8.5 Revised recommendation + migration path
+
+Re-anchored per Rick's pivot:
+
+1. **v1 — Arc testnet.** Validate the USDC-native thesis cheaply and
+   end-to-end on testnet. No mainnet this pass (Rick: "no need mainnet for
+   now"). Deliverable: the §8.1 contracts deployed to Arc testnet with a
+   real insured-call demo. Gated on §4.8.4 availability.
+2. **Mainnet beachhead — Base (the §4.6 analysis, now the fallback/hedge
+   plan).** When Pact needs a production mainnet and Arc mainnet is not
+   ready (or Arc-first proves unviable on §4.8.3 risk), Base is the
+   already-analysed fallback. §4.6 stays fully valid for this purpose.
+3. **Later — Arbitrum / Ethereum** per the prior §4.6.6 ordering, unchanged.
+
+**Open strategic question (flagged, not decided):** *what is our mainnet
+story if Arc mainnet is not live by the time Pact needs to go to production
+mainnet?* Default proposal: fall back to Base mainnet (§4.6), keep Arc as
+the testnet proving ground until Arc mainnet is production-credible. Rick
+to confirm — see §9.
+
+#### 4.8.6 WP delta sketch (high-level — full §8 renumber deferred)
+
+Initial-draft level only, per Rick. §8 is **not** renumbered this pass.
+
+- **WP-EVM-01..06** (scaffold, Registry, Pool, Settler, hardening, tests):
+  largely unchanged — Solidity is portable. **Add a WP-EVM-00 spike:**
+  verify Arc testnet availability + Foundry support (§4.8.4) *before*
+  WP-EVM-01 commits to Arc.
+- **Paymaster WP: DROPPED entirely.** USDC-native gas removes the reason
+  it existed. Net WP reduction.
+- **WP-EVM-07** (deploy + testnet): target becomes **Arc testnet** instead
+  of Base Sepolia. Depends on §4.8.4.
+- **WP-EVM-08** (TS client): Arc chain entry; **VERIFY** viem chain config
+  for Arc (gas-in-USDC may change fee-estimation fields).
+- **WP-EVM-09** (`BalanceCheck.evm`): **simplifies** — USDC balance +
+  allowance only; the separate native-gas-balance check needed on
+  ETH-gas chains is removed for Arc.
+- **WP-EVM-10** (settler `EvmSettlerAdapter`): settler gas float is USDC,
+  not ETH — same-asset accounting; otherwise unchanged.
+- **WP-EVM-11** (indexer poller): Arc event poller. **VERIFY** Arc exposes
+  standard `eth_getLogs` / JSON-RPC and that opt-in privacy (§4.8.1)
+  doesn't shield `CallSettled` events.
+- **WP-EVM-12** (schema): add `arc` to the `chain` enum.
+- **WP-EVM-14** (demo gate): Arc testnet end-to-end.
+- **WP-EVM-15..17** (audit / mainnet): **deferred** — no mainnet this pass.
+  Becomes either the Arc-mainnet-when-ready path or the Base-fallback path
+  per §4.8.5.
 
 ---
 
@@ -925,7 +1105,53 @@ unsequenced here; they get their own plan when v2 starts.
 
 ## 9. Open questions for Rick
 
-### 9.1 RESOLVED (closed — recorded for traceability)
+### 9.0 Arc pivot — operative open questions (2026-05-15)
+
+These supersede the Base-track questions below. Arc is the operative v1
+target (§4.8); the Base questions in §9.1/§9.2 are retained as the
+mainnet-fallback track.
+
+1. **Confirm Arc testnet is the v1 target.** §4.8 takes Rick's pivot at
+   face value: Arc testnet, no mainnet this pass, initial draft. Confirm
+   that's the intent and there's no near-term Arc mainnet expectation we
+   should be planning around.
+
+2. **Arc availability — the hard blocker.** §4.8.4: I cannot confirm Arc
+   public testnet is live as of early 2026. This is the **#1 thing to
+   verify before any WP commits to Arc.** Does Rick / does Circle contact
+   have confirmed access to an Arc testnet (RPC, chain-id, faucet, Foundry
+   support)? If not, this is the first thing the WP-EVM-00 spike resolves.
+
+3. **Mainnet fallback if Arc mainnet slips.** §4.8.5 open question: when
+   Pact needs production mainnet and Arc mainnet is not
+   production-credible, do we fall back to **Base mainnet** (§4.6 analysis,
+   already done) and keep Arc as the testnet proving ground? Default
+   proposal = yes. Confirm.
+
+4. **Circle relationship as a strategic asset.** Pact + Circle Arc + USDC
+   is a tightly aligned story (the insurance layer for USDC-native agent
+   payments, on Circle's own chain). Is there a Circle partnership angle
+   Rick wants to pursue — analogous to the "missing insurance primitive
+   for x402" pitch that made Base attractive? This shapes whether Arc-first
+   is also a go-to-market wedge, not just a tech fit.
+
+5. **Circle concentration risk — explicit acceptance.** §4.8.3: on Arc,
+   Circle controls the chain, the gas token, AND the unit of account
+   simultaneously. This is the deepest single-vendor concentration of any
+   option, with no OP-Stack-style portability escape hatch. Does Rick
+   accept this risk for a testnet-only validation pass (lower stakes), with
+   the concentration question revisited before any Arc mainnet decision?
+
+6. **Tooling risk acceptance.** §4.8.3: audit firms and Foundry/Hardhat
+   almost certainly have little Arc-specific maturity. Accept that the
+   WP-EVM-00 spike may surface tooling gaps requiring workarounds (or a
+   fallback to Base Sepolia for the initial demo if Arc tooling is not
+   ready)?
+
+The paymaster question (old §9.2 Q3) is **dropped** — Arc's USDC-native
+gas makes it moot (§4.8.2a).
+
+### 9.1 RESOLVED — Base track (now the mainnet-fallback questions)
 
 - ~~**v1 chain target.**~~ **RESOLVED: Base.** Single-chain v1 EVM launch.
   Locked by Rick 2026-05-15. See §4.6.5.
@@ -943,11 +1169,11 @@ unsequenced here; they get their own plan when v2 starts.
   (chain-agnostic; bytecode is shared across Base/Arbitrum/Optimism).
   Sibling to Solana's `@pact-network/protocol-v1-client`.
 
-### 9.2 STILL OPEN — the only blockers before WP-EVM-01 kickoff
+### 9.2 STILL OPEN — Base track (relevant only if we fall back to Base)
 
-These five are genuinely unanswered. None block the WP-EVM-01 scaffold
-itself (§8.1 notes WP-EVM-01 can start immediately), but each gates a
-specific downstream WP as noted:
+These applied when Base was the v1 target. Under the Arc pivot they are
+**fallback-track** questions — they re-activate only if §9.0 Q3 resolves to
+"fall back to Base." Retained verbatim for that path:
 
 1. **Coinbase concentration hedge.** Single-chain v1 on Base couples Pact
    to Coinbase's L2 roadmap + commercial decisions. Default mitigation:
