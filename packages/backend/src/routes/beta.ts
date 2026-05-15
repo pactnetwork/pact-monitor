@@ -32,6 +32,9 @@ type TallyPayload = {
 // case-insensitive and ignores whitespace/punctuation so a question like
 // "What are you building?" still matches whether Tally hands us
 // `what_are_you_building`, `whatBuilding`, or the raw label.
+// Order matters: more specific patterns first. The loop in extractFields
+// stops at the first match, so a generic `/feedback/i` ahead of the
+// specific `/early.tester/i` would shadow it.
 const FIELD_MAP: Array<{ test: RegExp; column: keyof Applicant }> = [
   { test: /(what.*building|whatbuilding|building)/i, column: "what_building" },
   { test: /(urgency|when.*integrate|timeline|timing)/i, column: "urgency" },
@@ -39,7 +42,9 @@ const FIELD_MAP: Array<{ test: RegExp; column: keyof Applicant }> = [
   { test: /(x.?handle|twitter|x.com)/i, column: "x_handle" },
   { test: /(telegram|t\.me)/i, column: "telegram_handle" },
   { test: /(wallet|solana.*address|sol.*pubkey)/i, column: "wallet_pubkey" },
-  { test: /(apis|paying|currently)/i, column: "apis_currently_paying" },
+  { test: /(apis.*pay|currently.*pay|paying.*for|which.*apis)/i, column: "apis_currently_paying" },
+  { test: /(why.*pact|why.*considering|why.*try)/i, column: "why_pact" },
+  { test: /(feedback|early.*tester|provide.*feedback)/i, column: "willing_to_feedback" },
 ];
 
 type Applicant = {
@@ -50,6 +55,8 @@ type Applicant = {
   what_building: string | null;
   urgency: string | null;
   apis_currently_paying: string | null;
+  why_pact: string | null;
+  willing_to_feedback: string | null;
 };
 
 function extractFields(payload: TallyPayload): Applicant {
@@ -61,6 +68,8 @@ function extractFields(payload: TallyPayload): Applicant {
     what_building: null,
     urgency: null,
     apis_currently_paying: null,
+    why_pact: null,
+    willing_to_feedback: null,
   };
   const fields = payload.data?.fields ?? [];
   for (const f of fields) {
@@ -183,8 +192,9 @@ export async function betaRoutes(app: FastifyInstance): Promise<void> {
     await query(
       `INSERT INTO beta_applicants (
         id, email, x_handle, telegram_handle, wallet_pubkey,
-        what_building, urgency, apis_currently_paying, tally_submission_id
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        what_building, urgency, apis_currently_paying,
+        why_pact, willing_to_feedback, tally_submission_id
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
       [
         id,
         applicant.email,
@@ -194,21 +204,26 @@ export async function betaRoutes(app: FastifyInstance): Promise<void> {
         applicant.what_building,
         applicant.urgency,
         applicant.apis_currently_paying,
+        applicant.why_pact,
+        applicant.willing_to_feedback,
         submissionId,
       ],
     );
 
     const contact =
       applicant.email || applicant.x_handle || applicant.telegram_handle || "(no contact)";
-    notifyTelegram(
-      [
-        "New Pact beta application",
-        `id: ${id}`,
-        `building: ${applicant.what_building ?? "(unspecified)"}`,
-        `urgency: ${applicant.urgency ?? "(unspecified)"}`,
-        `contact: ${contact}`,
-      ].join("\n"),
-    );
+    const lines = [
+      "New Pact beta application",
+      `id: ${id}`,
+      `building: ${applicant.what_building ?? "(unspecified)"}`,
+      `urgency: ${applicant.urgency ?? "(unspecified)"}`,
+      `contact: ${contact}`,
+    ];
+    if (applicant.why_pact) lines.push(`why pact: ${applicant.why_pact}`);
+    if (applicant.willing_to_feedback) {
+      lines.push(`early-tester opt-in: ${applicant.willing_to_feedback}`);
+    }
+    notifyTelegram(lines.join("\n"));
 
     return reply.code(201).send({ id, status: "received" });
   });

@@ -276,5 +276,18 @@ ALTER TABLE api_keys
 CREATE INDEX IF NOT EXISTS idx_api_keys_beta_applicant
   ON api_keys(beta_applicant_id) WHERE beta_applicant_id IS NOT NULL;
 
+-- Three Tally questions added 2026-05-15 after the initial gate ship:
+--   why_pact            — long-answer "Why are you considering trying out Pact?"
+--   willing_to_feedback — checkbox "Will you give feedback in exchange for
+--                         early-tester perks?" Stored as TEXT 'true'/'false'/
+--                         NULL rather than BOOLEAN because Tally checkbox
+--                         values arrive as the stringified value via the
+--                         shared stringifyValue helper.
+-- apis_currently_paying already exists on the table from the initial ship.
+ALTER TABLE beta_applicants
+  ADD COLUMN IF NOT EXISTS why_pact TEXT;
+ALTER TABLE beta_applicants
+  ADD COLUMN IF NOT EXISTS willing_to_feedback TEXT;
+
 CREATE INDEX IF NOT EXISTS idx_agent_flags_status
   ON agent_flags(status, created_at);

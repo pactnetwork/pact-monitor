@@ -98,6 +98,16 @@ describe("private beta gate", () => {
             { key: "what_are_you_building", label: "What are you building?", value: "agent for x402 ops" },
             { key: "urgency", label: "When would you integrate?", value: "this week" },
             { key: "email", label: "Email", value: "founder@example.com" },
+            {
+              key: "why_pact",
+              label: "Why are you considering trying out Pact Network?",
+              value: "automatic refunds when an upstream 5xxes mid-agent-call",
+            },
+            {
+              key: "willing_to_feedback",
+              label: "Would you be willing to provide feedback after use? We will give special offers to early testers.",
+              value: true,
+            },
           ],
         },
       });
@@ -119,15 +129,23 @@ describe("private beta gate", () => {
         what_building: string;
         urgency: string;
         email: string;
+        why_pact: string;
+        willing_to_feedback: string;
         status: string;
       }>(
-        "SELECT what_building, urgency, email, status FROM beta_applicants WHERE id = $1",
+        `SELECT what_building, urgency, email, why_pact, willing_to_feedback, status
+           FROM beta_applicants WHERE id = $1`,
         [json.id],
       );
       assert.ok(row);
       assert.equal(row.what_building, "agent for x402 ops");
       assert.equal(row.urgency, "this week");
       assert.equal(row.email, "founder@example.com");
+      assert.equal(
+        row.why_pact,
+        "automatic refunds when an upstream 5xxes mid-agent-call",
+      );
+      assert.equal(row.willing_to_feedback, "true");
       assert.equal(row.status, "pending");
     });
 
