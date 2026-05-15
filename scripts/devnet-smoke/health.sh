@@ -26,6 +26,7 @@ set -uo pipefail
 PROXY_URL="${PROXY_URL:-https://api-devnet.pactnetwork.io}"
 INDEXER_URL="${INDEXER_URL:-https://indexer-devnet.pactnetwork.io}"
 DASHBOARD_URL="${DASHBOARD_URL:-https://app-devnet.pactnetwork.io}"
+DUMMY_URL="${DUMMY_URL:-https://dummy-devnet.pactnetwork.io}"
 REDIS_URL="${REDIS_URL:-}"
 
 PASS=0
@@ -84,9 +85,27 @@ else
   print_fail "/api/endpoints does not include 'helius'" "Run on-chain init: bun packages/protocol-v1-client/scripts/init-protocol.ts --cluster devnet"
 fi
 
-# ----- 6. Redis stream sanity (optional) -----
+# ----- 6. dummy-upstream health (x402 server) -----
+echo "6. dummy-upstream ($DUMMY_URL/health)"
+body=$(curl -sS -A "$UA" --max-time 10 "$DUMMY_URL/health")
+if [[ "$body" == *'"status":"ok"'* ]]; then
+  print_pass "/health returns status=ok"
+else
+  print_fail "/health did not return status=ok" "$body"
+fi
+
+# ----- 7. dummy-upstream serves x402 challenge -----
+echo "7. dummy-upstream x402 ($DUMMY_URL/quote/SOL?x402=1)"
+status=$(curl -sS -A "$UA" --max-time 10 -o /dev/null -w "%{http_code}" "$DUMMY_URL/quote/SOL?x402=1")
+if [[ "$status" == "402" ]]; then
+  print_pass "/quote/SOL?x402=1 returns 402 (payment required)"
+else
+  print_fail "/quote/SOL?x402=1 returned HTTP $status" "expected 402"
+fi
+
+# ----- 8. Redis stream sanity (optional) -----
 if [[ -n "$REDIS_URL" ]]; then
-  echo "6. Redis stream sanity ($REDIS_URL)"
+  echo "8. Redis stream sanity ($REDIS_URL)"
   if ! command -v redis-cli >/dev/null 2>&1; then
     echo "  SKIP  redis-cli not installed; skipping XLEN/XPENDING checks"
   else
@@ -109,7 +128,7 @@ if [[ -n "$REDIS_URL" ]]; then
     fi
   fi
 else
-  echo "6. Redis stream sanity"
+  echo "8. Redis stream sanity"
   echo "  SKIP  REDIS_URL not set; export it to run XLEN/XPENDING checks"
 fi
 

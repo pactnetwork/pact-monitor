@@ -40,9 +40,9 @@ Both plugins start with 256 MB RAM allocations — sufficient for devnet load. B
 
 ---
 
-## 3. Create the 4 services (from GitHub)
+## 3. Create the 5 services (from GitHub)
 
-For each of `market-proxy`, `settler`, `indexer`, `market-dashboard`:
+For each of `market-proxy`, `settler`, `indexer`, `market-dashboard`, `dummy-upstream`:
 
 1. **New → GitHub Repo → `Quantum3-Labs/pact-monitor`** (authenticate Railway with the org's GitHub if first time).
 2. **Branch:** `develop` (per plan §12 settled decisions — `develop` is the single source of truth for both mainnet and devnet).
@@ -57,8 +57,9 @@ For each of `market-proxy`, `settler`, `indexer`, `market-dashboard`:
 | `settler` | `packages/settler/**`, `packages/wrap/**`, `packages/protocol-v1-client/**`, `packages/shared/**` |
 | `indexer` | `packages/indexer/**`, `packages/db/**`, `packages/shared/**` |
 | `market-dashboard` | `packages/market-dashboard/**` |
+| `dummy-upstream` | `packages/dummy-upstream/**` |
 
-7. **Settings → Resource Limits:** 0.5 vCPU / 512 MB for proxy/settler/indexer; 1.0 vCPU / 512 MB for dashboard (Next.js SSR needs the CPU headroom).
+7. **Settings → Resource Limits:** 0.5 vCPU / 512 MB for proxy/settler/indexer/dummy-upstream; 1.0 vCPU / 512 MB for dashboard (Next.js SSR needs the CPU headroom).
 
 ---
 
@@ -85,10 +86,13 @@ For each public-facing service, **Settings → Networking → Custom Domain**:
 | `market-proxy` | `api-devnet.pactnetwork.io` |
 | `indexer` | `indexer-devnet.pactnetwork.io` |
 | `market-dashboard` | `app-devnet.pactnetwork.io` |
+| `dummy-upstream` | `dummy-devnet.pactnetwork.io` |
 
 Railway will show a CNAME target like `<some-id>.up.railway.app`. **Do not** add the custom domain in Railway until DNS is in place — Railway's Let's Encrypt challenge fires immediately on attach, and a not-yet-resolving CNAME will keep the cert in `PROVISIONING` indefinitely.
 
 The settler does **not** get a custom domain. Internal traffic from market-proxy → indexer uses `${{indexer.RAILWAY_PRIVATE_DOMAIN}}`; settler talks to indexer the same way. No external need.
+
+The `dummy-upstream` mirrors the mainnet pattern: mainnet's `dummy.pactnetwork.io` runs on Vercel; devnet's `dummy-devnet.pactnetwork.io` runs on Railway as the 5th service. It serves the x402 challenge that `pact pay` exercises during the premium-coverage demo flow. PayAI mode is on (real on-chain settlement); the only env values that differ from mainnet are `DUMMY_X402_PAYAI_NETWORK`, `DUMMY_X402_RPC_URL`, and `DUMMY_X402_PAY_TO`.
 
 ---
 
@@ -97,14 +101,15 @@ The settler does **not** get a custom domain. Internal traffic from market-proxy
 In the Vercel DNS panel for `pactnetwork.io`:
 
 ```
-api-devnet      CNAME   <railway-cname-from-step-5>.up.railway.app
-indexer-devnet  CNAME   <railway-cname-from-step-5>.up.railway.app
-app-devnet      CNAME   <railway-cname-from-step-5>.up.railway.app
+api-devnet      CNAME   <market-proxy-railway-cname>.up.railway.app
+indexer-devnet  CNAME   <indexer-railway-cname>.up.railway.app
+app-devnet      CNAME   <market-dashboard-railway-cname>.up.railway.app
+dummy-devnet    CNAME   <dummy-upstream-railway-cname>.up.railway.app
 ```
 
 Wait ~60s for DNS to propagate (`dig api-devnet.pactnetwork.io` should return the Railway CNAME chain).
 
-**Now** go back to Railway and attach the 3 custom domains from step 5. Let's Encrypt provisioning typically takes 30–60s once DNS resolves.
+**Now** go back to Railway and attach the 4 custom domains from step 5. Let's Encrypt provisioning typically takes 30–60s once DNS resolves.
 
 ---
 
@@ -113,9 +118,10 @@ Wait ~60s for DNS to propagate (`dig api-devnet.pactnetwork.io` should return th
 Push to `develop` triggers Railway auto-deploys for any service whose watch paths matched. Order matters for the first cold boot:
 
 1. **indexer** first — its `preDeployCommand` runs `prisma migrate deploy` against the Railway Postgres plugin. Watch the deploy logs in Railway; you should see `Migration ... applied`. If migrations fail, fix and redeploy before moving on.
-2. **market-proxy** second.
-3. **settler** third — depends on indexer being reachable for its push-secret guard.
-4. **market-dashboard** last (no dependencies but the slowest cold start).
+2. **dummy-upstream** second (no dependencies; warming it up before market-proxy means the proxy's first health check against it succeeds).
+3. **market-proxy** third.
+4. **settler** fourth — depends on indexer being reachable for its push-secret guard.
+5. **market-dashboard** last (no dependencies but the slowest cold start).
 
 If Railway auto-deploys in the wrong order, that's fine — just let it settle, then restart any service that boot-failed.
 
@@ -201,7 +207,7 @@ If something is wrong with the Railway project itself (queue stuck, Postgres dea
 
 ## 12. Cost monitoring
 
-Railway Hobby is $5/mo + usage. Expected devnet monthly all-in: **$15–25** at light traffic.
+Railway Hobby is $5/mo + usage. Expected devnet monthly all-in: **$18–28** at light traffic (5 services + Postgres + Redis).
 
 Set an auto-recharge cap at **$30/mo** in Railway → Project → Settings → Billing. If devnet ever sustained-loads hard (cumulative usage > cap), the project pauses gracefully — Postgres + Redis data persists, services suspend until you top up. No data loss.
 
