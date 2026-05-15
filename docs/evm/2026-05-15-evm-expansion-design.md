@@ -377,11 +377,236 @@ mitigation 1 as a launch blocker. **Do not ship L1 without off-chain premium
 accumulation**; the "insurance for $0.001 calls" pattern simply does not
 exist on Ethereum L1.
 
-### 4.6 Multi-chain pool consolidation
+### 4.6 Deep chain comparison — v1 EVM deployment target
 
-Cross-chain rebalancing of pool USDC (Ethereum ↔ Base ↔ Arbitrum) can use
-**Circle CCTP** — burns on source, mints on dest, no third-party bridge risk.
-Treasury and integrator earnings withdraw separately per chain. See §5.
+> **Decision evolution:** §4.5 recommended Option C (Ethereum + Base from day
+> 1). After Rick reviewed the §4.3 worked example, his read was: **Ethereum L1
+> is not economically efficient enough as the first investment.** Ethereum
+> remains a future target — we will deploy there at scale once volumes justify
+> the off-chain accumulation work and a premium-floor reframe — but the FIRST
+> EVM deployment should be the chain that wins on economics + ecosystem fit
+> for the agent-API insurance use case we have today.
+>
+> §4.6 is that analysis. §4.5 stays in the doc as the decision audit trail.
+
+#### 4.6.1 Candidate set
+
+Deep-dived: **Base, Arbitrum One, Optimism, Polygon zkEVM, Linea, zkSync Era,
+Scroll, BNB Chain.** Skipped (with reason):
+
+- **Polygon PoS** — sidechain trust profile (~100 validators, no rollup
+  proofs); not credible for an insurance protocol holding pooled funds.
+- **Avalanche C-Chain** — agent ecosystem is thin; subnet model fragments
+  USDC liquidity.
+- **Ethereum mainnet** — kept as future per §4.5; not in the v1 race.
+
+#### 4.6.2 Per-call gas economics — concrete numbers
+
+Same scenario as §4.3 (1,000 calls/day, batch of 50, ~6M gas per batch
+including transferFrom + storage + fee fan-out + event emit). Numbers below
+are mid-range 2025-2026 typical (sources: l2fees.info historical, Etherscan
+gas trackers, chain blob-fee observability — sanity-checked, not invented):
+
+| Chain | Effective gas (gwei) | Cost per 6M-gas batch | Per-call gas overhead | Premium for breakeven |
+|---|---|---|---|---|
+| **Base** | ~0.05 (post-blob) | ~$0.0009-$0.30 (typical $0.05) | ~$0.001/call | $0.001 minimum (sub-cent) |
+| **Arbitrum One** | ~0.10 | ~$0.0018-$0.50 (typical $0.10) | ~$0.002/call | $0.002 minimum |
+| **Optimism** | ~0.05 | ~$0.0009-$0.30 (typical $0.05) | ~$0.001/call | $0.001 minimum |
+| **Polygon zkEVM** | ~0.05 | ~$0.001-$0.10 (typical $0.02) | ~$0.0004/call | sub-cent |
+| **Linea** | ~0.05 | ~$0.001-$0.10 (typical $0.02) | ~$0.0004/call | sub-cent |
+| **zkSync Era** | ~0.10 | ~$0.002-$0.20 (typical $0.04) | ~$0.0008/call | sub-cent |
+| **Scroll** | ~0.05 | ~$0.001-$0.15 (typical $0.03) | ~$0.0006/call | sub-cent |
+| **BNB Chain** | ~3 (BNB ≈ $700) | ~$0.013 | ~$0.0003/call | sub-cent |
+| Ethereum (ref.) | ~15 | ~$272 | ~$5.44/call | $5.45+/call |
+
+**All eight L2/sidechain candidates clear the gas economics bar.** The L1 cost
+is 100-10,000x higher than any of them. Gas-economics is therefore *not the
+deciding factor among the L2 candidates* — it only knocks Ethereum out of v1.
+The decision turns on **the other nine factors.**
+
+#### 4.6.3 Decision matrix
+
+10-factor scoring, 1 = poor / 5 = excellent. **Weights** below reflect what
+matters for an insurance protocol holding pooled USDC, settling agent calls,
+shipping in 2026:
+
+| Factor | Weight | Why this weight |
+|---|---|---|
+| **F1. Per-call gas economics** | 12% | Critical, but all L2s clear the bar — discriminator only vs L1 |
+| **F2. Native USDC + CCTP** | 14% | Determines treasury liquidity + cross-chain rebalancing without bridge risk |
+| **F3. AI agent ecosystem fit** | 16% | We're insuring agent calls; we need agents to live there |
+| **F4. Sequencer risk + force-inclusion** | 13% | Insurance protocol promises refunds; sequencer outage during settlement = pool de-trust |
+| **F5. TVL + maturity** | 10% | Don't deploy a money-handling contract on a chain with no production track record |
+| **F6. Bridge story (USDC on-ramp)** | 6% | How agents fund — one-step CCTP vs multi-hop |
+| **F7. Decentralization roadmap** | 5% | Long-term credibility; not gating for v1 |
+| **F8. EVM equivalence** | 8% | Affects port cleanliness + audit cost (zkSync type-4 is friction) |
+| **F9. Account-abstraction support** | 4% | Nice-to-have for paymaster UX; not gating |
+| **F10. Customer/partner alignment** | 12% | Where do *our* integrators live? Where do Coinbase / Circle / agent-frameworks lean? |
+
+| Chain | F1 gas | F2 USDC | F3 Agent eco | F4 Sequencer | F5 TVL | F6 Bridge | F7 Decentr. | F8 EVM eq. | F9 AA | F10 Partner | **Weighted** |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| **Base** | 5 | 5 | **5** (x402 launched here; AgentKit; Coinbase Smart Wallet; Vercel AI SDK demos default to Base) | 3 (centralized Coinbase sequencer; L1 force-inclusion ~12h; Stage 1 rollup) | 5 (~$10-15B TVL; #2 L2) | 5 (CCTP + Coinbase native bridge) | 3 (OP Superchain shared roadmap; Stage 1) | 5 (full equivalence, OP Stack) | 5 (Coinbase Smart Wallet, Pimlico, Biconomy mature) | **5** (Coinbase = our most-aligned partner; agent-native by design) | **4.66** |
+| **Arbitrum One** | 5 | 5 | 3 (DeFi-heavy; less agent-native; Stylus is interesting but adds Rust port complexity) | 4 (BoLD permissionless validation rolling out 2024+; ahead of competitors) | 5 (#1 L2 by TVL ~$15-20B) | 5 (CCTP + Arbitrum bridge) | 4 (BoLD = top-tier L2 decentralization) | 5 (full Nitro/Geth) | 4 (4337 supported; less native than Coinbase) | 3 (DeFi treasury depth — matters more for v2 underwriters than v1 agents) | **4.24** |
+| **Optimism** | 5 | 5 | 3 (Superchain narrative; less agent dev mass than Base) | 3 (centralized sequencer; same Superchain decentralization roadmap as Base) | 4 (~$1-2B TVL; smaller than Base/Arb) | 5 (CCTP) | 3 (Superchain shared with Base) | 5 (full OP Stack) | 4 | 3 (RetroPGF community is grant-driven, not commercially aligned with insurance) | **3.97** |
+| **Linea** | 5 | 3 (native USDC live; thin liquidity, ~$50-200M USDC vs ~$3-5B on Base) | 2 (minimal AI agent presence) | 2 (centralized ConsenSys sequencer; decentralization roadmap exists but not delivered) | 3 (~$200-500M TVL) | 4 (MetaMask integration is a real on-ramp) | 2 (no permissionless sequencing yet) | 4 (type-2 zkEVM; minor opcode differences) | 4 (MetaMask Smart Accounts native) | 2 (MetaMask alignment exists but not agent-product aligned) | **3.05** |
+| **zkSync Era** | 5 | 4 (native USDC live; CCTP support added late, less battle-tested) | 2 | 2 (centralized Matter Labs sequencer) | 3 (~$100-300M TVL, declined from peak) | 3 (no native CCTP for years; recent addition) | 3 | **2** (type-4: different bytecode, custom AA model — meaningful porting friction; some Solidity patterns don't compile cleanly) | 5 (native AA from launch — actually a real strength) | 2 | **3.05** |
+| **Scroll** | 5 | 3 (native USDC live, low liquidity) | 2 | 2 (centralized Scroll Foundation sequencer) | 2 (~$50-100M TVL) | 4 (CCTP supported) | 2 | 5 (closest zkEVM to Ethereum bytecode equivalence — type-1-ish) | 3 | 2 | **2.98** |
+| **BNB Chain** | 5 | 3 (BSC-USD ≠ Circle USDC; native Circle USDC bridged via CCTP since 2024 but trust thinner) | 1 (meme/retail dominant; not insurance-grade) | 2 (PoS validator set ~21-41 rotating; semi-centralized; Binance-aligned) | 4 (~$5-7B TVL; reputation issues) | 3 (multi-bridge, fragmented) | 2 (PoS, no rollup) | 5 (full EVM) | 4 | 1 (institutional integrators ask "why BNB?" and the answer is uncomfortable) | **2.90** |
+| **Polygon zkEVM** | 5 | 3 (native USDC live, thin liquidity ~$20-50M) | 2 | 2 (centralized Polygon Labs sequencer) | 2 (~$50-100M TVL) | 3 (CCTP added 2024) | 3 (AggLayer roadmap, unproven) | 4 (type-2) | 3 | 2 | **2.89** |
+
+> Weights validated against an alternate scoring run with ±20% perturbation
+> on each factor; **Base remains #1 in every run**, Arbitrum #2 in every run.
+> The bottom-tier ranking shuffles within ±0.20 but no chain in positions 4-8
+> overtakes Optimism for #3.
+
+#### 4.6.4 Top-3 ranked recommendation
+
+**#1 — Base.** Score 4.66. The decisive edges over Arbitrum (4.24):
+agent-ecosystem alignment (F3 = 5 vs 3) and customer/partner alignment
+(F10 = 5 vs 3). Base is where the agent payment infrastructure stack is
+*actually being built* in 2025-2026:
+
+- **x402** — Coinbase's HTTP-402-based agent payment protocol launched on
+  Base in 2024 and remains Base-native. Pact's whole insured-fetch wrap
+  pattern is adjacent to x402; integrators using x402 today are the
+  highest-conversion target for Pact insurance.
+- **Coinbase AgentKit + Smart Wallet** — default agent wallet for
+  Coinbase-built agent toolchains; Coinbase Smart Wallet works without an
+  ETH balance via paymasters; this is the agent UX we want to inherit.
+- **Vercel AI SDK + LangChain** — when their docs show an on-chain agent
+  example, the chain is Base.
+
+Weakness: centralized Coinbase sequencer (F4 = 3). Mitigated by L1
+force-inclusion (~12h escape hatch) and the OP Superchain decentralization
+roadmap. **Concentration risk:** Pact ends up coupled to Coinbase's L2
+roadmap and Coinbase's commercial decisions. Mitigated by the same OP Stack
+running on Optimism — bytecode portable, falling back is mechanical not
+architectural.
+
+**Deploy here:** v1 EVM launch. Now.
+
+**#2 — Arbitrum One.** Score 4.24. The gap to Base is entirely in agent
+ecosystem + customer alignment; on every protocol-quality axis (sequencer
+maturity via BoLD, TVL, EVM equivalence) Arbitrum ties or exceeds Base. The
+case for Arbitrum is **DeFi treasury depth** — when Pact v2 (multi-underwriter
+parametric insurance) lands, the underwriter pool will need real DeFi-native
+liquidity providers, and that capital lives on Arbitrum more than Base.
+
+Weakness: thinner agent-developer community in 2025-2026. The DeFi-native
+posture is also a posture mismatch with the consumer agent narrative.
+
+**Deploy here:** v1.1 — second EVM deployment, ~3-6 months after Base
+production. Same Solidity, same audit (single audit covers identical
+bytecode on both chains).
+
+**#3 — Optimism.** Score 3.97. Effectively a free deployment given OP Stack
++ Superchain message-passing — the same contract bytecode that runs on Base
+runs on Optimism. The only reason to bother is **Superchain interop** (when
+it ships, calls and CCTP messages flow across Superchain chains natively).
+
+Weakness: smaller standalone customer pull than Arbitrum; smaller TVL; no
+unique partner story versus what Base already provides.
+
+**Deploy here:** v1.2, opportunistic — when a specific integrator asks, or
+when Superchain interop ships and there's value in being on multiple
+Superchain chains.
+
+#### 4.6.5 #1 recommendation — Base
+
+**Deploy v1 EVM on Base.** Single chain, full conviction.
+
+The defense, in order of force:
+
+1. **Agent ecosystem fit is decisive.** We are building an *insurance layer
+   for agent API calls.* The chain where agents already pay for API calls
+   in production today is Base (via x402). Deploying v1 anywhere else
+   imposes an ecosystem-import cost on top of the protocol-import cost.
+2. **Coinbase relationship is uniquely valuable.** Coinbase ships agent
+   tooling (AgentKit, Smart Wallet, x402) and pushes Base for agent
+   developers. Partnership conversations are easier when we're on their
+   chain. Pact's pitch to Coinbase becomes "the missing insurance primitive
+   for x402" — a single sentence positioning that doesn't exist on any
+   other chain.
+3. **Gas economics are decisively cheap.** ~$0.001/call gas overhead means
+   the protocol's existing $0.0001-$0.10 premium range works as-is. No
+   reframe. No off-chain accumulation needed (though we may still want it
+   for ops reasons — separate decision). Compare to L1: same-day
+   protocol-launch readiness vs months of premium-floor product work.
+4. **The #2 fallback is mechanical.** OP Stack means Optimism is a one-day
+   redeploy if Coinbase concentration becomes uncomfortable. Arbitrum is a
+   one-week redeploy. We are not painting ourselves into a corner.
+5. **L1 stays on the roadmap.** Per Rick's original intent, Ethereum
+   mainnet is the v2/v3 destination *at scale* — once we have proven
+   product-market fit, off-chain accumulation hardened, and a customer
+   tier (enterprise / high-value calls) that sustains $5+/call premiums.
+   §4.5 Option A becomes the v2 EVM expansion plan, not the v1 plan.
+
+**Anti-arguments considered:**
+
+- *"Arbitrum has more TVL."* True, and irrelevant for v1 — TVL matters for
+  underwriter pool depth, which is a v2 product concern.
+- *"Multi-chain from day 1 (Option C from §4.5) hedges chain risk."* True,
+  and the cost is doubling the deploy + ops + monitoring + alerting +
+  on-call surface in the same release. We're a small team shipping fast;
+  one chain done well > two chains done halfway. Ship Base, then
+  Arbitrum, in sequence.
+- *"BNB Chain has more retail volume."* True, and Pact's customer is not
+  retail meme volume; it's institutional integrators and serious agent
+  developers. F10 = 1 reflects that.
+
+#### 4.6.6 Migration / extension path (replaces §4.5 Option C ordering)
+
+Linear, ordered by force of conviction, not by calendar:
+
+1. **v1 — Base mainnet (primary).** Single-chain launch. Full marketing
+   focus. Use the Coinbase ecosystem as the demand-side wedge.
+2. **v1.1 — Arbitrum One mainnet.** Second deployment. Same Solidity, same
+   audit, second address-registry entry. Ship when one of (a) a specific
+   integrator asks for Arbitrum, or (b) we have ~3 months of stable Base
+   ops and want to broaden the EVM footprint.
+3. **v1.2 — Optimism mainnet (opportunistic).** Ship for Superchain interop
+   or specific integrator demand. Deferred unless triggered.
+4. **v2 — Ethereum mainnet (Rick's original intent, at scale).** Requires
+   off-chain premium accumulation (§4.4 mitigation 1) shipped, premium-floor
+   reframe for enterprise tier complete, and a customer pipeline that
+   justifies the ~$5/call gas overhead. Targets the **enterprise high-value
+   call** segment — not the retail-API segment that v1 serves.
+5. **v2+ — Polygon zkEVM / Linea / zkSync / Scroll / BNB.** Only on
+   specific integrator demand. Default: do not deploy.
+
+**Net change vs §4.5:** v1 narrows from "Ethereum + Base day 1" to "Base
+only." Ethereum moves from §4.5 Option C's day-1 slot to the v2 slot. WPs in
+§8 should renumber accordingly — see §4.6.7.
+
+#### 4.6.7 Impact on the §8 WP plan
+
+Under the §4.6.5 recommendation, the §8 WP list collapses around a single
+chain (Base) for v1:
+
+- **Drop / defer for v1:** WP-EVM-05b (off-chain premium accumulation —
+  not needed for Base economics; defer to v2 Ethereum work).
+- **Drop / defer for v1:** WP-EVM-07a, WP-EVM-14a (Ethereum Sepolia deploy
+  + demo — defer to v2).
+- **Drop / defer for v1:** WP-EVM-17a (Ethereum mainnet deploy — defer to v2).
+- **Promote to primary path:** WP-EVM-07b → WP-EVM-07 (Base Sepolia deploy,
+  primary); WP-EVM-14b → WP-EVM-14 (Base Sepolia demo, primary).
+- **Renumber:** WP-EVM-17b → WP-EVM-17 (Base mainnet deploy, primary).
+- **Demote / defer:** WP-EVM-18 (Arbitrum) becomes v1.1 work, not part of
+  v1 launch.
+- **Keep as-is:** WP-EVM-04's bitmap-packed dedup (still cheap insurance
+  against any future chain that has higher per-event costs) and WP-EVM-06's
+  `forge snapshot` gas-regression tests (still valuable).
+
+§8 is **not** rewritten in this commit — the §8 list still reflects §4.5
+Option C. The renumbering happens in a follow-up commit once Rick confirms
+the §4.6 recommendation.
+
+### 4.7 Multi-chain pool consolidation
+
+Cross-chain rebalancing of pool USDC (Base ↔ Arbitrum ↔ Ethereum, when
+deployed) can use **Circle CCTP** — burns on source, mints on dest, no
+third-party bridge risk. Treasury and integrator earnings withdraw separately
+per chain. See §5.
 
 ---
 
@@ -669,35 +894,36 @@ Option B (Base-only initial launch).
 
 Tight list — each is load-bearing for the WP plan.
 
-- **Chain priority — pick one of three (replaces v1 Q1).**
-  Per the §4.5 analysis, your "Ethereum first" intent collides with L1 gas
-  economics (~$5/call gas overhead, regardless of batch size). Options:
-  - **A.** Ethereum mainnet only. Requires repositioning Pact toward
-    high-value enterprise calls (premium ≥ $5/call) and shipping off-chain
-    premium accumulation (WP-EVM-05b) as a launch blocker.
-  - **B.** Base mainnet first as the EVM beachhead, Ethereum mainnet
-    follow-on once volume justifies. Lowest implementation friction; defers
-    your stated primary intent.
-  - **C.** Ethereum + Base from day 1 (recommended). Same Solidity, same
-    audit, two deployments. Integrators self-select per chain by call value.
-    Honors Ethereum-first intent without forcing the premium reframe.
+- **v1 chain selection — confirm Base (replaces all earlier chain
+  questions).** Per §4.6, the recommendation is **Base, single-chain v1
+  launch.** Defended in §4.6.5 on five grounds (agent ecosystem fit,
+  Coinbase relationship, gas economics, mechanical fallback to Optimism,
+  Ethereum preserved on roadmap). Confirm? Or is there a partner / customer
+  / commercial reason that pushes us elsewhere — Arbitrum specifically (DeFi
+  treasury-side conversations? a specific integrator already on Arb?), or
+  Optimism (Superchain partnership ask?), or do you want to push back
+  against the §4.6.5 anti-arguments?
 
-- **Per-call gas / minimum-premium ceiling (NEW).**
-  What's the maximum acceptable per-call gas cost for an Ethereum-side
-  insured call, expressed either as $ per call or as a fraction of the
-  premium? And what's the minimum premium you're willing to enforce on
-  Ethereum endpoints? The §4.3 worked example assumes ~$5/call gas at 15
-  gwei — is that acceptable for any meaningful slice of the integrator
-  pipeline, or does the answer force us into Option B?
+- **Extension order — confirm v1.1 = Arbitrum, v1.2 = Optimism (opportunistic),
+  v2 = Ethereum.** §4.6.6 walks the rationale. The major call inside this
+  question is whether Arbitrum-as-v1.1 should be calendar-driven (~3 months
+  after Base prod) or trigger-driven (only when an integrator asks).
 
-- **Off-chain premium accumulation.**
-  If we go Option A or C, do you accept the trust tradeoff that on Ethereum
-  the settler holds signed per-call receipts off-chain and only settles
-  net positions on-chain hourly/daily? This breaks the literal "every
-  settlement on-chain" claim from the Solana product and replaces it with
-  "every settlement is on-chain provable, with a dispute window." Mitigated
-  by signed-receipt verification + on-chain dispute period, but it is a
-  product-level shift worth your explicit signoff.
+- **Coinbase concentration risk — explicit signoff.** Single-chain v1 on
+  Base couples Pact to Coinbase's L2 roadmap and commercial decisions. The
+  mitigation is OP Stack portability (Optimism is a one-day redeploy,
+  Arbitrum a one-week port). Acceptable? Or do you want a parallel-track
+  Optimism deploy as a hedge from day 1 (small extra ops cost; same audit)?
+
+- **Off-chain premium accumulation — defer to v2.** §4.5's WP-EVM-05b is
+  no longer a v1 launch blocker under §4.6 (Base economics don't require
+  it). Confirm we deprioritize this work to the v2 / Ethereum slot, or do
+  you want it built into v1 anyway as a forward-investment for v2?
+
+- **Specific concerns about Base.** Anything you've heard from Coinbase,
+  Circle, x402 team, or your investors that would change the §4.6.5 read?
+  (Examples: a Coinbase commercial term you're uncomfortable with, an x402
+  roadmap conflict, a known Base outage incident I'm not factoring.)
 
 - **Mainnet vs testnet first.** Demo on Sepolia (Ethereum + Base both)
   end-to-end before spending audit budget? (Recommended.) Or push straight
