@@ -1,0 +1,24 @@
+[profile.default]
+src = "src"
+test = "test"
+script = "script"
+out = "out"
+libs = ["lib"]
+# Arc targets the Prague EVM hard fork (design PR #201 §4.8.4). solc >= 0.8.30
+# is required for the `prague` evm_version.
+solc = "0.8.30"
+evm_version = "prague"
+optimizer = true
+optimizer_runs = 200
+# No external libraries in the WP-EVM-01 scaffold. WP-EVM-02 introduces
+# OpenZeppelin (access control / SafeERC20) and WP-EVM-06 adds forge-std.
+remappings = []
+
+# Arc Testnet RPC. Value comes from .env at deploy time (WP-EVM-07); never
+# committed. Verified endpoint per design §4.8.4.
+[rpc_endpoints]
+arc_testnet = "${ARC_TESTNET_RPC_URL}"
+
+# Contract verification against arcscan: the exact flow (Etherscan-compatible
+# API vs custom) is an unconfirmed residual unknown in design §4.8.4. Wiring
+# is deferred to WP-EVM-07.
