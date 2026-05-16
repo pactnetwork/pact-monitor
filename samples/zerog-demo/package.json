@@ -1,0 +1,21 @@
+{
+  "name": "@pact-network/zerog-demo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "End-to-end Pact-0G demo CLI for the 0G APAC Hackathon. Reads balances, deploys PactCore against XSwap Bridged USDC.e, registers an endpoint, tops up the coverage pool, and settles one call — all in one tsx invocation that produces the artifacts the submission video needs.",
+  "scripts": {
+    "build:contracts": "pnpm --filter @pact-network/protocol-zerog-contracts build",
+    "demo": "pnpm build:contracts && tsx demo.ts"
+  },
+  "dependencies": {
+    "@pact-network/protocol-zerog-client": "workspace:*",
+    "dotenv": "^16.5.0",
+    "viem": "^2.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.4",
+    "typescript": "^5.7.3"
+  }
+}

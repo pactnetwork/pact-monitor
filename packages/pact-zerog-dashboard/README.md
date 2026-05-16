@@ -1,20 +1,35 @@
 # @pact-network/pact-zerog-dashboard
 
-Next.js 15 dashboard for Pact-0G. Tells the demo story end-to-end in 3 minutes.
+Single-page read-only dashboard for the Pact-0G hackathon submission. Pulls `CallSettled` events directly from `PactCore` on **0G Mainnet (Aristotle, chain 16661)** via viem — no indexer, no database, deploys as a static-ish Next.js app to Vercel.
 
-## Status
+## What it shows
 
-🚧 **Skeleton.** Week 3 work.
+- Protocol-state block: deployed `PactCore` address, premium token (USDC.e), latest block height
+- Last 20 settled calls: block, endpoint slug, agent, status (`Settled` / `DelegateFailed` / `PoolDepleted` / `ExposureCapClamped`), premium, refund, 0G Storage evidence link, on-chain tx link
 
-## Panels (locked at Day 17)
+## Run locally
 
-1. **Pool live** — per-endpoint balance, lifetime premiums + refunds + fees. Polls indexer-evm `/api/endpoints`.
-2. **Recent calls** — last 20 settled calls. Each row links to `chainscan.0g.ai/tx/<txHash>` and to the 0G Storage evidence blob (via indexer hydration, not direct SDK).
-3. **Wallet** — wagmi connect, mUSDC balance + allowance, "Top up pool" button (calls `PactCore.topUpCoveragePool`).
-4. **Demo runner** — button that fires N inference calls through `market-proxy-zerog`. Shows banner overlays per 0G component (Chain / Storage / INFT) so judges can't miss them.
+```bash
+cp .env.example .env.local
+# Set PACT_CORE_ADDRESS to the contract printed by the zerog-demo run
+pnpm install
+pnpm dev   # → http://localhost:3000
+```
 
-## Notes
+## Deploy to Vercel
 
-- `@0gfoundation/0g-storage-ts-sdk` is Node-only (uses `fs.appendFileSync`) and **must never** reach the client bundle. The dashboard reads evidence via `indexer-evm`'s REST API. Enforced via `next.config.mjs#serverExternalPackages`.
-- Wallet connect: wagmi + injected (MetaMask) only for hackathon. WalletConnect deferred.
-- No SSR for tx-signing UI — wallet panel is client-side only.
+1. Import the repo into Vercel, set the root to `packages/pact-zerog-dashboard`.
+2. Env vars:
+   - `PACT_CORE_ADDRESS` — deployed PactCore on Aristotle
+   - `ZEROG_RPC_URL` — `https://evmrpc.0g.ai` (or a paid endpoint if rate-limited)
+3. Deploy.
+
+Page re-fetches on-chain state every 15 s (Next.js `revalidate = 15`). No client wallet needed; everything is server-side viem reads.
+
+## Submission link
+
+The deployed Vercel URL is what goes into the HackQuest submission's "Frontend demo link" field.
+
+## Out of scope for the hackathon submission
+
+The earlier skeleton planned wallet connect + a click-to-fire demo runner. Both got cut to ship by the deadline. The CLI at `samples/zerog-demo` drives the demo flow; this page shows the result.
