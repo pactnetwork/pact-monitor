@@ -276,5 +276,30 @@ ALTER TABLE api_keys
 CREATE INDEX IF NOT EXISTS idx_api_keys_beta_applicant
   ON api_keys(beta_applicant_id) WHERE beta_applicant_id IS NOT NULL;
 
+-- Tally questions added 2026-05-15 to mirror the published form at
+-- tally.so/r/9qRXzQ. Inspected from the form's embedded JSON config:
+--   display_name        — short-answer "How can we call you?"
+--   persona             — dropdown "Which of these are you?"
+--                         (AI Agent | API Merchant / AI Agent Merchant)
+--   why_pact            — long-answer "Why are you considering trying out
+--                         Pact Network?" — conditionally shown on the form
+--   willing_to_feedback — checkbox "Would you be willing to provide
+--                         feedback after use? We will give special offers
+--                         to early testers." Stored as TEXT 'true'/'false'/
+--                         NULL rather than BOOLEAN because Tally checkbox
+--                         values arrive boolean and flow through the
+--                         shared stringifyValue helper.
+-- apis_currently_paying already exists from the initial ship. urgency
+-- also exists but isn't asked on the current form — left nullable in case
+-- it returns.
+ALTER TABLE beta_applicants
+  ADD COLUMN IF NOT EXISTS display_name TEXT;
+ALTER TABLE beta_applicants
+  ADD COLUMN IF NOT EXISTS persona TEXT;
+ALTER TABLE beta_applicants
+  ADD COLUMN IF NOT EXISTS why_pact TEXT;
+ALTER TABLE beta_applicants
+  ADD COLUMN IF NOT EXISTS willing_to_feedback TEXT;
+
 CREATE INDEX IF NOT EXISTS idx_agent_flags_status
   ON agent_flags(status, created_at);

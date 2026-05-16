@@ -90,14 +90,35 @@ describe("private beta gate", () => {
     it("accepts a well-signed submission and persists fields", async () => {
       const submissionId = `tally_ok_${randomUUID()}`;
       createdSubmissionIds.push(submissionId);
+      // Labels mirror the published form at tally.so/r/9qRXzQ exactly so
+      // a regex regression in FIELD_MAP fails this test.
       const body = JSON.stringify({
         eventType: "FORM_RESPONSE",
         data: {
           submissionId,
           fields: [
             { key: "what_are_you_building", label: "What are you building?", value: "agent for x402 ops" },
-            { key: "urgency", label: "When would you integrate?", value: "this week" },
+            { key: "how_can_we_call_you", label: "How can we call you?", value: "Cipher" },
             { key: "email", label: "Email", value: "founder@example.com" },
+            { key: "solana_address", label: "Solana Address", value: "DhWibM2z3Vwp5VmJyashoeZCAZHLFKeHab8o12qYsiQc" },
+            { key: "x_handle", label: "Project/Personal X Handle (Link)", value: "https://x.com/cipheragent" },
+            { key: "telegram_handle", label: "Telegram Handle (handle)", value: "@cipheragent" },
+            { key: "which_of_these_are_you", label: "Which of these are you?", value: "AI Agent" },
+            {
+              key: "apis_currently_paying",
+              label: "Which APIs does your agent currently pay for?",
+              value: "Helius, Birdeye",
+            },
+            {
+              key: "why_pact",
+              label: "Why are you considering trying out Pact Network?",
+              value: "automatic refunds when an upstream 5xxes mid-agent-call",
+            },
+            {
+              key: "willing_to_feedback",
+              label: "Would you be willing to provide feedback after use? We will give special offers to early testers.",
+              value: true,
+            },
           ],
         },
       });
@@ -117,17 +138,37 @@ describe("private beta gate", () => {
 
       const row = await getOne<{
         what_building: string;
-        urgency: string;
+        display_name: string;
         email: string;
+        wallet_pubkey: string;
+        x_handle: string;
+        telegram_handle: string;
+        persona: string;
+        apis_currently_paying: string;
+        why_pact: string;
+        willing_to_feedback: string;
         status: string;
       }>(
-        "SELECT what_building, urgency, email, status FROM beta_applicants WHERE id = $1",
+        `SELECT what_building, display_name, email, wallet_pubkey, x_handle,
+                telegram_handle, persona, apis_currently_paying, why_pact,
+                willing_to_feedback, status
+           FROM beta_applicants WHERE id = $1`,
         [json.id],
       );
       assert.ok(row);
       assert.equal(row.what_building, "agent for x402 ops");
-      assert.equal(row.urgency, "this week");
+      assert.equal(row.display_name, "Cipher");
       assert.equal(row.email, "founder@example.com");
+      assert.equal(row.wallet_pubkey, "DhWibM2z3Vwp5VmJyashoeZCAZHLFKeHab8o12qYsiQc");
+      assert.equal(row.x_handle, "https://x.com/cipheragent");
+      assert.equal(row.telegram_handle, "@cipheragent");
+      assert.equal(row.persona, "AI Agent");
+      assert.equal(row.apis_currently_paying, "Helius, Birdeye");
+      assert.equal(
+        row.why_pact,
+        "automatic refunds when an upstream 5xxes mid-agent-call",
+      );
+      assert.equal(row.willing_to_feedback, "true");
       assert.equal(row.status, "pending");
     });
 
