@@ -14,7 +14,7 @@
   },
   "scripts": {
     "generate": "wagmi generate",
-    "prebuild": "pnpm --filter @pact-network/protocol-zerog-contracts build && pnpm generate",
+    "prebuild": "node -e \"process.exit(process.env.VERCEL||process.env.SKIP_FORGE?0:1)\" || (pnpm --filter @pact-network/protocol-zerog-contracts build && pnpm generate)",
     "build": "tsc",
     "clean": "rm -rf dist src/generated",
     "typecheck": "tsc --noEmit",

@@ -33,3 +33,6 @@ scripts/smoke-tier2/.surfpool-data/
 scripts/smoke-tier2/.logs/
 
 .turbo
+
+# Vercel project link (per-machine, references private project id)
+.vercel/

@@ -1,7 +1,10 @@
 import { createPublicClient, http, formatUnits, type Address, type Hex } from 'viem';
 import { pactCoreAbi } from '@pact-network/protocol-zerog-client';
 
-export const revalidate = 15; // re-fetch on-chain state every 15 s
+// Render per request — avoids hitting the 0G RPC during `next build`
+// (which would crash if the chain or env is misconfigured at build time).
+export const dynamic = 'force-dynamic';
+export const revalidate = 15;
 
 const ARISTOTLE = {
   id: 16661,
@@ -12,7 +15,8 @@ const ARISTOTLE = {
 } as const;
 
 const USDC_DECIMALS = 6;
-const PACT_CORE = (process.env.PACT_CORE_ADDRESS ?? '') as Address;
+// trim() — Vercel can append whitespace when env vars are set via stdin
+const PACT_CORE = ((process.env.PACT_CORE_ADDRESS ?? '').trim()) as Address;
 
 const STATUS_LABELS = [
   'Unsettled',
@@ -43,25 +47,28 @@ type CallSettled = {
   blockNumber: bigint;
 };
 
-async function fetchRecentCalls(): Promise<{ calls: CallSettled[]; head: bigint }> {
-  if (!PACT_CORE) return { calls: [], head: 0n };
-  const client = createPublicClient({ chain: ARISTOTLE, transport: http() });
-  const head = await client.getBlockNumber();
-  // Look back ~50k blocks — at 0G's sub-second block time this is roughly a
-  // day of history. Adjust if RPC complains about range size.
-  const fromBlock = head > 50_000n ? head - 50_000n : 0n;
-  const logs = await client.getContractEvents({
-    address: PACT_CORE,
-    abi: pactCoreAbi,
-    eventName: 'CallSettled',
-    fromBlock,
-    toBlock: head,
-  });
-  const calls: CallSettled[] = logs
-    .slice()
-    .reverse()
-    .slice(0, 20)
-    .map((log) => ({
+async function fetchRecentCalls(): Promise<{ calls: CallSettled[]; head: bigint; error: string | null }> {
+  if (!PACT_CORE || !/^0x[0-9a-fA-F]{40}$/.test(PACT_CORE)) {
+    return { calls: [], head: 0n, error: null };
+  }
+  try {
+    const client = createPublicClient({ chain: ARISTOTLE, transport: http() });
+    const head = await client.getBlockNumber();
+    // Look back ~50k blocks — at 0G's sub-second block time this is roughly a
+    // day of history. Adjust if RPC complains about range size.
+    const fromBlock = head > 50_000n ? head - 50_000n : 0n;
+    const logs = await client.getContractEvents({
+      address: PACT_CORE,
+      abi: pactCoreAbi,
+      eventName: 'CallSettled',
+      fromBlock,
+      toBlock: head,
+    });
+    const calls: CallSettled[] = logs
+      .slice()
+      .reverse()
+      .slice(0, 20)
+      .map((log) => ({
       callId: log.args.callId as Hex,
       slug: log.args.slug as Hex,
       agent: log.args.agent as Address,
@@ -73,7 +80,11 @@ async function fetchRecentCalls(): Promise<{ calls: CallSettled[]; head: bigint 
       txHash: log.transactionHash,
       blockNumber: log.blockNumber,
     }));
-  return { calls, head };
+    return { calls, head, error: null };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { calls: [], head: 0n, error: msg };
+  }
 }
 
 function decodeSlug(hex: Hex): string {
@@ -94,7 +105,7 @@ function shortHex(h: string, leading = 6, trailing = 4) {
 const explorer = ARISTOTLE.blockExplorers.default.url;
 
 export default async function Page() {
-  const { calls, head } = await fetchRecentCalls();
+  const { calls, head, error } = await fetchRecentCalls();
 
   return (
     <main
@@ -158,6 +169,21 @@ export default async function Page() {
           <dd style={{ margin: 0 }}>{head.toString()}</dd>
         </dl>
       </section>
+
+      {error && (
+        <div
+          style={{
+            border: '1px solid #C9553D',
+            background: '#fdf2ef',
+            color: '#a83a25',
+            padding: 12,
+            marginBottom: 24,
+            fontSize: 13,
+          }}
+        >
+          RPC error reading from PactCore: {error}
+        </div>
+      )}
 
       <section>
         <h2 style={{ fontSize: 14, textTransform: 'uppercase', letterSpacing: 1, color: '#888' }}>
