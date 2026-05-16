@@ -301,5 +301,169 @@ ALTER TABLE beta_applicants
 ALTER TABLE beta_applicants
   ADD COLUMN IF NOT EXISTS willing_to_feedback TEXT;
 
+-- ============================================================
+-- CRM layer (added 2026-05-15)
+-- Lightweight pipeline tracking on top of beta_applicants. Status stays
+-- the admission gate (pending|approved|rejected — never weakens beyond
+-- those three values). pipeline_stage is the deal-funnel position;
+-- updated_at is auto-maintained by a trigger so "what's stale?" queries
+-- are cheap. crm_activities is the append-only audit log.
+-- ============================================================
+ALTER TABLE beta_applicants
+  ADD COLUMN IF NOT EXISTS pipeline_stage TEXT NOT NULL DEFAULT 'new'
+    CHECK (pipeline_stage IN (
+      'new',         -- just submitted
+      'in_review',   -- ops has eyeballed it
+      'contacted',   -- we've reached out
+      'approved',    -- key issued; mirrors status='approved'
+      'activated',   -- proxy has seen first authenticated call
+      'rejected',    -- we said no
+      'archived'     -- aged out / not pursuing
+    ));
+ALTER TABLE beta_applicants
+  ADD COLUMN IF NOT EXISTS priority TEXT NOT NULL DEFAULT 'normal'
+    CHECK (priority IN ('low', 'normal', 'high'));
+ALTER TABLE beta_applicants
+  ADD COLUMN IF NOT EXISTS next_action TEXT;
+ALTER TABLE beta_applicants
+  ADD COLUMN IF NOT EXISTS last_contacted_at TIMESTAMPTZ;
+ALTER TABLE beta_applicants
+  ADD COLUMN IF NOT EXISTS first_call_at TIMESTAMPTZ;
+ALTER TABLE beta_applicants
+  ADD COLUMN IF NOT EXISTS form_source TEXT NOT NULL DEFAULT 'tally:9qRXzQ';
+ALTER TABLE beta_applicants
+  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+CREATE INDEX IF NOT EXISTS idx_beta_applicants_pipeline
+  ON beta_applicants(pipeline_stage, priority, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_beta_applicants_updated_at
+  ON beta_applicants(updated_at DESC);
+
+-- Auto-maintain updated_at on every UPDATE. Plain BEFORE trigger so a
+-- single UPDATE to any column refreshes the timestamp without the caller
+-- having to remember.
+CREATE OR REPLACE FUNCTION beta_applicants_set_updated_at()
+RETURNS trigger AS $$
+BEGIN
+  NEW.updated_at := NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_beta_applicants_updated_at ON beta_applicants;
+CREATE TRIGGER trg_beta_applicants_updated_at
+  BEFORE UPDATE ON beta_applicants
+  FOR EACH ROW
+  EXECUTE FUNCTION beta_applicants_set_updated_at();
+
+-- Append-only activity log. Every meaningful event on an applicant gets
+-- a row: 'submitted' (auto on apply), 'approved' (auto on approve),
+-- 'stage_changed', 'contacted', 'note_added', 'first_call'. payload is
+-- a free-form JSONB so the kind dictates the shape.
+CREATE TABLE IF NOT EXISTS crm_activities (
+  id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  beta_applicant_id  UUID NOT NULL REFERENCES beta_applicants(id) ON DELETE CASCADE,
+  kind               TEXT NOT NULL
+    CHECK (kind IN (
+      'submitted',
+      'stage_changed',
+      'priority_changed',
+      'contacted',
+      'approved',
+      'rejected',
+      'note_added',
+      'first_call'
+    )),
+  payload            JSONB NOT NULL DEFAULT '{}'::jsonb,
+  actor              TEXT NOT NULL DEFAULT 'system',
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_crm_activities_applicant
+  ON crm_activities(beta_applicant_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_crm_activities_kind
+  ON crm_activities(kind, created_at DESC);
+
+-- ── CRM views (psql is the interface) ───────────────────────
+-- Funnel: applicant counts per stage, ordered along the funnel.
+CREATE OR REPLACE VIEW v_crm_funnel AS
+WITH stage_order(stage, sort_idx) AS (
+  VALUES
+    ('new', 1),
+    ('in_review', 2),
+    ('contacted', 3),
+    ('approved', 4),
+    ('activated', 5),
+    ('rejected', 6),
+    ('archived', 7)
+)
+SELECT
+  s.stage AS pipeline_stage,
+  COALESCE(c.applicant_count, 0) AS applicant_count,
+  COALESCE(c.high_priority_count, 0) AS high_priority_count
+FROM stage_order s
+LEFT JOIN (
+  SELECT
+    pipeline_stage,
+    COUNT(*) AS applicant_count,
+    COUNT(*) FILTER (WHERE priority = 'high') AS high_priority_count
+  FROM beta_applicants
+  GROUP BY pipeline_stage
+) c ON c.pipeline_stage = s.stage
+ORDER BY s.sort_idx;
+
+-- Stuck deals: in a non-terminal stage and not touched in 7+ days.
+-- Terminal stages (rejected, archived, activated) intentionally excluded.
+CREATE OR REPLACE VIEW v_crm_stuck AS
+SELECT
+  id,
+  COALESCE(display_name, email, x_handle, telegram_handle, 'unknown') AS who,
+  pipeline_stage,
+  priority,
+  next_action,
+  submitted_at,
+  updated_at,
+  EXTRACT(DAY FROM NOW() - updated_at)::int AS days_idle
+FROM beta_applicants
+WHERE pipeline_stage IN ('new', 'in_review', 'contacted', 'approved')
+  AND updated_at < NOW() - INTERVAL '7 days'
+ORDER BY priority DESC, updated_at ASC;
+
+-- Recent activity: last 50 events across all applicants for at-a-glance
+-- ops review.
+CREATE OR REPLACE VIEW v_crm_recent AS
+SELECT
+  a.created_at,
+  a.kind,
+  a.actor,
+  a.beta_applicant_id,
+  COALESCE(b.display_name, b.email, b.x_handle, b.telegram_handle, 'unknown') AS who,
+  b.pipeline_stage,
+  a.payload
+FROM crm_activities a
+JOIN beta_applicants b ON b.id = a.beta_applicant_id
+ORDER BY a.created_at DESC
+LIMIT 50;
+
+-- Activation funnel: how many approved keys have actually made a call.
+-- Useful for spotting the gap between "we issued a key" and "they used it".
+CREATE OR REPLACE VIEW v_crm_activation AS
+SELECT
+  COUNT(*) FILTER (WHERE status = 'approved') AS approved_total,
+  COUNT(*) FILTER (WHERE pipeline_stage = 'activated') AS activated_total,
+  CASE
+    WHEN COUNT(*) FILTER (WHERE status = 'approved') = 0 THEN 0
+    ELSE ROUND(
+      100.0 * COUNT(*) FILTER (WHERE pipeline_stage = 'activated')
+            / COUNT(*) FILTER (WHERE status = 'approved'),
+      1
+    )
+  END AS activation_rate_pct,
+  COUNT(*) FILTER (
+    WHERE status = 'approved'
+      AND pipeline_stage <> 'activated'
+      AND approved_at < NOW() - INTERVAL '7 days'
+  ) AS dormant_keys
+FROM beta_applicants;
+
 CREATE INDEX IF NOT EXISTS idx_agent_flags_status
   ON agent_flags(status, created_at);

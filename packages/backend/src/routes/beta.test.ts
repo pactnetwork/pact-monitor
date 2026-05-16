@@ -170,6 +170,28 @@ describe("private beta gate", () => {
       );
       assert.equal(row.willing_to_feedback, "true");
       assert.equal(row.status, "pending");
+
+      // CRM defaults: new applicants land in pipeline_stage='new' with
+      // priority='normal'. The webhook seeds a 'submitted' activity row.
+      const crm = await getOne<{
+        pipeline_stage: string;
+        priority: string;
+        form_source: string;
+      }>(
+        "SELECT pipeline_stage, priority, form_source FROM beta_applicants WHERE id = $1",
+        [json.id],
+      );
+      assert.equal(crm?.pipeline_stage, "new");
+      assert.equal(crm?.priority, "normal");
+      assert.equal(crm?.form_source, "tally:9qRXzQ");
+
+      const submitted = await getOne<{ kind: string; actor: string }>(
+        `SELECT kind, actor FROM crm_activities
+           WHERE beta_applicant_id = $1 AND kind = 'submitted'`,
+        [json.id],
+      );
+      assert.equal(submitted?.kind, "submitted");
+      assert.equal(submitted?.actor, "tally");
     });
 
     it("is idempotent on duplicate submissionId", async () => {
@@ -281,12 +303,31 @@ describe("private beta gate", () => {
       assert.equal(key.status, "active");
       assert.equal(key.beta_applicant_id, id);
 
-      const applicant = await getOne<{ status: string; note: string }>(
-        "SELECT status, note FROM beta_applicants WHERE id = $1",
+      const applicant = await getOne<{
+        status: string;
+        note: string;
+        pipeline_stage: string;
+      }>(
+        "SELECT status, note, pipeline_stage FROM beta_applicants WHERE id = $1",
         [id],
       );
       assert.equal(applicant?.status, "approved");
       assert.equal(applicant?.note, "ack");
+      assert.equal(
+        applicant?.pipeline_stage,
+        "approved",
+        "approve flow must move pipeline_stage to 'approved'",
+      );
+
+      // CRM activity log gets a row inside the same transaction as the
+      // status flip — so seeing 'approved' here proves the COMMIT path ran.
+      const activity = await getOne<{ kind: string; actor: string }>(
+        `SELECT kind, actor FROM crm_activities
+           WHERE beta_applicant_id = $1 AND kind = 'approved'`,
+        [id],
+      );
+      assert.equal(activity?.kind, "approved");
+      assert.equal(activity?.actor, "admin");
     });
 
     it("rejects double-approval with 409", async () => {

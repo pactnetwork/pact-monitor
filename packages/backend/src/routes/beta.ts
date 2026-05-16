@@ -225,6 +225,23 @@ export async function betaRoutes(app: FastifyInstance): Promise<void> {
       ],
     );
 
+    // Seed the CRM activity log so v_crm_recent surfaces this applicant
+    // immediately. payload captures the inputs that went on the row so the
+    // log stays useful even after later edits to beta_applicants.
+    await query(
+      `INSERT INTO crm_activities (beta_applicant_id, kind, payload, actor)
+       VALUES ($1, 'submitted', $2::jsonb, 'tally')`,
+      [
+        id,
+        JSON.stringify({
+          submissionId,
+          persona: applicant.persona,
+          what_building: applicant.what_building,
+          willing_to_feedback: applicant.willing_to_feedback,
+        }),
+      ],
+    );
+
     const contact =
       applicant.email || applicant.x_handle || applicant.telegram_handle || "(no contact)";
     const lines = [

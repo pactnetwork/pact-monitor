@@ -490,9 +490,24 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
       );
       await client.query(
         `UPDATE beta_applicants
-           SET status = 'approved', approved_at = NOW(), note = COALESCE($1, note)
+           SET status = 'approved',
+               pipeline_stage = 'approved',
+               approved_at = NOW(),
+               note = COALESCE($1, note)
            WHERE id = $2`,
         [body.note ?? null, applicant.id],
+      );
+      await client.query(
+        `INSERT INTO crm_activities (beta_applicant_id, kind, payload, actor)
+         VALUES ($1, 'approved', $2::jsonb, 'admin')`,
+        [
+          applicant.id,
+          JSON.stringify({
+            keyId: inserted.rows[0]?.id ?? null,
+            label,
+            note: body.note ?? null,
+          }),
+        ],
       );
       await client.query("COMMIT");
       keyId = inserted.rows[0]?.id ?? null;
