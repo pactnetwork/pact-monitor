@@ -201,19 +201,64 @@ Read-only Next.js page that pulls `CallSettled` events directly from `PactCore` 
 
 Auto-refreshes every 15 s via Next.js ISR.
 
-### CLI — `samples/zerog-demo/`
+### `pact-0g` CLI — agent-perspective demo
 
-One-shot end-to-end demo. Reads balances, deploys `PactCore` (or reuses an existing one), approves, registers an endpoint, tops up the coverage pool, settles a non-breach call + a breach call, then prints the **Submission Artifacts block** with every tx hash.
+The CLI at `samples/zerog-demo/cli.ts` is the one you'll record for the video. It mirrors the shape of the Solana `pact pay` CLI: subcommands, agent-eye output, balance deltas in human terms. Two wallets — one acting as the **agent** (holds USDC.e, signs `approve`), one as the **settler** (signs `settleBatch` on the agent's behalf).
 
 ```bash
 cd samples/zerog-demo
-cp .env.example .env
-# Edit DEPLOYER_PK — needs ~5 $0G for gas + ~1 USDC.e for the demo
-pnpm install
-pnpm demo
+
+pnpm pact-0g balance         # agent's $0G + USDC.e + allowance to PactCore
+pnpm pact-0g endpoint        # demo-chat: premium 0.01, SLO 5000ms, lifetime stats
+pnpm pact-0g pool            # coverage pool balance available for refunds
+pnpm pact-0g pay --breach    # THE MONEY SHOT — insured call, refund auto-paid
 ```
 
-Idempotent: re-runs skip already-completed steps and just settle a fresh pair of calls.
+Output of `pay --breach` (verified live on mainnet):
+
+```
+  Pact-0G — insured call to "demo-chat"
+  ──────────────────────────────────────────────────────────────────────
+  [agent    ] 0x8F6Cb2179d0185cF0E4Dd27b3EA51781E3FF77B2
+  [balance  ] 0.05 USDC.e
+  [endpoint ] demo-chat (0.01 USDC.e / call, 5000ms SLO)
+
+  [call     ] POST /v1/demo-chat/chat
+  [response ] HTTP 503 (12000ms > SLO → BREACH)
+
+  [classifier] breach=true → refund
+  [settle   ] 0xe690…3947  https://chainscan.0g.ai/tx/0xe690275259f...
+  [premium  ] -0.01 USDC.e (debited from agent)
+  [refund   ] +0.01 USDC.e (paid from coverage pool)
+  [balance  ] 0.05 USDC.e   Δ ±0
+
+  [insight] Without Pact: -0.01 USDC.e for a call that failed its SLA.
+            With Pact:    0 USDC.e — protocol refunded you 0.01.
+```
+
+That `[insight]` line is the whole product in one sentence.
+
+### Lifecycle reproducer — `samples/zerog-demo/demo.ts`
+
+If you need to reproduce the full protocol lifecycle from scratch (deploy, approve, register, top up, settle), run `pnpm demo`. It's idempotent — re-runs skip completed steps.
+
+### Run the demo through Claude Code
+
+A project-local skill at `.claude/skills/pact-0g-demo/` walks Claude through the pre-flight + 3-command demo flow, captures the fresh tx hash, and emits paste-ready X-post copy. Invoke with `/pact-0g-demo` once the user runs `claude` inside the repo.
+
+---
+
+## Live mainnet artifacts via the CLI
+
+In addition to the lifecycle batch above, the CLI has settled three more calls on Aristotle as live verification:
+
+| CLI command | Tx hash | Outcome |
+|---|---|---|
+| `pact-0g approve` (agent → PactCore max allowance) | [`0x4b2dcc0e…7956`](https://chainscan.0g.ai/tx/0x4b2dcc0e6046b74bd4a8c9439b37353f14e060318a073281aa309f45a3977956) | success |
+| `pact-0g pay --breach` (agent: ±0 net) | [`0xe6902752…3947`](https://chainscan.0g.ai/tx/0xe690275259f6a3ae4e5451509f928a0a6f9be1e2119e1bb2aef7acc57ee33947) | breach refunded |
+| `pact-0g pay` (success path, agent: -0.01) | [`0x8a50c9e7…94bc`](https://chainscan.0g.ai/tx/0x8a50c9e7f8d90b1476f156f2f599ef0324218440ea2fc7e5d8ac7393f42a94bc) | premium only |
+
+Each is signed by two different wallets (agent `0x8F6C…77B2` calls `approve`; settler `0xAD09…8Fc7` calls `settleBatch`) — explicit on-chain proof of the production-shape two-party model.
 
 ---
 
