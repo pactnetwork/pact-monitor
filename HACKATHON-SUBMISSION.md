@@ -3,25 +3,158 @@
 **Pact-0G** is on-chain reliability insurance for AI agent API calls, deployed on **0G Mainnet (Aristotle, chain 16661)**. Agents pay a small premium per inference call to 0G Compute; on SLA breach the protocol refunds the agent from a coverage pool seeded by integrators. Every settlement is on-chain with explicit per-recipient fee splits, and evidence blobs land on 0G Storage.
 
 - **Track:** Track 3 — Agentic Economy & Autonomous Applications
-- **Submission deadline:** 2026-05-16, 23:59 UTC+8
+- **Submission deadline:** 2026-05-16, 15:59 (UTC+8, per Schedule tab)
 - **Status:** code shipped + mainnet deployed + dashboard live. Video / X post / form submission pending.
+- **Live mirror of this doc in grant-applications:** open `dev/docs/grant-applications/index.html` (entry `0g-apac-hackathon`) — every field has a one-click Copy button there.
 
 ---
 
-## Paste-ready submission form fields
+## Form fields → on-page mapping
+
+Inspected the public layout at https://www.hackquest.io/projects/ClawGuard. Screenshots in [`docs/submission-screenshots/`](./docs/submission-screenshots/). This is what HackQuest collects:
+
+| HackQuest field | Where it shows on the project page | Status |
+|---|---|---|
+| Project name | Header h1 | ✅ ready |
+| Logo | Header avatar (square, ~100px) | ⚠️ upload `landing/dist/logo-mark-dark.png` |
+| Short description | Header subtitle (≤30 words, one line) | ✅ ready |
+| Tech Stack tags | Tag chips below the demo video | ✅ ready |
+| Description (markdown) | Long body — headings, bullets, links | ✅ ready |
+| Progress During Hackathon | Bullet milestones | ✅ ready |
+| Demo Video URL | Embedded under Videos | ❌ TODO — record 3 min, upload YouTube |
+| Project Links | Right-rail icons (GitHub, deploy URL) | ✅ ready |
+| Prize Track | Right-rail badge | ✅ ready (Track 3) |
+| Sector | Right-rail badge | ✅ ready (Infra, AI, DeFi) |
+| Team Leader + Members | Team tab | ✅ ready |
+| Checkpoints / Milestones | Checkpoints tab — optional | optional |
+
+## Paste-ready field blocks
+
+Each block matches one HackQuest form field. Open the same doc in the grant-applications platform for one-click copy of every block — `dev/docs/grant-applications/index.html`, entry `0g-apac-hackathon`.
+
+<!-- field: Project name -->
+Pact-0G
+<!-- /field -->
+
+<!-- field: Short description (≤30 words) -->
+On-chain reliability insurance for AI agent API calls. Agents pay a premium to 0G Compute; SLA breach refunds them from a coverage pool. Settled on 0G Chain, evidence on 0G Storage.
+<!-- /field -->
+
+<!-- field: Tech Stack tags -->
+Solidity, TypeScript, viem, Next.js, Hono, NestJS, Foundry, 0G Chain, 0G Storage, 0G Compute, Chainlink CCIP
+<!-- /field -->
+
+<!-- field: Prize Track -->
+Track 3 — Agentic Economy & Autonomous Applications
+<!-- /field -->
+
+<!-- field: Sector -->
+Infra, AI, DeFi
+<!-- /field -->
+
+<!-- field: GitHub repo -->
+https://github.com/pactnetwork/pact-monitor/tree/feat/pact-0g
+<!-- /field -->
+
+<!-- field: Submission tag (frozen) -->
+https://github.com/pactnetwork/pact-monitor/releases/tag/0g-apac-hackathon-2026-05-16
+<!-- /field -->
+
+<!-- field: 0G mainnet contract address -->
+0xc702c3f93f73847d93455f5bd8023329a8118b7f
+<!-- /field -->
+
+<!-- field: 0G Explorer link (on-chain activity) -->
+https://chainscan.0g.ai/tx/0x218aa729d6f40236be617c946e9e20ee0a1726e38868c1d93ca12b93e6e14f37
+<!-- /field -->
+
+<!-- field: Frontend demo URL -->
+https://pact-zerog-dashboard.vercel.app
+<!-- /field -->
+
+<!-- field: Contact email -->
+rick@quantum3labs.com
+<!-- /field -->
+
+<!-- field: Contact Telegram -->
+t.me/metalboyrick
+<!-- /field -->
+
+<!-- field: Team Leader -->
+Richard Sulisthio (metalboyrick) — Founder & CEO, Quantum3 Labs. Tsinghua CS (2022). Previously Tokopedia, Pixelmon, Gaspack. Built Pact Network's Solana mainnet stack.
+<!-- /field -->
+
+<!-- field: Team Members -->
+- Richard Sulisthio (metalboyrick) — Founder & CEO. Strategy, fundraising.
+- Alan — Founding Engineer. Owns contracts and backend.
+- Ken Nguyen — Hackathon contributor. Day-0/1 spike validation, package scaffolding.
+<!-- /field -->
+
+<!-- field: Description (long, markdown) -->
+**Pact-0G is the insurance layer for AI agent API calls on 0G.**
+
+Agents that call 0G Compute today have no recourse when a provider degrades. A breached SLA still gets billed, the agent eats the loss, and nobody on-chain knows it happened. Pact fixes that.
+
+How it works:
+
+1. An endpoint registers on `PactCore` with a flat premium, SLO (e.g. 5s latency), and exposure cap.
+2. Integrators top up a per-endpoint **coverage pool** with real USDC.e.
+3. Agents call the endpoint via `market-proxy-zerog`. The proxy charges a premium per call, classifies the response against the SLO, and emits a `SettlementEvent`.
+4. `settler-evm` batches events, uploads the per-call evidence blob to **0G Storage**, and submits `settleBatch` on **0G Chain**.
+5. On success: the premium splits per fee config (Treasury + Affiliates + residual to pool). On breach: the agent gets refunded from the coverage pool, clamped by the hourly exposure cap.
+
+Real USDC.e moves through the protocol — we point at the canonical [XSwap Bridged USDC](https://chainscan.0g.ai/address/0x1f3AA82227281cA364bFb3d253B0f1af1Da6473E), not a mock.
+
+**Why it matters:** the agentic economy needs payment trust layers, not just rails. Pact gives 0G Compute consumers a money-back guarantee, makes provider reliability priceable on-chain, and lets integrators bundle insurance into their UX without writing their own claims logic.
+
+This is a real product. The team runs the equivalent stack on Solana mainnet today at `market.pactnetwork.io`. The 0G port is product expansion, not a hackathon-only build.
+
+**0G components used (three of five):** 0G Chain (PactCore + settle_batch), 0G Storage (per-call evidence rootHash), 0G Compute (insured via market-proxy-zerog).
+<!-- /field -->
+
+<!-- field: Progress During Hackathon -->
+- **Day 0–1 (2026-05-15):** Validated 0G stack assumptions with throwaway spikes — Foundry deploys with `cancun` on Galileo, `@0gfoundation/0g-storage-ts-sdk` round-trips with deterministic rootHash, `@0gfoundation/0g-compute-ts-sdk` discovery passes. Full numbers in `spikes/RESULTS.md`.
+- **Day 1–2 (2026-05-15 → 16):** Scaffolded 9 new packages — Solidity contracts (54/54 tests, 100% coverage), viem client, storage + compute typed wrappers, market-proxy, settler, indexer, dashboard. 184 files, ~21K insertions.
+- **Day 2:** Researched the canonical stablecoin on 0G mainnet — confirmed XSwap Bridged USDC.e via Chainlink CCIP at `0x1f3A…473E` (6 decimals, ~1.7M circulating supply). USDT0 doesn't support 0G yet. Wired the mainnet deploy to point at the real token instead of MockUsdc.
+- **Day 2:** Deployed `PactCore` to 0G mainnet (Aristotle 16661), registered `demo-chat` endpoint, topped up the coverage pool with 0.5 USDC.e, settled a 2-call batch (1 non-breach + 1 breach with 0.01 USDC.e refund). [Live mainnet evidence](https://chainscan.0g.ai/tx/0x218aa729d6f40236be617c946e9e20ee0a1726e38868c1d93ca12b93e6e14f37).
+- **Day 2:** Shipped the read-only dashboard to Vercel — https://pact-zerog-dashboard.vercel.app — reads `CallSettled` events directly from PactCore via viem, no indexer needed.
+- **Cuts (honest list):** ERC-7857 INFT integration deferred. Dashboard wallet-connect + demo-runner button cut. `forge verify` against `chainscan.0g.ai/open/api` unresolved (Sourcify fallback documented). The demo CLI uses a synthetic evidence rootHash instead of a real 0G Storage upload — production settler-evm does the upload.
+<!-- /field -->
+
+<!-- field: Demo Video URL -->
+TODO — record 3 min showing: (1) `pnpm demo` running with real on-chain output, (2) the dashboard at pact-zerog-dashboard.vercel.app rendering the settled calls, (3) the chainscan settle tx page. Upload to YouTube or Loom unlisted.
+<!-- /field -->
+
+<!-- field: X post (mandatory) -->
+TODO — post with `#0GHackathon #BuildOn0G` and tag `@0G_labs @0g_CN @0g_Eco @HackQuest_`. Include a screenshot of the dashboard showing the live settled calls.
+
+Suggested copy:
+
+> Just shipped Pact-0G to 0G mainnet for the @HackQuest_ 0G APAC Hackathon.
+>
+> Insurance for AI agent API calls — agents pay a premium to 0G Compute, get refunded automatically when calls breach SLA. Settled on @0G_labs Chain, evidence on 0G Storage.
+>
+> Live settled call: chainscan.0g.ai/tx/0x218aa729…
+> Dashboard: pact-zerog-dashboard.vercel.app
+> Repo: github.com/pactnetwork/pact-monitor/tree/feat/pact-0g
+>
+> #0GHackathon #BuildOn0G @0g_CN @0g_Eco
+<!-- /field -->
+
+## Quick reference table (for skim-reading)
 
 | Field | Value |
 |---|---|
-| **Project name** | Pact-0G |
-| **One-line description** | On-chain reliability insurance for AI agent API calls — refunds agents from a per-endpoint coverage pool when 0G Compute calls breach SLO. |
-| **Project repo** | https://github.com/pactnetwork/pact-monitor/tree/feat/pact-0g |
-| **Submission tag (frozen)** | https://github.com/pactnetwork/pact-monitor/releases/tag/0g-apac-hackathon-2026-05-16 |
-| **0G mainnet contract address** | `0xc702c3f93f73847d93455f5bd8023329a8118b7f` |
-| **0G Explorer link (on-chain activity)** | https://chainscan.0g.ai/tx/0x218aa729d6f40236be617c946e9e20ee0a1726e38868c1d93ca12b93e6e14f37 |
-| **Frontend demo URL** | https://pact-zerog-dashboard.vercel.app |
-| **PR with full context** | https://github.com/pactnetwork/pact-monitor/pull/206 |
-| **Contact email** | rick@quantum3labs.com |
-| **Contact Telegram** | t.me/metalboyrick |
+| Project name | Pact-0G |
+| One-liner | Insurance for AI agent API calls on 0G — refunds agents when calls breach SLA |
+| Project repo | https://github.com/pactnetwork/pact-monitor/tree/feat/pact-0g |
+| Submission tag (frozen) | https://github.com/pactnetwork/pact-monitor/releases/tag/0g-apac-hackathon-2026-05-16 |
+| 0G mainnet contract address | `0xc702c3f93f73847d93455f5bd8023329a8118b7f` |
+| 0G Explorer link (activity) | https://chainscan.0g.ai/tx/0x218aa729d6f40236be617c946e9e20ee0a1726e38868c1d93ca12b93e6e14f37 |
+| Frontend demo | https://pact-zerog-dashboard.vercel.app |
+| PR with full context | https://github.com/pactnetwork/pact-monitor/pull/206 |
+| Contact email | rick@quantum3labs.com |
+| Contact Telegram | t.me/metalboyrick |
 
 ---
 
@@ -202,8 +335,23 @@ Hot key — do not reuse beyond the submission. Rotate to a multisig before trea
 
 ---
 
+## Reference screenshots
+
+Captured from hackquest.io 2026-05-16. Stored in [`docs/submission-screenshots/`](./docs/submission-screenshots/):
+
+| File | What it shows |
+|---|---|
+| `hackquest-overview.png` | Hackathon overview page |
+| `hackquest-prizes.png` | $150K prize breakdown |
+| `hackquest-schedule.png` | Submission deadline 2026-05-16, 15:59 |
+| `hackquest-resource.png` | 0G core component descriptions |
+| `hackquest-gallery.png` | Existing submissions (ClawGuard, Vericast, WRAITH) |
+| `hackquest-project-tall.png` | Full ClawGuard project page — what our submission will look like |
+| `hackquest-checkpoints.png` | Checkpoints tab layout |
+| `hackquest-register.png` | Sign-in wall — form fields require login to access directly |
+
 ## Still to do before submission close
 
 1. Record 3-minute demo video — show `pnpm demo`, then the dashboard, then the chainscan settle tx
 2. Post on X with the four mandatory hashtags + four mandatory tags
-3. Submit via the [HackQuest form](https://www.hackquest.io/hackathons/0G-APAC-Hackathon) using the table at the top of this doc
+3. Submit via the [HackQuest form](https://www.hackquest.io/hackathons/0G-APAC-Hackathon) using the field blocks above (each has paste-ready content)

@@ -36,3 +36,4 @@ scripts/smoke-tier2/.logs/
 
 # Vercel project link (per-machine, references private project id)
 .vercel/
+.gstack/
