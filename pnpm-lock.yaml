@@ -1026,6 +1026,12 @@ importers:
       '@pact-network/protocol-zerog-client':
         specifier: workspace:*
         version: link:../../packages/protocol-zerog-client
+      '@pact-network/zerog-compute-client':
+        specifier: workspace:*
+        version: link:../../packages/zerog-compute-client
+      cac:
+        specifier: ^6.7.14
+        version: 6.7.14
       dotenv:
         specifier: ^16.5.0
         version: 16.6.1

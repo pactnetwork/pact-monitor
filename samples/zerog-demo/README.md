@@ -1,8 +1,26 @@
-# Pact-0G end-to-end demo
+# Pact-0G demo CLIs
 
-End-to-end CLI for the [0G APAC Hackathon](https://www.hackquest.io/hackathons/0G-APAC-Hackathon) submission. Runs on **0G mainnet (Aristotle, chain 16661)** against the real [XSwap Bridged USDC.e](https://chainscan.0g.ai/address/0x1f3AA82227281cA364bFb3d253B0f1af1Da6473E).
+Two CLIs for the [0G APAC Hackathon](https://www.hackquest.io/hackathons/0G-APAC-Hackathon) submission, both running on **0G mainnet (Aristotle, chain 16661)** against the real [XSwap Bridged USDC.e](https://chainscan.0g.ai/address/0x1f3AA82227281cA364bFb3d253B0f1af1Da6473E):
 
-## What it does
+- **`pact-0g`** (cli.ts) — agent-facing UX. Subcommands: `balance`, `approve`, `endpoint`, `pool`, `pay [--breach]`. Mirrors the shape of the Solana `pact pay` CLI. Use this for the demo video — it shows the protocol from an agent's perspective with balance deltas in human terms.
+- **`pnpm demo`** (demo.ts) — protocol-side end-to-end. Reads balances, deploys/reuses PactCore, approves, registers an endpoint, tops up the coverage pool, settles two calls. Use this for first-time setup or to reproduce the full lifecycle from scratch.
+
+## `pact-0g` CLI quickstart
+
+```bash
+pnpm pact-0g balance         # agent's $0G + USDC.e + allowance
+pnpm pact-0g approve         # one-time: agent approves PactCore to debit USDC.e
+pnpm pact-0g endpoint        # demo-chat config + lifetime stats
+pnpm pact-0g pool            # coverage pool balance
+pnpm pact-0g pay             # insured call, success path (agent: -premium)
+pnpm pact-0g pay --breach    # insured call, breach path (agent: -premium +refund = ±0)
+```
+
+`pact-0g pay` is the moneymaker. Output shows the agent's USDC.e balance before and after the on-chain settle, the premium debited, the refund credited (if breach), and an insight line in human terms for the demo voice-over.
+
+The CLI uses two wallets: an **agent** (holds USDC.e, signs `approve()`) and a **settler** (signs `settleBatch` on the agent's behalf). In production these are owned by different parties; for hackathon scope both private keys live in the same `.env`.
+
+## `pnpm demo` — protocol lifecycle
 
 One `tsx` invocation that prints, in order:
 

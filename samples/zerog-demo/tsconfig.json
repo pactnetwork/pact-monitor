@@ -9,5 +9,5 @@
     "strict": true,
     "noEmit": true
   },
-  "include": ["demo.ts"]
+  "include": ["demo.ts", "cli.ts"]
 }
