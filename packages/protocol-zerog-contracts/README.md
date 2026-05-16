@@ -52,18 +52,45 @@ forge fmt
 
 Current coverage gate (PactCore + MockUsdc + Faucet): **100% lines, branches, functions.**
 
-## Deploy (Galileo testnet)
+## Deploy
+
+The deploy script has two modes, chosen by chain id + env:
+
+### Mainnet (Aristotle, chain 16661) — real USDC
+
+`PactCore` is wired to **XSwap Bridged USDC** (`USDC.e`, 6 decimals,
+[`0x1f3aA82227281Ca364bfb3D253b0F1af1da6473e`](https://chainscan.0g.ai/address/0x1f3aA82227281Ca364bfb3D253b0F1af1da6473e)).
+This is the canonical bridged USDC on 0G mainnet, supplied via XSwap's
+[Chainlink CCIP](https://docs.chain.link/ccip/directory/mainnet/chain/0g-mainnet)
+lockbox from Ethereum L1. Verified live on the Aristotle RPC 2026-05-16 (name
+`Bridged USDC`, symbol `USDC.e`, ~1.7M circulating supply).
 
 ```bash
 cp .env.example .env
 # Required: DEPLOYER_PK
-# Optional: ADMIN_ADDR, SETTLER_ADDR, TREASURY_ADDR (default: deployer)
-# Optional: FAUCET_DRIP_AMOUNT (default 1000e6), FAUCET_COOLDOWN_SECONDS (default 86400)
-
-forge script script/Deploy.s.sol:Deploy --rpc-url $RPC_URL --broadcast
+# Optional: ADMIN_ADDR, SETTLER_ADDR, TREASURY_ADDR
+# Optional: USDC_ADDR — override the default Aristotle USDC for custom deploys
+forge script script/Deploy.s.sol:Deploy --rpc-url https://evmrpc.0g.ai --broadcast
 ```
 
-The script deploys in this order:
+No `MockUsdc` or `MockUsdcFaucet` is deployed in this mode. Real USDC flows
+from XSwap → agent wallet → `PactCore.transferFrom` debit → coverage pool.
+
+**Why not USDT?** Checked 2026-05-16: USDT0 (LayerZero's omnichain USDT) is
+deployed on 23 chains, but **0G Chain is not one of them**. No XSwap Bridged
+USDT exists either. USDC is the only canonical stablecoin on Aristotle today.
+
+### Testnet (Galileo, chain 16602) — mock USDC + faucet
+
+When no `USDC_ADDR` is set and the chain id isn't Aristotle, the script
+deploys the demo stack so anyone can claim test balances:
+
+```bash
+forge script script/Deploy.s.sol:Deploy --rpc-url https://evmrpc-testnet.0g.ai --broadcast
+# Optional: FAUCET_DRIP_AMOUNT (default 1000e6), FAUCET_COOLDOWN_SECONDS (default 86400)
+```
+
+Deploys in this order:
 1. `MockUsdc(deployer)` — deployer owns initially so test setup can mint
 2. `MockUsdcFaucet(usdc, drip, cooldown)`
 3. `usdc.transferOwnership(faucet)` — only faucet can mint from here on
@@ -131,9 +158,10 @@ When deploys happen, pin the addresses here so off-chain packages can import the
 | Contract | Address (Galileo testnet, chain 16602) | Address (Aristotle mainnet, chain 16661) |
 |---|---|---|
 | `PactCore` | TBD | TBD |
-| `MockUsdc` | TBD | TBD |
-| `MockUsdcFaucet` | TBD | TBD |
+| `MockUsdc` | TBD | not deployed — uses real USDC.e |
+| `MockUsdcFaucet` | TBD | not deployed — uses XSwap bridge |
 | `EndpointINFT` | TBD | TBD |
 | `AlwaysOkVerifier` | TBD | TBD |
+| Premium token (real) | n/a (mock) | `0x1f3aA82227281Ca364bfb3D253b0F1af1da6473e` (XSwap Bridged USDC) |
 
 Verification status: TBD.

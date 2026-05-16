@@ -96,7 +96,7 @@ export async function initContext(
 
   const balanceCheck = createErc20BalanceCheck({
     publicClient: read.publicClient,
-    token: env.MOCK_USDC_ADDRESS,
+    token: env.USDC_ADDRESS,
     spender: env.PACT_CORE_ADDRESS,
   });
   const sink = createPubSubSink(env.PUBSUB_PROJECT, env.PUBSUB_TOPIC);

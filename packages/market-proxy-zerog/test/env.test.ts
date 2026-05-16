@@ -9,7 +9,7 @@ const base: NodeJS.ProcessEnv = {
   ZEROG_RPC_URL: 'https://evmrpc-testnet.0g.ai',
   ZEROG_CHAIN_ID: '16602',
   PACT_CORE_ADDRESS: PACT,
-  MOCK_USDC_ADDRESS: USDC,
+  USDC_ADDRESS: USDC,
   ZEROG_COMPUTE_PRIVATE_KEY: PK,
   PUBSUB_PROJECT: 'proj',
   PUBSUB_TOPIC: 'topic',

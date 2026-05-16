@@ -4,8 +4,13 @@ import type { BalanceCheck, BalanceCheckResult } from '@pact-network/wrap';
 
 /**
  * EVM substitute for wrap's Solana SPL `BalanceCheck`. Settlement debits the
- * agent via `PactCore.settleBatch` → `MockUsdc.transferFrom(agent, …)`, so a
- * call is only insurable if the agent BOTH holds the premium AND has approved
+ * agent via `PactCore.settleBatch` → `IERC20(usdc).transferFrom(agent, …)`,
+ * where `usdc` is `MockUsdc` on Galileo testnet or the XSwap Bridged USDC.e
+ * (0x1f3aA82227281Ca364bfb3D253b0F1af1da6473e) on Aristotle mainnet. Both
+ * conform to the ERC-20 ABI exposed by `mockUsdcAbi`, so the same balance/
+ * allowance check works in either mode.
+ *
+ * A call is only insurable if the agent BOTH holds the premium AND has approved
  * `PactCore` (the spender) for at least it. wrap calls this with
  * `required = endpointConfig.flat_premium_lamports` (the Wei premium);
  * refunds come from the pool, never the agent, so premium-only is correct

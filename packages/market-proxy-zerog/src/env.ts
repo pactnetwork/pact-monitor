@@ -19,7 +19,10 @@ const Env = z.object({
   ZEROG_RPC_URL: z.string().url(),
   ZEROG_CHAIN_ID: z.coerce.number().int().positive(),
   PACT_CORE_ADDRESS: addr,
-  MOCK_USDC_ADDRESS: addr,
+  // Premium token address. On Galileo testnet this is MockUsdc; on Aristotle
+  // mainnet (16661) this is XSwap Bridged USDC.e
+  // (0x1f3aA82227281Ca364bfb3D253b0F1af1da6473e).
+  USDC_ADDRESS: addr,
 
   // --- 0G Compute broker wallet (SEPARATE key from settler's authority) ---
   ZEROG_COMPUTE_PRIVATE_KEY: z
