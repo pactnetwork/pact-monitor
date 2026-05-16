@@ -72,9 +72,15 @@ const USDC_ADDRESS = required('USDC_ADDRESS') as Address;
 const PACT_CORE_PRESET = process.env.PACT_CORE_ADDRESS as Address | undefined;
 
 const account = privateKeyToAccount(DEPLOYER_PK);
-const transport = http(RPC_URL);
+const transport = http(RPC_URL, { timeout: 30_000 });
 const publicClient = createPublicClient({ chain: ARISTOTLE, transport });
 const walletClient = createWalletClient({ account, chain: ARISTOTLE, transport });
+
+// 0G mainnet receipts can take 10–20 s to propagate; viem's 60s default
+// trips intermittently. Give it 3× headroom.
+const RECEIPT_TIMEOUT = 180_000;
+const waitTx = (hash: Hex) =>
+  publicClient.waitForTransactionReceipt({ hash, timeout: RECEIPT_TIMEOUT });
 
 // ─────────────────────────────────────────────────────────────────────────
 // Pretty output
@@ -190,74 +196,113 @@ async function main() {
       args: [account.address, account.address, account.address, USDC_ADDRESS],
     });
     console.log(`  deploy tx:   ${explorerTx(deployTx)}`);
-    const receipt = await publicClient.waitForTransactionReceipt({ hash: deployTx });
+    const receipt = await waitTx(deployTx);
     if (!receipt.contractAddress) throw new Error('PactCore deploy returned no contractAddress');
     pactCore = receipt.contractAddress;
     console.log(`  PactCore:    ${explorerAddr(pactCore)}`);
   }
 
-  // ── 3. Approve PactCore to spend USDC.e ────────────────────────────────
-  STAGE(3, 6, `Approving PactCore to spend ${usdcSymbol} (max)`);
-  const approveTx = await walletClient.writeContract({
+  // ── 3. Approve PactCore to spend USDC.e (idempotent — skip if already max-approved) ─
+  STAGE(3, 6, `Approving PactCore to spend ${usdcSymbol}`);
+  const currentAllowance = await publicClient.readContract({
     address: USDC_ADDRESS,
     abi: ERC20_ABI,
-    functionName: 'approve',
-    args: [pactCore, 2n ** 256n - 1n],
+    functionName: 'allowance',
+    args: [account.address, pactCore],
   });
-  await publicClient.waitForTransactionReceipt({ hash: approveTx });
-  console.log(`  approve tx:  ${explorerTx(approveTx)}`);
+  let approveTx: Hex | null = null;
+  if (currentAllowance >= POOL_TOPUP * 100n) {
+    console.log(`  approve tx:  (skipped — current allowance ${formatUnits(currentAllowance, USDC_DECIMALS)} is plenty)`);
+  } else {
+    approveTx = await walletClient.writeContract({
+      address: USDC_ADDRESS,
+      abi: ERC20_ABI,
+      functionName: 'approve',
+      args: [pactCore, 2n ** 256n - 1n],
+    });
+    await waitTx(approveTx);
+    console.log(`  approve tx:  ${explorerTx(approveTx)}`);
+  }
 
-  // ── 4. Register endpoint ───────────────────────────────────────────────
+  // ── 4. Register endpoint (idempotent — re-runs skip if already registered) ─
   STAGE(4, 6, 'Registering endpoint "demo-chat"');
   const slug = slug16('demo-chat');
-  const registerTx = await walletClient.writeContract({
+  const existingCfg = await publicClient.readContract({
     address: pactCore,
     abi: pactCoreAbi,
-    functionName: 'registerEndpoint',
-    args: [
-      slug,
-      {
-        agentTokenId: 0n,
-        flatPremium: PREMIUM,
-        percentBps: 0,
-        imputedCost: 0n,
-        latencySloMs: 5_000,
-        exposureCapPerHour: 1_000_000n,
-        currentPeriodStart: 0n,
-        currentPeriodRefunds: 0n,
-        totalCalls: 0n,
-        totalBreaches: 0n,
-        totalPremiums: 0n,
-        totalRefunds: 0n,
-        lastUpdated: 0n,
-        paused: false,
-        exists: false,
-      },
-      [
-        // Treasury at 10% — receives ~10% of every premium, rest residual to pool.
-        { kind: 0, destination: account.address, bps: 1_000 },
-      ],
-    ],
+    functionName: 'endpointConfig',
+    args: [slug],
   });
-  await publicClient.waitForTransactionReceipt({ hash: registerTx });
-  console.log(`  register tx: ${explorerTx(registerTx)}`);
+  const endpointExists = existingCfg[14]; // .exists is the last tuple element
+  let registerTx: Hex | null = null;
+  if (endpointExists) {
+    console.log(`  register tx: (skipped — endpoint already registered)`);
+  } else {
+    registerTx = await walletClient.writeContract({
+      address: pactCore,
+      abi: pactCoreAbi,
+      functionName: 'registerEndpoint',
+      args: [
+        slug,
+        {
+          agentTokenId: 0n,
+          flatPremium: PREMIUM,
+          percentBps: 0,
+          imputedCost: 0n,
+          latencySloMs: 5_000,
+          exposureCapPerHour: 1_000_000n,
+          currentPeriodStart: 0n,
+          currentPeriodRefunds: 0n,
+          totalCalls: 0n,
+          totalBreaches: 0n,
+          totalPremiums: 0n,
+          totalRefunds: 0n,
+          lastUpdated: 0n,
+          paused: false,
+          exists: false,
+        },
+        [
+          // Treasury at 10% — receives ~10% of every premium, rest residual to pool.
+          { kind: 0, destination: account.address, bps: 1_000 },
+        ],
+      ],
+    });
+    await waitTx(registerTx);
+    console.log(`  register tx: ${explorerTx(registerTx)}`);
+  }
   console.log(`  slug:        ${slug} ("demo-chat")`);
   console.log(`  premium:     ${formatUnits(PREMIUM, USDC_DECIMALS)} ${usdcSymbol} per call`);
 
-  // ── 5. Top up coverage pool ────────────────────────────────────────────
-  STAGE(5, 6, `Topping up coverage pool with ${formatUnits(POOL_TOPUP, USDC_DECIMALS)} ${usdcSymbol}`);
-  const topupTx = await walletClient.writeContract({
+  // ── 5. Top up coverage pool (idempotent — skip if pool already covers a breach) ─
+  STAGE(5, 6, `Topping up coverage pool`);
+  const pool = await publicClient.readContract({
     address: pactCore,
     abi: pactCoreAbi,
-    functionName: 'topUpCoveragePool',
-    args: [slug, POOL_TOPUP],
+    functionName: 'coveragePool',
+    args: [slug],
   });
-  await publicClient.waitForTransactionReceipt({ hash: topupTx });
-  console.log(`  topup tx:    ${explorerTx(topupTx)}`);
+  const poolBalance = pool[0]; // .balance is first tuple element
+  let topupTx: Hex | null = null;
+  if (poolBalance >= REFUND_ON_BREACH * 2n) {
+    console.log(`  topup tx:    (skipped — pool already has ${formatUnits(poolBalance, USDC_DECIMALS)} ${usdcSymbol})`);
+  } else {
+    topupTx = await walletClient.writeContract({
+      address: pactCore,
+      abi: pactCoreAbi,
+      functionName: 'topUpCoveragePool',
+      args: [slug, POOL_TOPUP],
+    });
+    await waitTx(topupTx);
+    console.log(`  topup tx:    ${explorerTx(topupTx)}`);
+  }
 
   // ── 6. Settle two calls (one OK, one breach) ───────────────────────────
   STAGE(6, 6, 'Settling 2 calls — one non-breach, one breach');
-  const now = BigInt(Math.floor(Date.now() / 1000));
+  // Use the chain's own block.timestamp − 5s instead of Date.now() — local
+  // clocks routinely drift seconds ahead of the chain, and PactCore reverts
+  // with InvalidTimestamp() if r.timestamp > block.timestamp at execution.
+  const latestBlock = await publicClient.getBlock({ blockTag: 'latest' });
+  const now = latestBlock.timestamp - 5n;
   const callOk = randomCallId();
   const callBreach = randomCallId();
   const evidenceOk = evidenceHash(callOk);
@@ -292,7 +337,7 @@ async function main() {
       ],
     ],
   });
-  const settleReceipt = await publicClient.waitForTransactionReceipt({ hash: settleTx });
+  const settleReceipt = await waitTx(settleTx);
   console.log(`  settle tx:   ${explorerTx(settleTx)}`);
   console.log(`  status:      ${settleReceipt.status}`);
   console.log(`  gas used:    ${settleReceipt.gasUsed}`);
@@ -307,8 +352,8 @@ async function main() {
   console.log(`  Premium token:      ${USDC_ADDRESS} (XSwap Bridged USDC.e)`);
   console.log(`  PactCore:           ${explorerAddr(pactCore)}`);
   if (deployTx) console.log(`  Deploy tx:          ${explorerTx(deployTx)}`);
-  console.log(`  Register tx:        ${explorerTx(registerTx)}`);
-  console.log(`  Pool topup tx:      ${explorerTx(topupTx)}`);
+  if (registerTx) console.log(`  Register tx:        ${explorerTx(registerTx)}`);
+  if (topupTx) console.log(`  Pool topup tx:      ${explorerTx(topupTx)}`);
   console.log(`  Settle batch tx:    ${explorerTx(settleTx)}`);
   console.log(`  Evidence hash 1:    ${evidenceOk}`);
   console.log(`  Evidence hash 2:    ${evidenceBreach}`);
