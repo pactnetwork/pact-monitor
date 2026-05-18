@@ -20,4 +20,11 @@ library ArcConfig {
     /// @dev TODO(WP-EVM-06): assert `IERC20(ARC_TESTNET_USDC).decimals() == 6`
     ///      against a forked/mock USDC so a decimals mismatch fails loudly.
     uint8 internal constant EXPECTED_USDC_DECIMALS = 6;
+
+    // --- Ported from Solana constants.rs (parity invariants, design spec §3) ---
+    uint16 internal constant MAX_BATCH_SIZE = 50;
+    uint64 internal constant MIN_PREMIUM = 100;
+    uint8 internal constant MAX_FEE_RECIPIENTS = 8;
+    uint16 internal constant ABSOLUTE_FEE_BPS_CAP = 10_000;
+    uint16 internal constant DEFAULT_MAX_TOTAL_FEE_BPS = 3_000;
 }
