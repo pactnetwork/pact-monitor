@@ -73,16 +73,22 @@ contract PactSettler is IPactSettler, AccessControl {
             if (ev.feeRecipientCountHint > ArcConfig.MAX_FEE_RECIPIENTS)
                 revert FeeRecipientArrayTooLong();
 
-            // Step 3: endpoint snapshot — settle_batch.rs:200-221.
+            // Step 3: dedup check — settle_batch.rs:194-196. The Solana dedup
+            // check ('!call_record.is_data_empty()' at :194) fires BEFORE the
+            // endpoint snapshot's RecipientCoverageMismatch (:213
+            // 'ep_count != fee_count_hint'). An event that is SIMULTANEOUSLY a
+            // replayed callId AND feeRecipientCountHint != stored count MUST
+            // revert DuplicateCallId — same input -> same error as Solana
+            // (precedence parity; not a §4-ledger divergence). Hard revert
+            // (aborts the whole batch), same as the Rust Err return.
+            if (_settledCallIds[ev.callId]) revert DuplicateCallId();
+
+            // Step 4: endpoint snapshot — settle_batch.rs:200-221.
             // Endpoint-paused check (settle_batch.rs:209-211) is WP-05; skip.
             IPactRegistry.EndpointConfig memory ep =
                 IPactRegistry(address(registry)).getEndpoint(ev.endpointSlug);
             if (ep.feeRecipientCount != ev.feeRecipientCountHint)
                 revert RecipientCoverageMismatch();
-
-            // Step 4: dedup check — settle_batch.rs:194-196.
-            // Hard revert (aborts the whole batch), same as the Rust Err return.
-            if (_settledCallIds[ev.callId]) revert DuplicateCallId();
 
             // Step 4 (cont): allocate dedup sentinel BEFORE premium-in —
             // settle_batch.rs:243-262 allocates the CallRecord PDA before the
