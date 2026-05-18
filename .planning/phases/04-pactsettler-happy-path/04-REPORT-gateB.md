@@ -2,7 +2,81 @@
 
 **Date:** 2026-05-18
 **Branch:** feat/arc-protocol-v1
-**Status:** AWAITING CAPTAIN APPROVAL — no push, no PR #204 comment
+**Status:** GATE B FIX APPLIED — awaiting captain one-diff spot-check; no push, no PR #204 comment
+
+---
+
+## GATE B FIX — guard precedence (BLOCKING defect, RESOLVED)
+
+**Captain finding (GATE B line-by-line review):** guard precedence inverted —
+`DuplicateCallId` (settle_batch.rs:194) must fire BEFORE
+`RecipientCoverageMismatch` (settle_batch.rs:213), but
+`PactSettler.settleBatch` checked `RecipientCoverageMismatch` (getEndpoint
+block) before the dedup check. For an input that is BOTH a replayed callId AND
+`feeRecipientCountHint != stored count`, Solana returns `DuplicateCallId`,
+the pre-fix EVM returned `RecipientCoverageMismatch` — same input, different
+error = precedence-parity violation (not a §4-ledger divergence).
+
+### Re-derived settle_batch.rs:144-262 order (per captain's explicit ask)
+
+Re-read from source. EVM-relevant per-event check precedence, in order:
+
+1. `:158` `timestamp > now` -> `InvalidTimestamp`
+2. `:161` `premium < MIN_PREMIUM_LAMPORTS` -> `PremiumTooSmall`
+3. `:164` `fee_count_hint > MAX_FEE_RECIPIENTS` -> `FeeRecipientArrayTooLong`
+   - `:169` NotEnoughAccountKeys — N-A-on-EVM (account-count)
+   - `:180-192` PDA derivation / `InvalidSeeds` — N-A-on-EVM
+4. `:194` `!call_record.is_data_empty()` -> **`DuplicateCallId`** (DEDUP CHECK)
+5. endpoint snapshot `:203-221`:
+   - `:205` InvalidAccountData (account-data-len) — N-A-on-EVM
+   - `:209` `ep.paused != 0` -> `EndpointPaused` — **WP-05** (kill switch, deferred)
+   - `:213` `ep_count != fee_count_hint` -> **`RecipientCoverageMismatch`**
+   - `:219` pool-PDA binding -> RecipientCoverageMismatch — N-A-on-EVM (single contract)
+   - `:223-241` pool/vault binding + per-recipient ATA order — N-A-on-EVM
+6. `:248-262` CallRecord alloc = the EVM dedup SET
+7. `:270+` premium-in (E4: dedup SET stays before this — unchanged, correct)
+
+**Confirmation:** the ONLY WP-04-scope ordering defect is the
+DuplicateCallId-vs-RecipientCoverageMismatch swap. Everything between the
+guards (:166) and the dedup check (:194) is N-A-on-EVM (account/PDA checks);
+the only check between :194 and :213 is `EndpointPaused` (:209) which is WP-05
+and deferred (when WP-05 adds it, it slots between dedup-check and
+RecipientCoverageMismatch per source order — clean additive seam, no WP-04
+rewrite). No other ambiguity — no STOP-AND-ASK needed.
+
+### Fix (surgical, file-scoped)
+
+`src/PactSettler.sol`: relocated `if (_settledCallIds[ev.callId]) revert
+DuplicateCallId();` to BEFORE the `getEndpoint` + `RecipientCoverageMismatch`
+block. The dedup SET (`_settledCallIds[ev.callId] = true;`) and premium-in
+remain in place (E4 ordering unchanged — still correct). New per-event order:
+guards -> **dedup check (DuplicateCallId)** -> endpoint snapshot
+(RecipientCoverageMismatch) -> dedup SET -> premium-in. Diff: 1 file,
++11/-5 (relocated statement + step-comment renumber).
+
+- `6adc459` test(protocol-evm-v1): pin DuplicateCallId precedence (RED)
+- `4c2fd86` fix(protocol-evm-v1): dedup precedes RecipientCoverageMismatch per settle_batch.rs:194
+
+### Precedence-pinning test (strict TDD RED -> GREEN)
+
+`test_DuplicateCallIdPrecedesRecipientCoverageMismatch` — settles a valid
+event for callId 0x99 (consumes it), then submits a second event with the
+SAME callId AND `feeRecipientCountHint = 2 != stored 1` (BOTH conditions).
+- **RED** (pre-fix): `[FAIL: Error != expected error:
+  RecipientCoverageMismatch() != DuplicateCallId()]` — proved the inversion.
+- **GREEN** (post-fix): `[PASS] test_DuplicateCallIdPrecedesRecipientCoverageMismatch`
+  — reverts `DuplicateCallId`, mirroring Solana :194 before :213.
+
+### Result
+
+`forge build` clean. `forge test`: **90 tests passed, 0 failed, 0 skipped**
+(6 suites: ArcConstants 1, Deployment 4, PactRegistry 31, PactSettler 20,
+PactPool 19, FeeValidation 15). The 89 prior tests ALL still pass (the reorder
+is a no-op for non-duplicate callIds; `test_DuplicateCallIdRejected` and
+`test_RecipientCoverageMismatchRejected` still pass independently) + 1 new
+precedence test = 90. Regression gate held. Tree clean (only
+`?? .claude/pr-reviews/`); no contamination. NO push, NO PR #204 comment —
+awaiting captain spot-check of the one diff (`4c2fd86`).
 
 ---
 
