@@ -111,4 +111,63 @@ library FeeValidation {
             }
         }
     }
+
+    /// @notice Port of initialize_protocol_config.rs:84-156 — the bespoke
+    ///         default-template validator §4 #6 collapses into the
+    ///         PactRegistry constructor. DELIBERATELY DISTINCT from `validate`
+    ///         (the source's own codex-2026-05-05 comment: no Treasury PDA
+    ///         exists at init → NO substitution and NO post-substitution dup
+    ///         pass; `count == 0` is intentionally allowed so operators can
+    ///         require per-endpoint recipients). Kept separate on purpose —
+    ///         two validators mirror two distinct Solana code paths; do not
+    ///         unify. Stores RAW entries (caller persists `recipients` as-is).
+    function validateDefaultTemplate(
+        IPactRegistry.FeeRecipient[8] memory recipients,
+        uint8 count,
+        uint16 maxTotalFeeBps
+    ) internal pure {
+        // rs:80-82 — count guard FIRST.
+        if (count > ArcConfig.MAX_FEE_RECIPIENTS) revert FeeRecipientArrayTooLong();
+        // rs:84-86 — config check unique to init_pc (not in fee.rs).
+        if (maxTotalFeeBps > ArcConfig.ABSOLUTE_FEE_BPS_CAP) revert FeeBpsExceedsCap();
+
+        // rs:92-124 — entry loop. NO substitution.
+        bool treasurySeen;
+        uint32 sumBps;
+        for (uint256 i = 0; i < count; i++) {
+            IPactRegistry.FeeRecipient memory e = recipients[i];
+            if (e.kind > 2) revert InvalidFeeRecipientKind();
+            if (e.bps > ArcConfig.ABSOLUTE_FEE_BPS_CAP) revert FeeBpsExceedsCap();
+            if (e.kind == 0) {
+                if (treasurySeen) revert MultipleTreasuryRecipients();
+                treasurySeen = true;
+            }
+            for (uint256 j = 0; j < i; j++) {
+                if (recipients[j].destination == e.destination) {
+                    revert FeeRecipientDuplicateDestination();
+                }
+            }
+            sumBps += uint32(e.bps);
+        }
+
+        // rs:125-130 — sum checks.
+        if (sumBps > ArcConfig.ABSOLUTE_FEE_BPS_CAP) revert FeeBpsSumOver10k();
+        if (sumBps > maxTotalFeeBps) revert FeeBpsExceedsCap();
+
+        // rs:138-156 — Treasury invariants ONLY when count > 0. count == 0 is
+        // intentionally allowed (empty defaults).
+        if (count > 0) {
+            uint256 treasuryCount;
+            uint16 treasuryBps;
+            for (uint256 i = 0; i < count; i++) {
+                if (recipients[i].kind == 0) {
+                    treasuryCount += 1;
+                    treasuryBps = recipients[i].bps;
+                }
+            }
+            if (treasuryCount == 0) revert MissingTreasuryEntry();
+            if (treasuryCount > 1) revert MultipleTreasuryRecipients();
+            if (treasuryBps == 0) revert TreasuryBpsZero();
+        }
+    }
 }

@@ -5,6 +5,7 @@ import {PactRegistry} from "../src/PactRegistry.sol";
 import {PactPool} from "../src/PactPool.sol";
 import {PactSettler} from "../src/PactSettler.sol";
 import {ArcConfig} from "../src/ArcConfig.sol";
+import {IPactRegistry} from "../src/interfaces/IPactRegistry.sol";
 
 /// @title DeploymentTest
 /// @notice Trivial compile-sanity + toolchain proof for the WP-EVM-01
@@ -15,9 +16,16 @@ import {ArcConfig} from "../src/ArcConfig.sol";
 ///      with a full forge-std + fuzz suite mirroring the LiteSVM tests.
 contract DeploymentTest {
     function test_DeployPactRegistry() external {
-        PactRegistry r = new PactRegistry(address(this));
+        // WP-EVM-02 finalized the constructor (§4 #6 collapses the 3
+        // initialize_* instructions). count == 0 default template is allowed
+        // (initialize_protocol_config.rs:138), so the constructor accepts an
+        // empty template here.
+        IPactRegistry.FeeRecipient[8] memory emptyDefaults;
+        PactRegistry r = new PactRegistry(
+            address(this), ArcConfig.ARC_TESTNET_USDC, address(0x1), 3000, emptyDefaults, 0
+        );
         require(address(r).code.length > 0, "registry: no bytecode");
-        require(r.owner() == address(this), "registry: owner not set");
+        require(r.authority() == address(this), "registry: authority not set");
     }
 
     function test_DeployPactPool() external {
