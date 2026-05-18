@@ -31,7 +31,7 @@ are complete and later phases carry placeholder IDs for roadmap coverage.
 Source of truth: `src/instructions/settle_batch.rs`. Oracle: happy-path
 subset of `tests/05-settle-batch.test.ts`.
 
-- [ ] **SET-01**: `settleBatch` is gated by the settler role; an unauthorized
+- [x] **SET-01**: `settleBatch` is gated by the settler role; an unauthorized
   caller reverts (`05` "unauthorized settler rejected"). Mirrors
   `settle_batch.rs:95-128` settler-signer / `SettlementAuthority` check
   (design §4#5 — OZ AccessControl `SETTLER_ROLE`).
@@ -54,7 +54,7 @@ subset of `tests/05-settle-batch.test.ts`.
   exposure cap, refund flows pool→agent for the full intended amount; status
   `Settled`; `actualRefund == intended` (`05` "breach refunds" + "happy path:
   settlement_status = Settled"; `settle_batch.rs:455-502`).
-- [ ] **SET-07**: Stats accounting — pool `currentBalance/totalPremiums/
+- [x] **SET-07**: Stats accounting — pool `currentBalance/totalPremiums/
   totalRefunds` and endpoint `totalCalls/totalBreaches/totalPremiums/
   totalRefunds` updated with identical arithmetic and ordering to
   `settle_batch.rs` (spec §3 stats accounting; composes WP-03 pool hooks +
