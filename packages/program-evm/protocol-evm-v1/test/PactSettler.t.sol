@@ -1110,8 +1110,11 @@ contract PactSettlerTest is Test {
         IPactRegistry.FeeRecipient[8] memory none;
         vm.prank(authority);
         reg.registerEndpoint(SLUG_B, 500, 0, 5000, 1000, 1_000, false, 0, none);
-        // Fund pool with only 100 -- below the clamped cap (1000).
-        _fundPool(SLUG_B, 100);
+        // Do NOT fund the pool. After creditPremium(1000) - debitForFees(100)
+        // the pool currentBalance = 0 + 1000 - 100 = 900 < clamped payableRefund
+        // (1000) -> PoolDepleted fires. Seeding 100 would net to 1000 which is
+        // NOT strictly less than the clamped 1000 (ps.currentBalance < payableRefund
+        // is strict), so the pool would erroneously pay.
 
         address agent = makeAddr("agent");
         _provisionAgent(agent, 10_000_000, 10_000_000);

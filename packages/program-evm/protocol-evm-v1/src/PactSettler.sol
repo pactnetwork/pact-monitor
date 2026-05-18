@@ -218,11 +218,19 @@ contract PactSettler is IPactSettler, AccessControl {
         if (payableRefund > 0) {
             IPactPool.PoolState memory ps = pool.balanceOf(ev.endpointSlug);
             if (ps.currentBalance < payableRefund) {
-                // settle_batch.rs:462-469 PoolDepleted DECISION — WP-05.
-                // Clean additive seam: WP-05 sets status=PoolDepleted &
-                // actualRefund=0 HERE. WP-04 leaves this `if` EMPTY so the
-                // refund transfer in the `else` is what WP-05 turns into the
-                // pool-sufficient else without rewriting WP-04.
+                // settle_batch.rs:462-469 — PoolDepleted (SET-09). Set AFTER
+                // the ExposureCapClamped inference (05-04) so PoolDepleted
+                // OVERWRITES it when both fire (D-LOCK-CLAMP-ORDER final-status
+                // precedence: PoolDepleted > ExposureCapClamped > Settled).
+                // Premium + fees already settled; only the refund transfer is
+                // skipped. actualRefund stays 0 so the WP-04 recordRefundPaid
+                // guard (if (actualRefund > 0)) correctly skips totalRefunds
+                // accrual. currentPeriodRefunds is NOT rolled back (P1(b)
+                // no-rollback: accrual committed in recordCallAndCapAccrual;
+                // Solana never rolls it back either — :409-414 fires before
+                // the pool check at :462).
+                status = SettlementStatus.PoolDepleted;
+                actualRefund = 0; // mirrors settle_batch.rs:469 (explicit for parity legibility; init is already 0)
             } else {
                 pool.payout(ev.agent, payableRefund);
                 pool.debitForRefund(ev.endpointSlug, payableRefund);
