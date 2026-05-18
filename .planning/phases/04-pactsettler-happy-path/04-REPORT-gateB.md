@@ -154,6 +154,58 @@ Only expected untracked directory present. No `CLAUDE.md` ` M`. No `.claude/skil
 
 ---
 
+## Orchestrator addendum (QA trail — crew lead)
+
+Context only the orchestrator has, for the captain's parity-fidelity review:
+
+1. **GATE A parity-seam defect CAUGHT and CORRECTED before any Solidity.**
+   The first plan revision consolidated `settle_batch.rs`'s TWO `ep.*`
+   mutation points (block 1 :385-414 BEFORE fee fan-out incl. the period
+   reset; `ep.total_refunds += actual` :493-499 AFTER the transfer) into ONE
+   post-transfer `recordSettlement` call. The gsd-plan-checker rated this
+   "non-blocking / Claude's Discretion." I escalated it to a BLOCKER: it did
+   not preserve source mutation ORDER and would have forced WP-05 to rewrite
+   WP-04 (the exposure-cap clamp must read post-reset `current_period_refunds`
+   and drive the transfer amount BEFORE the transfer). Source was
+   unambiguous, so resolved TO THE SOURCE: the E1 hook was split into
+   `recordCallAndCapAccrual` (returns payableRefund, called pre-fan-out) +
+   `recordRefundPaid` (post-transfer). Re-verified PASSED. This is the single
+   biggest parity decision in WP-04 and the captain may override the
+   seam-shape interpretation if desired.
+
+2. **Plan QA: 3 gsd-plan-checker iterations.** (i) initial PASS;
+   (ii) re-check after the D-SPLIT-refinement revision (period reset moved to
+   WP-04 in the E1 hook) — PASS; (iii) focused re-check of the seam fix —
+   PASS. No blockers outstanding.
+
+3. **No STOP-AND-ASK was needed during execution.** All three executors
+   (04-02/03/04) reported every `settle_batch.rs` derivation unambiguous; no
+   parity-ambiguity or source-vs-plan conflict arose mid-implementation. The
+   STOP-AND-ASK discipline was exercised at the plan stage (item 1), not
+   deferred into code.
+
+4. **Independent orchestrator re-verification (not just trusting executors).**
+   I re-ran `forge build` (clean) and the FULL `forge test` (89 passed, 0
+   failed, 6 suites) myself; grep-confirmed the source-faithful order in
+   `PactSettler.sol` (`creditPremium` 149 -> `recordCallAndCapAccrual` 163
+   BEFORE fee loop 175 -> refund `pool.payout` 201 -> `recordRefundPaid` 212
+   AFTER -> one `emit CallSettled` 222; no `recordSettlement`); confirmed the
+   only PoolDepleted/ExposureCapClamped references in `PactSettler.sol` are
+   seam comments (no live WP-05 code); confirmed the exact `05` numbers
+   (5_009_000, 5_085_000/9_900_000, 10_049_000/4_950_900/100,
+   29_400_000/1_299_970/20_030, 50_000) are asserted verbatim in
+   `PactSettler.t.sol`; tree clean (only `?? .claude/pr-reviews/`), no
+   contamination, GitNexus re-index deferred per handoff §(e).
+
+5. **D1-scope refinement** (E1 condition 4) recorded in STATE.md +
+   04-GATE-A-DECISIONS.md; to be appended to the handoff locked-rulings list
+   as ruling #8 at the WP-06 §(d) formal-correction pass.
+
+6. **GSD bootstrap note:** WP-04 was the first GSD-orchestrated WP (WP-02/03
+   were plan-doc-driven); a minimal `.planning/` scaffold scoped strictly to
+   the locked port was bootstrapped to run the mandated GSD pipeline (spec
+   §8). Reported at GATE A for captain visibility; not objected to.
+
 ## STOPPED
 
 Execution halted pending captain GATE B approval.
@@ -161,4 +213,6 @@ Execution halted pending captain GATE B approval.
 - No PR #204 comment posted.
 - Report at: `.planning/phases/04-pactsettler-happy-path/04-REPORT-gateB.md`
 - Next action: captain reviews this report, approves or requests changes.
-  Push and PR #204 comment happen ONLY after captain approval.
+  Push and PR #204 comment happen ONLY after captain approval. On approval,
+  the remaining GSD post-execution steps (gsd-verifier phase-goal check,
+  ROADMAP/phase completion) run, THEN push + PR #204 comment.
