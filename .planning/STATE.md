@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-last_updated: "2026-05-18T13:00:00.000Z"
-last_activity: 2026-05-18 -- 04-03 complete (per-event guards + dedup + premium-in DelegateFailed)
+last_updated: "2026-05-18T12:49:13.414Z"
+last_activity: 2026-05-18
 progress:
   total_phases: 7
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 4
-  completed_plans: 3
-  percent: 75
+  completed_plans: 4
+  percent: 100
 ---
 
 # Project State
@@ -20,19 +20,19 @@ progress:
 **Core value:** Behavioral-parity port of the Solana `pact-network-v1-pinocchio`
 on-chain program to Circle Arc (EVM L1), driven by the 10 LiteSVM test files as
 the parity oracle. This is a PORT, not a redesign.
-**Current focus:** WP-EVM-04 — PactSettler happy path
+**Current focus:** WP-EVM-04 — PactSettler happy path — GATE B reached; awaiting captain approval
 
 ## Current Position
 
 Phase: 4 of 7 (PactSettler Happy Path)
-Plan: 3 of 4 complete in current phase
-Status: Executing — 04-03 done; 04-04 (pool credit + fee fan-out + refund + stats + CallSettled emit) is next
-Last activity: 2026-05-18 -- 04-03 complete (per-event guards + dedup + premium-in DelegateFailed)
+Plan: 4 of 4 complete in current phase
+Status: GATE B — forge build + forge test green (89/89); awaiting captain approval before push/PR
+Last activity: 2026-05-18 -- 04-04 complete (economic loop + 9 ported tests + GATE B report)
 `.planning/` scaffold for the GSD plan-phase pipeline (spec §8 mandates GSD for
 WP-04/05). WP-EVM-01/02/03 complete and pushed; WP-02/03 were plan-doc-driven
 (no `.planning/`), so WP-04 is the first GSD-orchestrated phase.
 
-Progress: WP-01 ✓ · WP-02 ✓ · WP-03 ✓ · WP-04 (04-01 ✓, 04-02 ✓, 04-03 ✓, 04-04 pending) · WP-05/06/07 pending
+Progress: WP-01 ✓ · WP-02 ✓ · WP-03 ✓ · WP-04 (04-01 ✓, 04-02 ✓, 04-03 ✓, 04-04 ✓ GATE-B) · WP-05/06/07 pending
 
 ## Decisions (WP-EVM-04)
 
@@ -55,7 +55,17 @@ Progress: WP-01 ✓ · WP-02 ✓ · WP-03 ✓ · WP-04 (04-01 ✓, 04-02 ✓, 04
 
 - **04-03 provisional emit seam**: success path emits `CallSettled(Settled,
   actualRefund=0)` provisionally; plan 04-04 MUST replace with full economic
-  emit (one IPactSettler.CallSettled per call, GATE-A E3).
+  emit (one IPactSettler.CallSettled per call, GATE-A E3). REPLACED in 04-04.
+
+- **04-04 stack-too-deep fix**: settleBatch extracted economic body into
+  `_settleSuccess` private helper. Mutation order unchanged; parity preserved.
+
+- **04-04 mutation order confirmed**: creditPremium → recordCallAndCapAccrual
+  (ep point 1, BEFORE fee fan-out) → fee fan-out → refund transfer →
+  recordRefundPaid (ep point 2, AFTER transfer). Mirrors settle_batch.rs exactly.
+
+- **04-04 GATE B reached 2026-05-18**: forge build+test green (89/89); report at
+  04-REPORT-gateB.md; no push; no PR comment. Awaiting captain approval.
 
 ## Notes
 

@@ -45,12 +45,12 @@ subset of `tests/05-settle-batch.test.ts`.
   (`settle_batch.rs:158-166,213-215`).
 - [x] **SET-04**: Repeated `callId` → `DuplicateCallId` via
   `mapping(bytes16 => bool)` (design §3 dedup; `settle_batch.rs:194-196`).
-- [ ] **SET-05**: On success, pool credited gross premium and fee fan-out pays
+- [x] **SET-05**: On success, pool credited gross premium and fee fan-out pays
   each recipient `premium * bps / 10000` (integer floor, `uint64`
   truncation), pool retains the residual; balances bit-identical to the
   Solana assertions in the `05` default-10% / explicit-85-10-5 /
   mixed-3-endpoint cases (`settle_batch.rs:357-453`; spec §3 fee math).
-- [ ] **SET-06**: On breach with sufficient pool liquidity and within the
+- [x] **SET-06**: On breach with sufficient pool liquidity and within the
   exposure cap, refund flows pool→agent for the full intended amount; status
   `Settled`; `actualRefund == intended` (`05` "breach refunds" + "happy path:
   settlement_status = Settled"; `settle_batch.rs:455-502`).
@@ -59,7 +59,7 @@ subset of `tests/05-settle-batch.test.ts`.
   totalRefunds` updated with identical arithmetic and ordering to
   `settle_batch.rs` (spec §3 stats accounting; composes WP-03 pool hooks +
   the endpoint-stats write path resolved at GATE A).
-- [ ] **SET-08**: Exactly one `CallSettled` event per call carrying
+- [x] **SET-08**: Exactly one `CallSettled` event per call carrying
   `premium/refund/actualRefund/status/breach/latencyMs/timestamp` (design
   §4#3 — events are the indexer truth source; EVM has no `CallRecord`).
 

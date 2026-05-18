@@ -14,7 +14,7 @@ Phase numbers equal work-package numbers (Phase N == WP-EVM-0N).
 - [x] **Phase 1: WP-EVM-01 Scaffold** - Foundry package + interface scaffold (PR #204)
 - [x] **Phase 2: WP-EVM-02 Registry/Fee/Errors/Events** - errors, events, ArcConfig, PactRegistry, FeeValidation + ported registry/treasury/config tests
 - [x] **Phase 3: WP-EVM-03 PactPool** - full pool logic + settler-gated hooks + ported pool tests
-- [ ] **Phase 4: WP-EVM-04 PactSettler Happy Path** - settleBatch happy path + ported settle-batch happy tests
+- [x] **Phase 4: WP-EVM-04 PactSettler Happy Path** - settleBatch happy path + ported settle-batch happy tests (completed 2026-05-18)
 - [ ] **Phase 5: WP-EVM-05 PactSettler Hardening** - clamps, kill switches, batch-limit edges + ported pause/exposure tests
 - [ ] **Phase 6: WP-EVM-06 TS Client + Suite + Parity Matrix** - protocol-evm-v1-client, fuzz/gas suite, parity matrix doc
 - [ ] **Phase 7: WP-EVM-07 Deploy** - deploy script + Arc testnet deploy + arcscan verify (deferred, separate cycle)
@@ -62,7 +62,7 @@ Phase numbers equal work-package numbers (Phase N == WP-EVM-0N).
 - [x] 04-01-PLAN.md — GATE-A decision record: E1-E4 captain rulings (no Solidity)
 - [x] 04-02-PLAN.md — Foundation: PactSettler AccessControl (E2) + endpoint-stats path (E1) + test harness
 - [x] 04-03-PLAN.md — Per-event guards + dedup + premium-in try/catch -> DelegateFailed (SET-01..04)
-- [ ] 04-04-PLAN.md — Pool credit + fee fan-out + breach refund + CallSettled + 9 ported tests + GATE B (SET-05..08)
+- [x] 04-04-PLAN.md — Pool credit + fee fan-out + breach refund + CallSettled + 9 ported tests + GATE B (SET-05..08)
 
 ### Phase 5: WP-EVM-05 PactSettler Hardening
 **Goal**: Exposure-cap clamp, pool-depleted clamp, protocol/endpoint kill switches, batch-limit edges + ported `06/07/09/10` and the clamp/kill-switch subset of `05`.
