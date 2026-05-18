@@ -21,7 +21,7 @@ import "./errors/PactErrors.sol";
 ///      registry.authority() (exact PactPool pattern). Deployed PactSettler
 ///      must hold SETTLER_ROLE on BOTH PactPool AND PactRegistry (E1xE2
 ///      two-layer grant wired in test setUp + deployment).
-///      settleBatch logic ports in plans 03/04.
+///      settleBatch economic loop (SET-05/06/07/08) ported in plan 04-04.
 contract PactSettler is IPactSettler, AccessControl {
     bytes32 public constant SETTLER_ROLE = keccak256("SETTLER_ROLE");
 
@@ -55,8 +55,8 @@ contract PactSettler is IPactSettler, AccessControl {
 
     /// @inheritdoc IPactSettler
     /// @dev SETTLER_ROLE-gated (SET-01). Per-event guards (SET-03) in
-    ///      settle_batch.rs:158-215 exact order. Dedup + premium-in (SET-02/04)
-    ///      and economic half (SET-05/06/07/08) port in plans 03 Task 2 + 04.
+    ///      settle_batch.rs:158-215 exact order. Dedup + premium-in (SET-02/04,
+    ///      plan 04-03) and economic half (SET-05/06/07/08, plan 04-04).
     function settleBatch(SettlementEvent[] calldata events)
         external
         override
@@ -96,7 +96,6 @@ contract PactSettler is IPactSettler, AccessControl {
             // a false return and a revert are caught as DelegateFailed without
             // aborting the batch (RESEARCH §Q3 / pitfall 1).
             // Funds flow: agent -> address(pool) (pool is the USDC custodian).
-            SettlementStatus status = SettlementStatus.Settled;
             bool premiumInOk;
             try IERC20(usdc).transferFrom(ev.agent, address(pool), ev.premium)
                 returns (bool ok) { premiumInOk = ok; }
@@ -108,7 +107,6 @@ contract PactSettler is IPactSettler, AccessControl {
                 // no refund, no endpoint-stats hook call.
                 // GATE-A E3: emit ONLY IPactSettler.CallSettled (typed enum);
                 // no second PactEvents emission; exactly one per call.
-                status = SettlementStatus.DelegateFailed;
                 emit CallSettled(
                     ev.callId,
                     ev.endpointSlug,
@@ -116,7 +114,7 @@ contract PactSettler is IPactSettler, AccessControl {
                     ev.premium,
                     ev.refund,
                     0,           // actualRefund = 0 — no funds moved
-                    status,
+                    SettlementStatus.DelegateFailed,
                     ev.breach,
                     ev.latencyMs,
                     ev.timestamp
@@ -124,30 +122,123 @@ contract PactSettler is IPactSettler, AccessControl {
                 continue;
             }
 
-            // Steps 6-10 (pool credit + endpoint stats + fee fan-out + refund
-            // + final CallSettled emit) port in plan 04-04.
-            //
-            // PROVISIONAL SEAM (plan 04-03 → plan 04-04):
-            // premium-in succeeded — funds have moved agent→pool. The economic
-            // half (creditPremium / recordCallAndCapAccrual / fee fan-out /
-            // debitForRefund / recordRefundPaid) is not yet implemented.
-            // Emit a provisional CallSettled(Settled, actualRefund=0) so the
-            // first settle in test_DuplicateCallIdRejected does not revert.
-            // Plan 04-04 MUST replace this provisional emit with the full
-            // economic emit (still exactly one IPactSettler.CallSettled per
-            // call per GATE-A E3 ruling).
-            emit CallSettled(
-                ev.callId,
+            // Steps 6-10: economic loop — pool credit, ep point 1, fee
+            // fan-out, refund, ep point 2, final emit. Extracted to
+            // _settleSuccess to avoid stack-too-deep (many locals in one frame).
+            _settleSuccess(ev, ep);
+        }
+    }
+
+    /// @dev Steps 6-10 of the per-event economic loop (settle_batch.rs:357-522).
+    ///      Called ONLY on premium-in success. Extracted from settleBatch to
+    ///      avoid Solidity stack-too-deep.
+    ///
+    ///      Mutation ORDER mirrors settle_batch.rs EXACTLY:
+    ///      (6) pool.creditPremium [cp credit, :357-369]
+    ///      (7) seed intendedRefundAfterCap [local, :380]
+    ///      (7c) recordCallAndCapAccrual [ep point 1, :385-414, BEFORE fan-out]
+    ///      (8) fee fan-out [pool.payout per recipient + pool.debitForFees, :418-453]
+    ///      (9) refund transfer [pool.payout(agent) + pool.debitForRefund, :455-502]
+    ///      (9c) recordRefundPaid [ep point 2, :493-499, AFTER transfer]
+    ///      (10) emit CallSettled [one per call, GATE-A E3]
+    function _settleSuccess(
+        SettlementEvent calldata ev,
+        IPactRegistry.EndpointConfig memory ep
+    ) private {
+        // Step 6 — Pool gross credit (settle_batch.rs:357-369).
+        pool.creditPremium(ev.endpointSlug, ev.premium);
+
+        // Step 7 — Seed WP-05-ready refund local (settle_batch.rs:380).
+        // In WP-04 this is never reduced; the WP-05 cap-clamp seam is inside
+        // recordCallAndCapAccrual (adjusts the return value, not this local).
+        uint64 intendedRefundAfterCap = ev.refund;
+
+        // Step 7c — ep mutation point 1: BEFORE the fee fan-out
+        // (settle_batch.rs:385-414). Accumulates totalCalls/totalPremiums/
+        // totalBreaches, runs the WP-04 period reset, accrues
+        // currentPeriodRefunds. Returns payableRefund (== ev.refund in WP-04;
+        // WP-05 returns the cap-clamped amount with zero call-site change —
+        // GATE-A E1 SPLIT hook 1, D-SPLIT).
+        uint64 payableRefund = IPactRegistry(address(registry))
+            .recordCallAndCapAccrual(
                 ev.endpointSlug,
-                ev.agent,
                 ev.premium,
-                ev.refund,
-                0,           // PROVISIONAL: actualRefund=0; plan 04-04 fills real value
-                status,      // Settled
                 ev.breach,
-                ev.latencyMs,
-                ev.timestamp
+                intendedRefundAfterCap
+            );
+
+        // Step 8 — Fee fan-out (settle_batch.rs:418-453).
+        // fee = floor(uint256(premium) * bps / 10_000) cast to uint64.
+        // Skip if zero. Accumulate totalFeePaid with overflow check.
+        // Iterate ep.feeRecipientCount (NOT the hint — pitfall 6).
+        uint64 totalFeePaid = 0;
+        for (uint8 j = 0; j < ep.feeRecipientCount; j++) {
+            uint64 feeAmount = uint64(
+                uint256(ev.premium) * ep.feeRecipients[j].bps / 10_000
+            );
+            if (feeAmount == 0) continue;
+            pool.payout(ep.feeRecipients[j].destination, feeAmount);
+            totalFeePaid = _ckAdd(totalFeePaid, feeAmount);
+        }
+        if (totalFeePaid > 0) {
+            pool.debitForFees(ev.endpointSlug, totalFeePaid);
+        }
+
+        // Step 9 — Refund on breach (settle_batch.rs:455-502).
+        // WP-04 = sufficient-liquidity branch only (the else).
+        // The settle_batch.rs:462-469 PoolDepleted DECISION is WP-05; leave
+        // the EMPTY if as the additive seam — do NOT set status here.
+        uint64 actualRefund = 0;
+        if (payableRefund > 0) {
+            IPactPool.PoolState memory ps = pool.balanceOf(ev.endpointSlug);
+            if (ps.currentBalance < payableRefund) {
+                // settle_batch.rs:462-469 PoolDepleted DECISION — WP-05.
+                // Clean additive seam: WP-05 sets status=PoolDepleted &
+                // actualRefund=0 HERE. WP-04 leaves this `if` EMPTY so the
+                // refund transfer in the `else` is what WP-05 turns into the
+                // pool-sufficient else without rewriting WP-04.
+            } else {
+                pool.payout(ev.agent, payableRefund);
+                pool.debitForRefund(ev.endpointSlug, payableRefund);
+                actualRefund = payableRefund;
+            }
+        }
+
+        // Step 9c — ep mutation point 2: AFTER the refund transfer
+        // (settle_batch.rs:493-499). totalRefunds += ACTUAL paid amount.
+        // Called ONLY when actualRefund > 0 (mirrors Solana only reaching
+        // :493-499 inside the paid else branch — GATE-A E1 SPLIT hook 2).
+        if (actualRefund > 0) {
+            IPactRegistry(address(registry)).recordRefundPaid(
+                ev.endpointSlug,
+                actualRefund
             );
         }
+
+        // Step 10 — Emit exactly ONE IPactSettler.CallSettled per call
+        // (plan-03 provisional seam replaced). GATE-A E3: typed enum, no
+        // second PactEvents emission. Total = one per call either way
+        // (DelegateFailed path in settleBatch + this Settled path = SET-08).
+        emit CallSettled(
+            ev.callId,
+            ev.endpointSlug,
+            ev.agent,
+            ev.premium,
+            ev.refund,
+            actualRefund,
+            SettlementStatus.Settled, // DelegateFailed path already continued
+            ev.breach,
+            ev.latencyMs,
+            ev.timestamp
+        );
+    }
+
+    /// @dev Checked add mirroring PactPool._ckAdd (Solana checked_add ->
+    ///      ArithmeticOverflow). Used for totalFeePaid accumulation.
+    function _ckAdd(uint64 a, uint64 b) private pure returns (uint64 c) {
+        unchecked {
+            c = a + b;
+        }
+        if (c < a) revert ArithmeticOverflow();
     }
 }
