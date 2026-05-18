@@ -9,6 +9,7 @@ import {PactPool} from "../src/PactPool.sol";
 import {IPactRegistry} from "../src/interfaces/IPactRegistry.sol";
 import {IPactSettler} from "../src/interfaces/IPactSettler.sol";
 import {IPactPool} from "../src/interfaces/IPactPool.sol";
+import {PactEvents} from "../src/PactEvents.sol";
 import {ArcConfig} from "../src/ArcConfig.sol";
 import {MockUSDC} from "./util/MockUSDC.sol";
 import "../src/errors/PactErrors.sol";
@@ -518,5 +519,194 @@ contract PactSettlerTest is Test {
         vm.prank(settlerSigner);
         vm.expectRevert(DuplicateCallId.selector);
         settler.settleBatch(ev2);
+    }
+
+    // -----------------------------------------------------------------------
+    // Task 2 (04-04) — remaining 5 happy-path tests ported from
+    // 05-settle-batch.test.ts (tests 2, 3, 4, 9) + ABI-identity assertion.
+    // Numbers copied VERBATIM from the Solana oracle — no recomputation.
+    // -----------------------------------------------------------------------
+
+    /// @notice 05 test 2: single event with explicit Treasury 10% + Affiliate 5%.
+    ///         split = 85/10/5. Numbers: treasury==10_000, aff==5_000,
+    ///         pool==5_085_000, agent==9_900_000.
+    function test_SingleEventExplicit85_10_5Split() public {
+        address affAddr = makeAddr("affAddr");
+
+        IPactRegistry.FeeRecipient[8] memory r;
+        r[0].kind = 0;        // Treasury
+        r[0].destination = treasuryVault;
+        r[0].bps = 1000;      // 10%
+        r[1].kind = 1;        // AffiliateAta
+        r[1].destination = affAddr;
+        r[1].bps = 500;       // 5%
+
+        _registerWithRecipients(SLUG_B, r, 2);
+        _fundPool(SLUG_B, 5_000_000);
+        address agent = makeAddr("agent");
+        _provisionAgent(agent, 10_000_000, 10_000_000);
+
+        IPactSettler.SettlementEvent[] memory events = new IPactSettler.SettlementEvent[](1);
+        events[0] = _makeEvent(0x02, agent, SLUG_B, 100_000, 0, 100, false, 2, 1);
+
+        vm.prank(settlerSigner);
+        settler.settleBatch(events);
+
+        // Treasury 10% of 100_000 = 10_000.
+        assertEq(usdc.balanceOf(treasuryVault), 10_000, "treasury");
+        // Affiliate 5% of 100_000 = 5_000.
+        assertEq(usdc.balanceOf(affAddr), 5_000, "affAddr");
+        // Pool USDC = 5_000_000 + 100_000 - 10_000 - 5_000 = 5_085_000.
+        assertEq(usdc.balanceOf(address(pool)), 5_000_000 + 85_000, "pool usdc");
+        // Agent debited full premium.
+        assertEq(usdc.balanceOf(agent), 10_000_000 - 100_000, "agent balance");
+    }
+
+    /// @notice 05 test 3: breach event refunds agent ATA from pool vault.
+    ///         Numbers: agent==10_049_000, pool==4_950_900, treasury==100,
+    ///         CallSettled(Settled, refund=50_000, actualRefund=50_000).
+    ///         Also confirms two-hook wiring: currentPeriodRefunds==50_000 (ep
+    ///         point 1, pre-fan-out) and totalRefunds==50_000 (ep point 2,
+    ///         post-transfer).
+    function test_BreachRefundsAgentFromPool() public {
+        address agent = makeAddr("agent");
+        _register(SLUG);
+        _fundPool(SLUG, 5_000_000);
+        _provisionAgent(agent, 10_000_000, 10_000_000);
+
+        IPactSettler.SettlementEvent[] memory events = new IPactSettler.SettlementEvent[](1);
+        // callId fill(3), premium=1_000, refund=50_000, breach=true, latencyMs=6000
+        events[0] = _makeEvent(0x03, agent, SLUG, 1_000, 50_000, 6000, true, 1, 1);
+
+        bytes16 callId = events[0].callId;
+        uint64 ts = events[0].timestamp;
+
+        vm.expectEmit(true, true, true, true);
+        emit IPactSettler.CallSettled(
+            callId, SLUG, agent,
+            1_000, 50_000, 50_000,
+            IPactSettler.SettlementStatus.Settled,
+            true, 6000, ts
+        );
+
+        vm.prank(settlerSigner);
+        settler.settleBatch(events);
+
+        // Agent: started 10_000_000, paid 1_000 premium, received 50_000 refund.
+        assertEq(usdc.balanceOf(agent), 10_000_000 - 1_000 + 50_000, "agent balance");
+        // Pool: 5_000_000 + 1_000 (credit) - 100 (Treasury 10% of 1_000) - 50_000 (refund) = 4_950_900.
+        assertEq(usdc.balanceOf(address(pool)), 5_000_000 + 1_000 - 100 - 50_000, "pool usdc");
+        // Treasury: 10% of 1_000 = 100.
+        assertEq(usdc.balanceOf(treasuryVault), 100, "treasury");
+        // Endpoint stats confirm two-hook wiring at correct source positions.
+        IPactRegistry.EndpointConfig memory ep = reg.getEndpoint(SLUG);
+        // ep point 1 (recordCallAndCapAccrual, BEFORE fee fan-out): currentPeriodRefunds accrued.
+        assertEq(ep.currentPeriodRefunds, 50_000, "currentPeriodRefunds (ep point 1)");
+        // ep point 2 (recordRefundPaid, AFTER transfer): totalRefunds == actual paid.
+        assertEq(ep.totalRefunds, 50_000, "totalRefunds (ep point 2)");
+    }
+
+    /// @notice 05 test 4: mixed batch across 3 endpoints with different fee templates.
+    ///         Numbers: agent==29_400_000, ep1.currentBalance==1_090_000,
+    ///         ep2==1_180_000, ep3==1_299_970, treasury==20_030, aff2==10_000.
+    function test_MixedBatch3Endpoints() public {
+        address aff2Addr = makeAddr("aff2Addr");
+
+        // EP1: default Treasury 10%.
+        bytes16 slug1 = bytes16("ep1             ");
+        _register(slug1);
+        _fundPool(slug1, 1_000_000);
+
+        // EP2: Treasury 500bps + Affiliate 500bps.
+        bytes16 slug2 = bytes16("ep2             ");
+        IPactRegistry.FeeRecipient[8] memory r2;
+        r2[0].kind = 0; r2[0].destination = treasuryVault; r2[0].bps = 500;
+        r2[1].kind = 1; r2[1].destination = aff2Addr;      r2[1].bps = 500;
+        _registerWithRecipients(slug2, r2, 2);
+        _fundPool(slug2, 1_000_000);
+
+        // EP3: Treasury 1bps.
+        bytes16 slug3 = bytes16("ep3             ");
+        IPactRegistry.FeeRecipient[8] memory r3;
+        r3[0].kind = 0; r3[0].destination = treasuryVault; r3[0].bps = 1;
+        _registerWithRecipients(slug3, r3, 1);
+        _fundPool(slug3, 1_000_000);
+
+        address agent = makeAddr("agent");
+        _provisionAgent(agent, 30_000_000, 30_000_000);
+
+        // Warp to a realistic timestamp so tsOffset 3/2/1 don't underflow.
+        vm.warp(1_000_000);
+
+        IPactSettler.SettlementEvent[] memory events = new IPactSettler.SettlementEvent[](3);
+        events[0] = _makeEvent(0x0B, agent, slug1, 100_000, 0, 50, false, 1, 3);
+        events[1] = _makeEvent(0x0C, agent, slug2, 200_000, 0, 50, false, 2, 2);
+        events[2] = _makeEvent(0x0D, agent, slug3, 300_000, 0, 50, false, 1, 1);
+
+        vm.prank(settlerSigner);
+        settler.settleBatch(events);
+
+        // Agent debited 100k+200k+300k = 600k.
+        assertEq(usdc.balanceOf(agent), 30_000_000 - 600_000, "agent balance");
+        // EP1 pool: +100k - 10k (Treasury 10%) = +90k => 1_090_000.
+        assertEq(pool.balanceOf(slug1).currentBalance, 1_000_000 + 90_000, "ep1 balance");
+        // EP2 pool: +200k - 10k (Treas 5%) - 10k (Aff 5%) = +180k => 1_180_000.
+        assertEq(pool.balanceOf(slug2).currentBalance, 1_000_000 + 180_000, "ep2 balance");
+        // EP3 pool: +300k - 30 (Treasury 1bps) = +299_970 => 1_299_970.
+        assertEq(pool.balanceOf(slug3).currentBalance, 1_000_000 + 299_970, "ep3 balance");
+        // Treasury: 10k (ep1) + 10k (ep2) + 30 (ep3) = 20_030.
+        assertEq(usdc.balanceOf(treasuryVault), 20_030, "treasury");
+        // Affiliate2: 10k (ep2 only).
+        assertEq(usdc.balanceOf(aff2Addr), 10_000, "aff2");
+    }
+
+    /// @notice 05 test 9: happy path CallRecord settlement_status = Settled (0).
+    ///         callId fill(80), premium=1_000, refund=50_000, breach=true.
+    ///         vm.expectEmit ports cr[2]==0 (Settled), readU64(cr,80)==50_000,
+    ///         readU64(cr,88)==50_000 per GATE-A E4.
+    function test_HappyPathSettledStatusEvent() public {
+        address agent = makeAddr("agent");
+        _register(SLUG);
+        _fundPool(SLUG, 5_000_000);
+        _provisionAgent(agent, 10_000_000, 10_000_000);
+
+        IPactSettler.SettlementEvent[] memory events = new IPactSettler.SettlementEvent[](1);
+        events[0] = _makeEvent(0x50, agent, SLUG, 1_000, 50_000, 6000, true, 1, 1);
+
+        bytes16 callId = events[0].callId;
+        uint64 ts = events[0].timestamp;
+
+        // vm.expectEmit ports cr[2]==0 (Settled), readU64(cr,80)==50_000
+        // (refund_lamports), readU64(cr,88)==50_000 (actual_refund_lamports)
+        // per GATE-A E4 (EVM event-as-truth).
+        vm.expectEmit(true, true, true, true);
+        emit IPactSettler.CallSettled(
+            callId, SLUG, agent,
+            1_000, 50_000, 50_000,
+            IPactSettler.SettlementStatus.Settled,  // cr[2] == 0
+            true, 6000, ts
+        );
+
+        vm.prank(settlerSigner);
+        settler.settleBatch(events);
+    }
+
+    /// @notice GATE-A E3 ABI-identity assertion: IPactSettler.CallSettled and
+    ///         PactEvents.CallSettled have the SAME topic0 — 'alias' is literally
+    ///         true; exactly one emission per call, single canonical topic.
+    ///         Signature: keccak256("CallSettled(bytes16,bytes16,address,uint64,
+    ///         uint64,uint64,uint8,bool,uint32,uint64)") — enum encodes as uint8.
+    function test_CallSettled_ABI_Identity() public pure {
+        bytes32 expected = keccak256(
+            "CallSettled(bytes16,bytes16,address,uint64,uint64,uint64,uint8,bool,uint32,uint64)"
+        );
+        // IPactSettler.CallSettled uses SettlementStatus enum (encodes as uint8).
+        bytes32 ipactSettlerTopic = IPactSettler.CallSettled.selector;
+        // PactEvents.CallSettled uses uint8 directly.
+        bytes32 pactEventsTopic = PactEvents.CallSettled.selector;
+
+        assertEq(ipactSettlerTopic, expected, "IPactSettler.CallSettled topic0 mismatch");
+        assertEq(pactEventsTopic,   expected, "PactEvents.CallSettled topic0 mismatch");
+        assertEq(ipactSettlerTopic, pactEventsTopic, "topic0 divergence: not alias-true");
     }
 }
