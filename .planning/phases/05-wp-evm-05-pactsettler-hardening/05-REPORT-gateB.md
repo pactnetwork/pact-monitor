@@ -142,3 +142,39 @@ bookkeeping. Not pushed.
 On approval I will run the gsd-verifier closeout (05-VERIFICATION.md), mark
 the phase complete in STATE/ROADMAP, then per the cadence the captain drives
 push + PR #204. NO push / NO PR #204 comment until you approve. WAITING.
+
+---
+
+## GATE B DONE-STATE (closeout complete — 2026-05-19)
+
+Captain GATE B APPROVED (`05-CAPTAIN-GATE-B-VERDICT.md`): all 4 seams
+verified parity-faithful vs `settle_batch.rs`; deviation `2157b75` RATIFIED
+(provably parity-neutral, compiler-forced); 102/102, regression held.
+WP-EVM-05 COMPLETE. The 4 captain-ordered closeout steps were executed in
+order:
+
+1. **GSD post-exec verify + phase complete.** gsd-verifier:
+   `status=passed`, 12/12 must-haves (`05-VERIFICATION.md`); forge 102/102
+   independently reproduced; all 4 seams verified by line inspection; P1
+   signature pin confirmed (`IPactRegistry.sol` diff empty). STATE advanced
+   (`status: completed`, `Phase: 6`); REQUIREMENTS SET-09..12 `[x]`; ROADMAP
+   Phase 5 `[x] (completed 2026-05-19)`. Commits `2a4d8b0`, `b601982`.
+2. **Push + PR #204.** `git push origin feat/arc-protocol-v1`
+   (`95322c2..b601982`, then `..419b7f3`); in sync. PR #204 completion
+   comment posted
+   (`https://github.com/pactnetwork/pact-monitor/pull/204#issuecomment-4480049277`):
+   the 4 seams, P1 inference + P3 OPTIMIZED-DIVERGENCE, ratified `2157b75`,
+   102/102 + regression, N-A rows, carried WP-06 worklist.
+3. **Handoff extended for a fresh WP-06 crew.** `419b7f3` —
+   `2026-05-18-arc-evm-port-handoff.md` gains a WP-EVM-05 OUTCOMES (LOCKED)
+   section: (a) commit lineage, (b) P1/P3 final locked forms (incl.
+   `2157b75` locked-accepted), (c) the 4 seams with final file:line, (d) the
+   CONSOLIDATED + CLOSED WP-06 spec-defect/parity-matrix worklist (8 items:
+   §(d)1-4 + ruling #8 + P3 corner + 05-NA-MATRIX rows + WP-02/03/04 N-A),
+   (e) WP-06 scope, (f) WP-06 process. Pushed.
+4. **This done-state + cockpit notice.** Then STOP — WP-06 NOT started.
+
+Working tree clean throughout (only `?? .claude/pr-reviews/`); no
+`CLAUDE.md`/`.claude/skills` modification; no contamination. All file-scoped
+conventional commits. Captain reviews the updated handoff, closes this crew,
+and spawns a fresh WP-06 crew seeded with it. WP-EVM-05 closeout DONE.
