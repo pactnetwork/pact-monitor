@@ -101,3 +101,33 @@ per §(e).
 GATE B request. NO push. NO PR #204 comment. Working tree clean. AWAITING
 captain approval (verdict delivered as a file). On approval: captain drives
 push + PR #204 completion comment + closeout + handoff seed.
+
+---
+
+## DONE-STATE (closeout complete — 2026-05-19)
+
+Captain GATE B verdict: **APPROVED** (independently verified — parity matrix
+completeness, spec corrections, D-A drift guard, dummy-upstream pre-existing
+claim, Trigger-1 fuzz parity all confirmed). `06-CAPTAIN-GATE-B-VERDICT.md`
+recorded. **The Arc EVM parity port (WP-EVM-02..06) is COMPLETE.** The 4
+closeout steps were executed IN ORDER:
+
+1. **Tracking marked complete** (`3073990`) — ROADMAP Phase 6 `[x]` +
+   MILESTONE STATUS banner; STATE Current Position/focus/Progress →
+   milestone complete; REQUIREMENTS CLIENT-01 + MATRIX-01 `[x]`
+   (DEPLOY-01 stays open = WP-07).
+2. **Pushed + PR #204 comment** — `git push origin feat/arc-protocol-v1`
+   (`fd18f4d..fa6f023`, then `..d50618a`); PR #204 PORT-COMPLETION comment
+   posted (`pull/204#issuecomment-4480443276`): per-WP deliverables, forge
+   109/109 + client 41/41, parity-matrix path, all 8 §(d) corrections +
+   PR #201 §7.1, WP-07 = only remaining (separate cycle).
+3. **Final handoff extended** (`d50618a`) —
+   `2026-05-18-arc-evm-port-handoff.md` "PARITY PORT COMPLETE — WP-07
+   deploy prerequisites" section (append-only, prior intact): lineage,
+   corrected-spec + matrix paths, WP-07 concretes, locked rulings in force.
+4. **This done-state** appended + short send-safe cockpit notice sent.
+
+Final HEAD: `d50618a` (pushed). forge 109/109 · client 41/41 · D-A drift
+PASS · 0 WP-02..05 reopen · no contamination · tree clean (only
+`?? .claude/pr-reviews/`). WP-07 (Arc testnet deploy/verify) is a SEPARATE
+cycle — NOT started; captain/Rick initiates. Crew STOP.
