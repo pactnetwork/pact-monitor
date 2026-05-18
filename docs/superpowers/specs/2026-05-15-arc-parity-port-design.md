@@ -72,14 +72,17 @@ Any deviation here is a parity bug, not an optimization.
   UnauthorizedSettler, UnauthorizedAuthority, DuplicateCallId,
   EndpointNotFound, PoolDepleted, InvalidTimestamp, BatchTooLarge,
   PremiumTooSmall, InvalidSlug, ArithmeticOverflow, FeeRecipientArrayTooLong,
-  FeeBpsExceedsCap, FeeRecipientDuplicateDestination,
+  FeeBpsExceedsCap, FeeBpsSumOver10k, FeeRecipientDuplicateDestination,
   FeeRecipientInvalidUsdcMint, MultipleTreasuryRecipients,
   RecipientCoverageMismatch, ProtocolConfigNotInitialized,
   TreasuryNotInitialized, EndpointAlreadyRegistered, InvalidFeeRecipientKind,
   InvalidProtocolConfig, InvalidTreasury, MissingTreasuryEntry,
-  TreasuryBpsZero, InvalidAffiliateAta, ProtocolPaused`. (Some lose meaning
-  on EVM — see §4 #7; documented per-variant in the parity matrix at
-  WP-EVM-06.)
+  TreasuryBpsZero, InvalidAffiliateAta, ProtocolPaused` (30 variants —
+  `error.rs`/`PactErrors.sol` is the named authority; `FeeBpsSumOver10k`
+  (6018) was omitted from the original list, corrected per WP-EVM-06 §(d)#1).
+  (Some lose meaning on EVM — see §4 #7; tagged per-variant
+  IDENTICAL/OPTIMIZED-DIVERGENCE/N-A-ON-EVM in the parity matrix
+  `docs/superpowers/specs/2026-05-18-arc-parity-matrix.md`, WP-EVM-06.)
 
 ## 4. Divergence ledger — mechanism changes, behavior preserved
 
@@ -91,8 +94,10 @@ Any deviation here is a parity bug, not an optimization.
 | 4 | Bytemuck structs with explicit padding | Solidity-native slot packing; value fields stay `uint64` | Pro: less storage gas, parity-friendly widths. Con: byte-layout not comparable to Solana (irrelevant — no shared state) |
 | 5 | `SettlementAuthority` PDA-as-token-delegate | OZ `AccessControl` `SETTLER_ROLE`; the contract is itself the ERC-20 spender | Pro: single-tx revoke, audit-familiar. Con: none |
 | 6 | `initialize_treasury`, `initialize_settlement_authority`, `initialize_protocol_config` (rent-funded accounts) | No rent on EVM → collapse into `PactRegistry` constructor/initializer + setters | Pro: 3 fewer instructions, smaller surface. Con: none |
-| 7 | `AffiliateAta` SPL token-account introspection (owner == token program, state byte == initialized, mint == USDC); `AffiliatePda` reserved | **No EVM equivalent.** An ERC-20 recipient is just an address. `AffiliateAta`/`AffiliatePda` collapse to "Affiliate = plain address". The `kind` enum is preserved on the wire and in events for indexer parity; validation reduces to "non-zero, not duplicate, not aliasing Treasury". `InvalidAffiliateAta` / `FeeRecipientInvalidUsdcMint` become unreachable and are documented as N/A-on-EVM in the parity matrix | Pro: correct for EVM (any address receives ERC-20); removes Solana-platform-specific logic. Con: drops checks that have no EVM meaning — **this is the single largest intentional divergence; called out explicitly** |
+| 7 | `AffiliateAta` SPL token-account introspection (owner == token program, state byte == initialized, mint == USDC); `AffiliatePda` reserved | **No EVM equivalent.** An ERC-20 recipient is just an address. `AffiliateAta`/`AffiliatePda` collapse to "Affiliate = plain address". The `kind` enum is preserved on the wire and in events for indexer parity; validation reduces to "non-zero, not duplicate, not aliasing Treasury". **CORRECTED (WP-EVM-06 §(d)#2):** `InvalidAffiliateAta` is **OPTIMIZED-DIVERGENCE, NOT N-A** — the residual "affiliate destination non-zero" invariant keeps it reachable with a narrowed trigger (zero-address guard, `FeeValidation.sol` final loop). Only `FeeRecipientInvalidUsdcMint` is genuinely **N-A-ON-EVM** (the `mint == USDC` SPL-platform check has no EVM meaning). Per-variant tags in the parity matrix `2026-05-18-arc-parity-matrix.md`. | Pro: correct for EVM (any address receives ERC-20); removes Solana-platform-specific logic. Con: drops checks that have no EVM meaning — **this is the single largest intentional divergence; called out explicitly** |
 | 8 | USDC = SPL mint; "lamports" naming | USDC = Arc native gas token *and* 6-dec ERC-20; `uint64` amounts retained; **paymaster WP dropped** | Pro: dual-token problem gone. Con: none |
+| 9 | `update_endpoint_config` per-field presence flags (optional-arg mutation) | Full typed field set — callers pass current values for unchanged fields (handoff §(b) ruling 7) | Pro: simpler typed calldata; state parity preserved (same resulting `EndpointConfig`). Con: none — mechanism-only divergence (WP-EVM-06 §(d)#3) |
+| 10 | `CoveragePool.created_at` set at `register_endpoint` | Set lazily at first `topUp` on EVM; informational-only, never read by `top_up`/`settle` logic (handoff §(b) ruling D2) | Pro: no register-time pool write needed (§4 #2 mapping). Con: `created_at` semantics differ pre-first-topUp — informational-only, no economic effect (WP-EVM-06 §(d)#4) |
 
 ## 5. Package structure (mirrors the Solana side)
 
@@ -182,3 +187,64 @@ contract state); WP-06 client can begin once ABIs stabilize after WP-04.
 - Parity matrix doc complete: every Solana behavior marked IDENTICAL,
   OPTIMIZED-DIVERGENCE (with §4 reference), or N/A-on-EVM (with rationale).
 - No mainnet deploy. Testnet deploy is WP-EVM-07, out of scope here.
+
+---
+
+## WP-EVM-06 Corrections (formal §(d) closed-list reconciliation)
+
+This appendix records every spec correction WP-EVM-06 applied so a reviewer
+can verify the spec now matches implemented reality. The handoff §(d)
+consolidated list (items 1-8) is COMPLETE and CLOSED. Git history preserves
+the before-state; the per-variant authority is the parity matrix
+`docs/superpowers/specs/2026-05-18-arc-parity-matrix.md`.
+
+1. **§3 omitted `FeeBpsSumOver10k` (6018).** WHAT: added it to the §3
+   enumerated `PactError` list (29 → 30) and annotated the count + authority.
+   WHY: `error.rs`/`PactErrors.sol` define 30 variants; 6018 is a DISTINCT
+   trigger from `FeeBpsExceedsCap` (6017) — `fee.rs:83-88` returns
+   `FeeBpsSumOver10k` when `sum_bps > ABSOLUTE_FEE_BPS_CAP`. The original
+   list was a documentation defect; the code was always correct (handoff
+   §(b) ruling 1). Matrix A#16 IDENTICAL.
+2. **§4 #7 wrongly called `InvalidAffiliateAta` unreachable/N-A.** WHAT:
+   rewrote the §4 #7 cell — `InvalidAffiliateAta` is OPTIMIZED-DIVERGENCE
+   (reachable via the zero-address affiliate guard); only
+   `FeeRecipientInvalidUsdcMint` is true N-A-ON-EVM. WHY: the residual
+   "affiliate destination non-zero" invariant survives the §4 divergence
+   (handoff §(b) ruling 2). Matrix A#29 / A#18.
+3. **`updateEndpointConfig` mechanism divergence.** WHAT: added §4 row 9 —
+   Solana per-field presence flags → EVM full typed field set. WHY: state
+   parity is preserved (same resulting `EndpointConfig`); only the calldata
+   mechanism differs (handoff §(b) ruling 7). Matrix B "Stats accounting".
+4. **D2 `created_at` timing.** WHAT: added §4 row 10 — EVM sets
+   `CoveragePool.created_at` lazily at first `topUp` (Solana sets at
+   register). WHY: informational-only; never read by `top_up`/`settle`
+   logic, no economic effect (handoff §(b) ruling D2).
+5. **LOCKED ruling #8 (D1-scope refinement).** WHAT: recorded here — WP-03
+   D1 ("NO modification of committed WP-02 `PactRegistry`") was scoped to
+   `PactPool` reaching into the registry; it does NOT bar WP-04+ adding
+   their own `SETTLER_ROLE`-gated writers where §6 places `EndpointConfig`
+   state. WHY: WP-04 E1 added `recordCallAndCapAccrual`/`recordRefundPaid`
+   under this (now-locked) refinement; it is a refinement, not a
+   contradiction. Matrix B "Stats accounting".
+6. **P3 OPTIMIZED-DIVERGENCE corner.** WHAT: recorded the §4 #5 corner —
+   unauthorized-caller-AND-paused returns `AccessControlUnauthorizedAccount`
+   on EVM vs `ProtocolPaused` on Solana. WHY: Solidity modifiers run before
+   the body; authorized-settler+paused is IDENTICAL (`ProtocolPaused`); the
+   corner is operationally meaningless (captain-ratified WP-05 GATE-A P3).
+   Matrix Section C P3.
+7. **N-A-ON-EVM rows.** WHAT: cross-linked the seven `05-NA-MATRIX` rows
+   (09:47/78, 09:144, 09:172, 10:94/128, D-LOCK-EXPCAP-NA). WHY: PDA/Treasury
+   spoofing is impossible on EVM; the residual authority invariant is
+   source-enforced and covered by the surviving WP-02 tests (all PASS).
+   Matrix Section C.
+8. **WP-02/03/04 N-A items.** WHAT: cross-linked the Solana-platform-mechanics
+   N-A class — true-N-A `FeeRecipientInvalidUsdcMint`; WP-04 E4 `CallRecord`
+   byte-layout → `vm.expectEmit` on `CallSettled`; PDA/`InvalidSeeds`,
+   `AccountAlreadyInitialized`, signer/rent/`system_program`, byte-offset,
+   SPL-mint constants. WHY: genuine Solana-platform mechanics with no EVM
+   trigger (handoff §(c) PORT-vs-N-A rule). Matrix Section E.
+
+This also corrects PR #201 design doc §7.1 ("client probably not needed for
+v1"): the `@pact-network/protocol-evm-v1-client` IS required for parity at
+the integration layer (settler `ChainAdapter` + indexer per-chain poller) —
+delivered in WP-EVM-06 (design spec §5).
