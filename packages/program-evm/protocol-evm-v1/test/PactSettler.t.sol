@@ -293,4 +293,96 @@ contract PactSettlerTest is Test {
             timestamp:            uint64(block.timestamp) - tsOffset
         });
     }
+
+    // -----------------------------------------------------------------------
+    // Task 1 (04-03) — SET-01 + SET-03 guard tests
+    // Ported from 05-settle-batch.test.ts tests 6, 8 + extra guard coverage.
+    // -----------------------------------------------------------------------
+
+    /// @notice 05 test 8: unauthorized settler rejected (SET-01).
+    ///         settle_batch.rs:95-97 (is_signer) → EVM onlyRole(SETTLER_ROLE).
+    ///         Mirrors PactPool.t.sol test_Hooks_RejectNonSettler pattern.
+    function test_UnauthorizedSettlerRejected() public {
+        _register(SLUG);
+        _fundPool(SLUG, 5_000_000);
+        address agent = makeAddr("agent");
+        _provisionAgent(agent, 10_000_000, 10_000_000);
+
+        IPactSettler.SettlementEvent[] memory events = new IPactSettler.SettlementEvent[](1);
+        events[0] = _makeEvent(0x50, agent, SLUG, 1_000, 0, 0, false, 1, 1);
+
+        address fake = makeAddr("fake");
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector,
+                fake,
+                settlerRole  // cached in setUp() before any vm.prank (pitfall 3)
+            )
+        );
+        vm.prank(fake);
+        settler.settleBatch(events);
+    }
+
+    /// @notice 05 test 6: min-premium edge — premium < MIN_PREMIUM rejected
+    ///         (SET-03). settle_batch.rs:161-163.
+    function test_MinPremiumEdgeRejected() public {
+        _register(SLUG);
+        _fundPool(SLUG, 5_000_000);
+        address agent = makeAddr("agent");
+        _provisionAgent(agent, 10_000_000, 10_000_000);
+
+        // premium = 50 < ArcConfig.MIN_PREMIUM (100)
+        IPactSettler.SettlementEvent[] memory events = new IPactSettler.SettlementEvent[](1);
+        events[0] = _makeEvent(0x1e, agent, SLUG, 50, 0, 0, false, 1, 1);
+
+        vm.prank(settlerSigner);
+        vm.expectRevert(PremiumTooSmall.selector);
+        settler.settleBatch(events);
+    }
+
+    /// @notice timestamp > now rejected (SET-03). settle_batch.rs:158-160.
+    function test_InvalidTimestampRejected() public {
+        _register(SLUG);
+        _fundPool(SLUG, 5_000_000);
+        address agent = makeAddr("agent");
+        _provisionAgent(agent, 10_000_000, 10_000_000);
+
+        IPactSettler.SettlementEvent[] memory events = new IPactSettler.SettlementEvent[](1);
+        // timestamp = block.timestamp + 1 (future)
+        events[0] = IPactSettler.SettlementEvent({
+            callId:               bytes16(uint128(0xAA)),
+            agent:                agent,
+            endpointSlug:         SLUG,
+            premium:              1_000,
+            refund:               0,
+            latencyMs:            0,
+            breach:               false,
+            feeRecipientCountHint: 1,
+            timestamp:            uint64(block.timestamp) + 1
+        });
+
+        vm.prank(settlerSigner);
+        vm.expectRevert(InvalidTimestamp.selector);
+        settler.settleBatch(events);
+    }
+
+    /// @notice feeRecipientCountHint != stored feeRecipientCount reverts
+    ///         RecipientCoverageMismatch (SET-03). settle_batch.rs:212-215.
+    ///         _register stores feeRecipientCount=0 (no override), but the
+    ///         protocol default fee template has 1 recipient — the registry
+    ///         resolves to 1. Hint=2 mismatches.
+    function test_RecipientCoverageMismatchRejected() public {
+        _register(SLUG);
+        _fundPool(SLUG, 5_000_000);
+        address agent = makeAddr("agent");
+        _provisionAgent(agent, 10_000_000, 10_000_000);
+
+        // stored feeRecipientCount = 1 (protocol default Treasury), hint = 2
+        IPactSettler.SettlementEvent[] memory events = new IPactSettler.SettlementEvent[](1);
+        events[0] = _makeEvent(0xBB, agent, SLUG, 1_000, 0, 0, false, 2, 1);
+
+        vm.prank(settlerSigner);
+        vm.expectRevert(RecipientCoverageMismatch.selector);
+        settler.settleBatch(events);
+    }
 }
