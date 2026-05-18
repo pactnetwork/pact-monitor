@@ -29,7 +29,12 @@ contract DeploymentTest {
     }
 
     function test_DeployPactPool() external {
-        PactPool p = new PactPool(ArcConfig.ARC_TESTNET_USDC);
+        // WP-EVM-03 added the registry reference (§4 #2 pool-existence model).
+        IPactRegistry.FeeRecipient[8] memory emptyDefaults;
+        PactRegistry r = new PactRegistry(
+            address(this), ArcConfig.ARC_TESTNET_USDC, address(0x1), 3000, emptyDefaults, 0
+        );
+        PactPool p = new PactPool(ArcConfig.ARC_TESTNET_USDC, address(r));
         require(address(p).code.length > 0, "pool: no bytecode");
         require(p.usdc() == ArcConfig.ARC_TESTNET_USDC, "pool: usdc not set");
     }
