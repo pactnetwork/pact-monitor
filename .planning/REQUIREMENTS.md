@@ -35,15 +35,15 @@ subset of `tests/05-settle-batch.test.ts`.
   caller reverts (`05` "unauthorized settler rejected"). Mirrors
   `settle_batch.rs:95-128` settler-signer / `SettlementAuthority` check
   (design §4#5 — OZ AccessControl `SETTLER_ROLE`).
-- [ ] **SET-02**: Premium-in via `transferFrom(agent, pool, premium)` wrapped
+- [x] **SET-02**: Premium-in via `transferFrom(agent, pool, premium)` wrapped
   in try/catch; on failure the event is marked `DelegateFailed`, no funds
   move, the batch continues (`05` "revoke between events"; §4#1;
   `settle_batch.rs:295-355`).
-- [ ] **SET-03**: Per-event guards: `premium < MIN_PREMIUM` → `PremiumTooSmall`;
+- [x] **SET-03**: Per-event guards: `premium < MIN_PREMIUM` → `PremiumTooSmall`;
   `timestamp > now` → `InvalidTimestamp`; `feeRecipientCountHint != stored
   feeRecipientCount` → `RecipientCoverageMismatch`
   (`settle_batch.rs:158-166,213-215`).
-- [ ] **SET-04**: Repeated `callId` → `DuplicateCallId` via
+- [x] **SET-04**: Repeated `callId` → `DuplicateCallId` via
   `mapping(bytes16 => bool)` (design §3 dedup; `settle_batch.rs:194-196`).
 - [ ] **SET-05**: On success, pool credited gross premium and fee fan-out pays
   each recipient `premium * bps / 10000` (integer floor, `uint64`

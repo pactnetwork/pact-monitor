@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-last_updated: "2026-05-18T12:30:00.000Z"
-last_activity: 2026-05-18 -- 04-02 complete (AccessControl + E1 hooks + harness)
+last_updated: "2026-05-18T13:00:00.000Z"
+last_activity: 2026-05-18 -- 04-03 complete (per-event guards + dedup + premium-in DelegateFailed)
 progress:
   total_phases: 7
   completed_phases: 0
   total_plans: 4
-  completed_plans: 2
-  percent: 50
+  completed_plans: 3
+  percent: 75
 ---
 
 # Project State
@@ -25,26 +25,37 @@ the parity oracle. This is a PORT, not a redesign.
 ## Current Position
 
 Phase: 4 of 7 (PactSettler Happy Path)
-Plan: 2 of 4 complete in current phase
-Status: Executing — 04-02 done; 04-03 (per-event guards + dedup + premium-in) is next
-Last activity: 2026-05-18 -- 04-02 complete (AccessControl + E1 hooks + harness)
+Plan: 3 of 4 complete in current phase
+Status: Executing — 04-03 done; 04-04 (pool credit + fee fan-out + refund + stats + CallSettled emit) is next
+Last activity: 2026-05-18 -- 04-03 complete (per-event guards + dedup + premium-in DelegateFailed)
 `.planning/` scaffold for the GSD plan-phase pipeline (spec §8 mandates GSD for
 WP-04/05). WP-EVM-01/02/03 complete and pushed; WP-02/03 were plan-doc-driven
 (no `.planning/`), so WP-04 is the first GSD-orchestrated phase.
 
-Progress: WP-01 ✓ · WP-02 ✓ · WP-03 ✓ · WP-04 (04-01 ✓, 04-02 ✓, 04-03/04 pending) · WP-05/06/07 pending
+Progress: WP-01 ✓ · WP-02 ✓ · WP-03 ✓ · WP-04 (04-01 ✓, 04-02 ✓, 04-03 ✓, 04-04 pending) · WP-05/06/07 pending
 
 ## Decisions (WP-EVM-04)
 
 - **E1 OPTION (a) RULED**: PactRegistry gains OZ AccessControl + SETTLER_ROLE +
   two SETTLER_ROLE-gated hooks (recordCallAndCapAccrual + recordRefundPaid)
   mirroring settle_batch.rs's two ep.* mutation points (committed in 04-02).
+
 - **E2 RULED**: PactSettler 3-arg ctor + OZ AccessControl SETTLER_ROLE;
   DEFAULT_ADMIN_ROLE -> registry.authority() (committed in 04-02).
+
 - **D1 scope refinement**: WP-03 D1 barred PactPool reaching into registry; WP-04
   adding its own gated stat-writer is a sanctioned additive extension per GATE-A
   E1 condition (4). To be appended to handoff locked-rulings as ruling #8 during
   WP-06 formal-correction pass.
+
+- **04-03 dedup-before-premium-in (E4)**: `_settledCallIds[callId]=true` set at
+  line 92, `try IERC20...transferFrom` at line 101 — sentinel before try/catch
+  so DelegateFailed events also consume the callId (GATE-A E4, verified from
+  settle_batch.rs:243-262).
+
+- **04-03 provisional emit seam**: success path emits `CallSettled(Settled,
+  actualRefund=0)` provisionally; plan 04-04 MUST replace with full economic
+  emit (one IPactSettler.CallSettled per call, GATE-A E3).
 
 ## Notes
 
