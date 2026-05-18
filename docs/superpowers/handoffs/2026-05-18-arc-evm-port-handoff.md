@@ -400,3 +400,189 @@ and file-report convention (gate reports →
 `cockpit runtime send pact-network` notice). GSD `use_worktrees:false` +
 `code_review:false` + Nyquist/security off are set in `.planning/config.json`
 (WP-05 may re-enable a threat-model pass per §(e)).
+
+---
+
+## WP-EVM-05 OUTCOMES (LOCKED — read before WP-EVM-06)
+
+WP-EVM-05 (PactSettler hardening) is COMPLETE: captain GATE A + GATE B
+approved (verdict files `.planning/phases/05-wp-evm-05-pactsettler-hardening/05-CAPTAIN-GATE-A-VERDICT.md`
+and `05-CAPTAIN-GATE-B-VERDICT.md`), gsd-verifier passed (12/12 must-haves,
+`05-VERIFICATION.md`), `forge build` clean, `forge test` 102/102 (0 failed;
+90 WP-04 regression preserved + 12 WP-05; PactSettler suite 20 -> 32), phase
+05 marked complete in ROADMAP/STATE, pushed (`feat/arc-protocol-v1` @
+`b601982`), PR #204 completion comment posted. ALL §(b) WP-02/03 LOCKED
+rulings + ruling #8 (D1-scope refinement) + the §(c) methodology + §(e)
+conventions + the WP-EVM-04 OUTCOMES E1-E4/guard-precedence/seams REMAIN IN
+FORCE. The following are now ALSO settled law — do NOT re-derive or reopen.
+
+### (a) WP-EVM-05 commit lineage (on `feat/arc-protocol-v1`)
+
+- GATE-A: `111bc8a` 05-GATE-A-DECISIONS record (also `97576bc` research ·
+  `379200a` plan-phase artifacts + GATE-A request).
+- 05-02 (ProtocolPaused + BatchTooLarge): `89f43b7` RED · `26c6d3c` GREEN ·
+  `155b096` bookkeeping.
+- 05-03 (EndpointPaused @ D-LOCK-PREC slot): `c14a254` RED · `5e47e3a` GREEN
+  · `385f7b5` bookkeeping.
+- 05-04 (ExposureCapClamped + P1): `7eecfdb` RED · `323699e` GREEN cap clamp
+  · `2157b75` GREEN P1 inference (the RATIFIED stack-too-deep alias inline) ·
+  `d7ee074` bookkeeping.
+- 05-05 (PoolDepleted): `5954ba3` RED · `5339316` GREEN · `3bf2a45`
+  bookkeeping.
+- 05-06 (N-A matrix + adversarial pass + regression): `c7ab3ed` ·
+  `c3c2297` · `7bfb683`.
+- Closeout: `139d775` GATE-B request · `2a4d8b0` gsd-verifier VERIFICATION +
+  STATE · `b601982` ROADMAP Phase-5 `[x]`.
+- Canonical records: `05-GATE-A-DECISIONS.md`, `05-CAPTAIN-GATE-A-VERDICT.md`,
+  `05-CAPTAIN-GATE-B-VERDICT.md`, `05-VERIFICATION.md`, `05-NA-MATRIX.md`,
+  `05-REPORT-gateA.md`, `05-REPORT-gateB.md`.
+
+### (b) P1 / P3 final implemented forms — LOCKED
+
+- **P1 (LOCKED):** ExposureCapClamped status is INFERRED in
+  `PactSettler._settleSuccess` via `if (payableRefund < ev.refund) { status =
+  SettlementStatus.ExposureCapClamped; }` (`PactSettler.sol:192-193`), set
+  AFTER the (unchanged) `recordCallAndCapAccrual` call and BEFORE the
+  pool-balance check (`PactSettler.sol:220`) so a later PoolDepleted
+  overwrites it. `payableRefund < ev.refund` is provably equivalent to Solana
+  `intended > cap_remaining` at every boundary (clamp / no-clamp / `==` /
+  `intended==0`), because WP-04 seeded `intendedRefundAfterCap = ev.refund`
+  and never mutated it and Solana seeds `intended_refund_after_cap =
+  refund_lamports` (`settle_batch.rs:380`). The seam-pinned
+  `recordCallAndCapAccrual` signature (`PactRegistry.sol:244-249`) is
+  UNCHANGED — no bool/enum return. `currentPeriodRefunds` accrues the CLAMPED
+  amount inside `recordCallAndCapAccrual` and is NEVER rolled back
+  (`recordRefundPaid` is only called when `actualRefund > 0`). **The
+  `2157b75` alias inline (`intendedRefundAfterCap` -> `ev.refund`, one WP-04
+  alias line, compiler-forced stack-too-deep from the new `status` local) is
+  LOCKED-ACCEPTED** — captain-ratified at GATE B as provably parity-neutral;
+  do NOT "fix"/revert it.
+- **P3 (LOCKED — OPTIMIZED-DIVERGENCE):** `settleBatch` keeps the WP-04
+  `onlyRole(SETTLER_ROLE)` modifier; the protocol-paused fast-revert is the
+  first body statement. For the unauthorized-caller-AND-paused corner, EVM
+  returns `AccessControlUnauthorizedAccount` (modifier before body) while
+  Solana returns `ProtocolPaused` (`settle_batch.rs:99-115` before
+  `:117-130`). Authorized-settler+paused is IDENTICAL on both chains
+  (`ProtocolPaused`). Only the operationally-real paths are tested
+  (`test_ProtocolPaused_RejectsSettleBatch`,
+  `test_ProtocolPaused_ResumesAfterUnpause`); NO test asserts Solana behavior
+  for the unauthorized+paused corner — it is a WP-06 parity-matrix entry, not
+  a defect. The alternative (in-body `_checkRole` after the pause check)
+  rewrites the LOCKED WP-04 E2 shape and is FORBIDDEN.
+
+### (c) The 4 filled seams — final file:line (post `b601982`)
+
+ADDITIVE fills; no WP-04 reorder/rewrite (except the LOCKED `2157b75`
+alias). Anchors authoritative; `settle_batch.rs` is the parity authority.
+
+1. **ProtocolPaused** `PactSettler.sol:70`
+   (`if (registry.protocolPaused()) revert ProtocolPaused();`, first body
+   statement) + **BatchTooLarge** `PactSettler.sol:74`
+   (`if (events.length > ArcConfig.MAX_BATCH_SIZE) revert BatchTooLarge();`,
+   strict `>`, 50 OK / 51 reverts) — ports `settle_batch.rs:99-115` then
+   `:132-135`, in that order, pre-loop.
+2. **EndpointPaused** `PactSettler.sol:102`
+   (`if (ep.paused) revert EndpointPaused();`) at the D-LOCK-PREC slot:
+   dedup READ `:94` < EndpointPaused `:102` < RecipientCoverageMismatch
+   `:104` < dedup SET `:111` — ports `settle_batch.rs:209` (after `:194`,
+   before `:213`). LOCKED test `test_DuplicateCallIdPrecedesRecipientCoverageMismatch`
+   stays green.
+3. **ExposureCapClamped** — cap clamp in
+   `PactRegistry.recordCallAndCapAccrual` between
+   `payableRefund = intendedRefund;` (`PactRegistry.sol:264`) and the
+   `currentPeriodRefunds` accrual (`PactRegistry.sol:280`): ternary
+   `capRemaining` (`:271`) parity-exact to `saturating_sub`
+   (`exposureCap <= currentPeriodRefunds => 0`, no underflow), clamp at
+   `:274`. P1 inference at `PactSettler.sol:192-193`. Ports
+   `settle_batch.rs:400-414`.
+4. **PoolDepleted** `PactSettler.sol:232`
+   (`status = SettlementStatus.PoolDepleted; actualRefund = 0;`) filling the
+   formerly-empty `if (ps.currentBalance < payableRefund)` block
+   (`:220`); the WP-04 `else` is byte-unchanged. Ports
+   `settle_batch.rs:462-469`. The emit uses `status`
+   (`PactSettler.sol:263`). D-LOCK-CLAMP-ORDER (PoolDepleted overwrites
+   ExposureCapClamped) is proven by a combined test.
+
+### (d) CONSOLIDATED WP-EVM-06 spec-defect / parity-matrix worklist
+
+WP-06 MUST produce the per-variant parity matrix (each PactError variant +
+each behavior tagged IDENTICAL / OPTIMIZED-DIVERGENCE / N-A-ON-EVM with
+rationale) AND formally correct the design spec for ALL of the following.
+This list is now COMPLETE and CLOSED — no item may be dropped:
+
+1. Design-spec §3 enumerated `PactError` list omits `FeeBpsSumOver10k`
+   (6018) — add it; `error.rs` has 30 variants. (§(d)#1, original.)
+2. §4 #7 wording "InvalidAffiliateAta unreachable / N-A" is wrong — it is
+   OPTIMIZED-DIVERGENCE (zero-address affiliate guard). Only
+   `FeeRecipientInvalidUsdcMint` is true N-A. (§(d)#2, original.)
+3. `updateEndpointConfig` per-field-flags -> full-typed-set mechanism
+   divergence (state parity preserved). (§(d)#3, original.)
+4. D2: `CoveragePool.created_at` set lazily at first `topUp` on EVM
+   (informational-only; Solana sets at register). (§(d)#4, original.)
+5. **Locked ruling #8 (D1-scope refinement):** WP-03 D1 ("NO modification of
+   committed WP-02 `PactRegistry`") was scoped to `PactPool` reaching into
+   the registry; it does NOT bar WP-04+ adding their own SETTLER_ROLE-gated
+   writers where design-spec §6 places `EndpointConfig` state. Formally
+   append to the spec.
+6. **P3 OPTIMIZED-DIVERGENCE corner:** unauthorized-caller-AND-paused returns
+   `AccessControlUnauthorizedAccount` on EVM vs `ProtocolPaused` on Solana
+   (operationally meaningless; authorized+paused identical). Matrix entry +
+   spec note. Full text in `05-NA-MATRIX.md` "P3 OPTIMIZED-DIVERGENCE Corner".
+7. **N-A-ON-EVM rows from `05-NA-MATRIX.md`** (each with the surviving WP-02
+   authority-invariant test): `09:47`, `09:78` (pause_endpoint fake /
+   wrong-owner ProtocolConfig); `09:144` (update_endpoint_config fake
+   ProtocolConfig); `09:172` (update_fee_recipients fake Treasury PDA);
+   `10:94`, `10:128` (pause_protocol fake / wrong-owner ProtocolConfig);
+   `D-LOCK-EXPCAP-NA` (`ExposureCapExceeded` 6002 has no `settle_batch`
+   trigger — the cap clamps to a status, never reverts). Surviving tests:
+   `test_PauseEndpoint_RejectsNonAuthority`,
+   `test_UpdateEndpointConfig_RejectsNonAuthority`,
+   `test_UpdateFeeRecipients_RejectsNonAuthority`,
+   `test_PauseProtocol_RejectsNonAuthority` (all PASS).
+8. **WP-02/03/04 N-A items** already recorded in this handoff: §(b)#2
+   `FeeRecipientInvalidUsdcMint` (true N-A, SPL-mint platform check); WP-04
+   E4 byte-layout assertions (`CallRecord` -> `vm.expectEmit` on
+   `CallSettled`); and the §(c)/D-LOCK-5 class of genuine Solana-platform
+   mechanics (PDA derivation/`InvalidSeeds`, `AccountAlreadyInitialized`,
+   signer/rent/`system_program`, byte-offset/layout, SPL-mint constants).
+   WP-06 folds these into the single per-variant matrix.
+
+Source N-A rationales + the bounded adversarial-pass review (3 vectors, all
+CLEAN) live in full in
+`.planning/phases/05-wp-evm-05-pactsettler-hardening/05-NA-MATRIX.md` — WP-06
+reads it verbatim; do not re-derive.
+
+### (e) WP-EVM-06 scope
+
+- `@pact-network/protocol-evm-v1-client` — NEW pnpm workspace member at
+  `packages/protocol-evm-v1-client/` (viem), sibling to
+  `packages/protocol-v1-client/`, mirroring its module map
+  (`addresses.ts`/`encode.ts`/`state.ts`/`errors.ts`/`constants.ts`/
+  `helpers.ts`) per design-spec §5.
+- Consolidated forge **fuzz** + **gas-snapshot** suite (fee-split integer
+  rounding, batch handling) on top of the 102 ported scenario tests.
+- The live `IERC20(USDC).decimals() == 6` assertion deferred from
+  WP-EVM-01.
+- The per-variant **parity-matrix doc** AND the formal design-spec
+  corrections for ALL §(d) items 1-8 above.
+- Out of scope: WP-07 (deploy/verify, separate cycle); any WP-02/03/04/05
+  reopen.
+
+### (f) WP-EVM-06 process
+
+WP-06 is **authored-at-turn** (lighter than the settler WPs — NOT
+necessarily GSD; the captain decides the plan method at WP-06 GATE A). Same
+captain gate cadence as WP-02..05: (1) plan-review GATE A — author the plan,
+write `.planning/phases/<06-...>/06-REPORT-gateA.md` AND a short
+`cockpit runtime send pact-network` notice (the FILE is the source of truth;
+the relay misroutes), WAIT for the captain verdict (delivered as a file)
+BEFORE any client/suite code; (2) final GATE B — after build/test green,
+write `06-REPORT-gateB.md` + cockpit notice, WAIT, NO push / NO PR #204
+comment until captain approval. Same methodology (§c — Solana source
+authority, STOP-AND-ASK on parity ambiguity, strict TDD RED-before-GREEN,
+file-scoped conventional commits, no emojis, pnpm/forge never npm),
+contamination guardrail (§e — only `?? .claude/pr-reviews/` expected; never
+touch `CLAUDE.md`/`.claude/skills`; never run a `pact` skill installer),
+GitNexus deferral (§e), and file-report convention. ALL WP-02/03/04/05
+locked rulings + the §(b) list + ruling #8 + WP-04 OUTCOMES + WP-05 OUTCOMES
+remain intact and are NOT reopened.
