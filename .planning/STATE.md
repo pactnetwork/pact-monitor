@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-last_updated: "2026-05-18T16:27:29.253Z"
+last_updated: "2026-05-18T16:38:50.582Z"
 last_activity: 2026-05-18
 progress:
   total_phases: 7
   completed_phases: 1
   total_plans: 10
-  completed_plans: 7
-  percent: 70
+  completed_plans: 8
+  percent: 80
 ---
 
 # Project State
@@ -25,14 +25,26 @@ the parity oracle. This is a PORT, not a redesign.
 ## Current Position
 
 Phase: 05 (wp-evm-05-pactsettler-hardening) — EXECUTING
-Plan: 3 of 6 COMPLETE — executing plan 4 next
+Plan: 4 of 6 COMPLETE — executing plan 5 next
 Status: Executing Phase 05
-Last activity: 2026-05-18 -- 05-03 complete (EndpointPaused per-event at D-LOCK-PREC slot; 97/97 forge green)
+Last activity: 2026-05-18 -- 05-04 complete (exposure-cap clamp seam 1 + P1 inference; 100/100 forge green)
 `.planning/` scaffold for the GSD plan-phase pipeline (spec §8 mandates GSD for
 WP-04/05). WP-EVM-01/02/03 complete and pushed; WP-02/03 were plan-doc-driven
 (no `.planning/`), so WP-04 is the first GSD-orchestrated phase.
 
 Progress: WP-01 ✓ · WP-02 ✓ · WP-03 ✓ · WP-04 ✓ COMPLETE (GATE B approved + pushed + PR #204) · WP-05/06/07 pending
+
+## Decisions (WP-EVM-05 plan 05-04)
+
+- **05-04 SET-10 ExposureCapClamped (seam 1)**: cap clamp inserted in `recordCallAndCapAccrual` between period reset and `currentPeriodRefunds` accrual (PactRegistry.sol). Ports `settle_batch.rs:400-408`. Ternary saturatingSub parity (no underflow). Clamped `payableRefund` returned to UNCHANGED `_settleSuccess` call site (P1 seam pin).
+
+- **05-04 P1 inference in _settleSuccess**: `SettlementStatus status = SettlementStatus.Settled;` local introduced after `recordCallAndCapAccrual` call, BEFORE pool-balance check. `if (payableRefund < ev.refund) { status = ExposureCapClamped; }` -- provably equivalent to Solana :407 (captain-ratified P1 mechanism). Emit uses `status` local (not hardcoded Settled). D-LOCK-CLAMP-ORDER satisfied: ExposureCapClamped set before pool-balance check so PoolDepleted (05-05) can overwrite it.
+
+- **05-04 Rule 3 stack-too-deep fix**: inlined `intendedRefundAfterCap` as `ev.refund` at the call site to free one stack slot. Semantically identical (`settle_batch.rs:380` seeds `intended = refund_lamports == ev.refund`). P1 predicate becomes `payableRefund < ev.refund` -- equivalent. No parity impact.
+
+- **05-04 Adversarial vector 1 tested**: `test_ExposureCap_CumulativeClampAcrossBatches` includes third batch where `currentPeriodRefunds >= exposureCap` -> `cap_remaining=0` -> all clamps to 0 (ExposureCapClamped, actualRefund=0). GATE-A adversarial pass vector 1 covered.
+
+- **05-04 forge result**: 100/100 green (97 prior + 3 new exposure-cap tests). test_DuplicateCallIdPrecedesRecipientCoverageMismatch PASS.
 
 ## Decisions (WP-EVM-05 plan 05-03)
 
