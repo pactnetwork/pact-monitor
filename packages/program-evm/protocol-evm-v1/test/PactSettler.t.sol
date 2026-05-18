@@ -739,4 +739,122 @@ contract PactSettlerTest is Test {
         assertEq(pactEventsTopic,   expected, "PactEvents.CallSettled topic0 mismatch");
         assertEq(ipactSettlerTopic, pactEventsTopic, "topic0 divergence: not alias-true");
     }
+
+    // -----------------------------------------------------------------------
+    // WP-05 plan 05-02 — SET-11 (ProtocolPaused) + SET-12 (BatchTooLarge)
+    // Ported from settle_batch.rs:99-115 (protocol-paused fast-revert) and
+    // settle_batch.rs:132-135 (BatchTooLarge edge).
+    // P3 OPTIMIZED-DIVERGENCE (05-GATE-A-DECISIONS.md P3): these tests cover
+    // only the operationally-real authorized-settler paths. The unauthorized+
+    // paused corner intentionally diverges (EVM returns
+    // AccessControlUnauthorizedAccount there); that divergence is documented in
+    // the WP-06 parity matrix — no test is written for it here.
+    // -----------------------------------------------------------------------
+
+    /// @notice settle_batch.rs:99-115 — authorized settler calling settleBatch
+    ///         while protocolPaused reverts ProtocolPaused BEFORE any per-event
+    ///         work or token transfer; agent + pool USDC balances unchanged.
+    ///         Port of 05-settle-batch.test.ts:529.
+    function test_ProtocolPaused_RejectsSettleBatch() public {
+        _register(SLUG);
+        _fundPool(SLUG, 5_000_000);
+        address agent = makeAddr("agent");
+        _provisionAgent(agent, 10_000_000, 10_000_000);
+
+        // Pause the protocol via the authority.
+        vm.prank(authority);
+        reg.pauseProtocol(true);
+
+        // Snapshot balances before the attempted settle.
+        uint256 agentBefore = usdc.balanceOf(agent);
+        uint256 poolBefore  = usdc.balanceOf(address(pool));
+
+        IPactSettler.SettlementEvent[] memory events = new IPactSettler.SettlementEvent[](1);
+        events[0] = _makeEvent(0x5A, agent, SLUG, 1_000, 0, 50, false, 1, 1);
+
+        vm.prank(settlerSigner);
+        vm.expectRevert(ProtocolPaused.selector);
+        settler.settleBatch(events);
+
+        // No balances must have moved.
+        assertEq(usdc.balanceOf(agent),        agentBefore, "agent balance must not change on ProtocolPaused");
+        assertEq(usdc.balanceOf(address(pool)), poolBefore,  "pool balance must not change on ProtocolPaused");
+    }
+
+    /// @notice settle_batch.rs:99-115 resume path — pause -> revert; unpause ->
+    ///         fresh callId settles successfully emitting CallSettled(Settled).
+    ///         Port of 05-settle-batch.test.ts:595.
+    function test_ProtocolPaused_ResumesAfterUnpause() public {
+        _register(SLUG);
+        _fundPool(SLUG, 5_000_000);
+        address agent = makeAddr("agent");
+        _provisionAgent(agent, 10_000_000, 10_000_000);
+
+        // Pause.
+        vm.prank(authority);
+        reg.pauseProtocol(true);
+
+        // First attempt: different callId (0x5B) — must revert.
+        IPactSettler.SettlementEvent[] memory ev1 = new IPactSettler.SettlementEvent[](1);
+        ev1[0] = _makeEvent(0x5B, agent, SLUG, 1_000, 0, 50, false, 1, 1);
+        vm.prank(settlerSigner);
+        vm.expectRevert(ProtocolPaused.selector);
+        settler.settleBatch(ev1);
+
+        // Unpause.
+        vm.prank(authority);
+        reg.pauseProtocol(false);
+
+        // Second attempt: fresh callId (0x5C) — must succeed.
+        IPactSettler.SettlementEvent[] memory ev2 = new IPactSettler.SettlementEvent[](1);
+        ev2[0] = _makeEvent(0x5C, agent, SLUG, 1_000, 0, 50, false, 1, 1);
+
+        vm.expectEmit(true, true, true, true);
+        emit IPactSettler.CallSettled(
+            ev2[0].callId, SLUG, agent,
+            1_000, 0, 0,
+            IPactSettler.SettlementStatus.Settled,
+            false, 50, ev2[0].timestamp
+        );
+        vm.prank(settlerSigner);
+        settler.settleBatch(ev2); // must NOT revert
+    }
+
+    /// @notice settle_batch.rs:132-135 — 51 events (> MAX_BATCH_SIZE=50) reverts
+    ///         BatchTooLarge. Source-enforced invariant (D-LOCK-5, D-LOCK-BATCH).
+    function test_BatchTooLarge_51EventsRevert() public {
+        _register(SLUG);
+        _fundPool(SLUG, 5_000_000);
+        address agent = makeAddr("agent");
+        _provisionAgent(agent, 10_000_000, 10_000_000);
+
+        // 51 events (strictly greater than MAX_BATCH_SIZE=50) -> BatchTooLarge.
+        IPactSettler.SettlementEvent[] memory events =
+            new IPactSettler.SettlementEvent[](51);
+        for (uint8 i = 0; i < 51; i++) {
+            events[i] = _makeEvent(i, agent, SLUG, 1_000, 0, 50, false, 1, 1);
+        }
+        vm.prank(settlerSigner);
+        vm.expectRevert(BatchTooLarge.selector);
+        settler.settleBatch(events);
+    }
+
+    /// @notice settle_batch.rs:132-135 boundary — exactly 50 events (==
+    ///         MAX_BATCH_SIZE) must NOT revert (strictly-greater rule: 50 OK,
+    ///         51 rejects). Regression guard for the boundary.
+    function test_BatchTooLarge_50EventsAccepted() public {
+        _register(SLUG);
+        _fundPool(SLUG, 10_000_000);
+        address agent = makeAddr("agent");
+        _provisionAgent(agent, 100_000_000, 100_000_000);
+
+        // 50 events (== MAX_BATCH_SIZE) -> accepted.
+        IPactSettler.SettlementEvent[] memory events =
+            new IPactSettler.SettlementEvent[](50);
+        for (uint8 i = 0; i < 50; i++) {
+            events[i] = _makeEvent(i, agent, SLUG, 1_000, 0, 50, false, 1, 1);
+        }
+        vm.prank(settlerSigner);
+        settler.settleBatch(events); // must NOT revert
+    }
 }
