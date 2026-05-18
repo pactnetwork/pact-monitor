@@ -65,12 +65,18 @@ Phase numbers equal work-package numbers (Phase N == WP-EVM-0N).
 - [x] 04-04-PLAN.md — Pool credit + fee fan-out + breach refund + CallSettled + 9 ported tests + GATE B (SET-05..08)
 
 ### Phase 5: WP-EVM-05 PactSettler Hardening
-**Goal**: Exposure-cap clamp, pool-depleted clamp, protocol/endpoint kill switches, batch-limit edges + ported `06/07/09/10` and the clamp/kill-switch subset of `05`.
+**Goal**: Exposure-cap clamp, pool-depleted clamp, protocol/endpoint kill switches, batch-limit edges + ported `06/07/09/10` and the clamp/kill-switch subset of `05`, as pure additive port edits at the four WP-04 seams (no WP-04 reorder/rewrite; 90/90 regression preserved).
 **Depends on**: Phase 4
 **Requirements**: SET-09, SET-10, SET-11, SET-12
 **Success Criteria** (what must be TRUE):
-  1. PoolDepleted + ExposureCapClamped clamps (pool-then-cap ordering), hourly rolling window reset, protocol-paused fast-revert before any per-event work, endpoint-paused per event, BatchTooLarge edge; ported pause/exposure/auth tests green.
-**Plans**: TBD
+  1. PoolDepleted + ExposureCapClamped clamps (pool-then-cap final-status precedence: PoolDepleted > ExposureCapClamped > Settled), hourly rolling window reset asserted end-to-end, protocol-paused fast-revert before any per-event work, endpoint-paused per event at the LOCKED D-LOCK-PREC slot, BatchTooLarge edge (50 OK / 51 rejects); ported pause/exposure tests green; full WP-02/03/04/05 forge regression green with the WP-04 90/90 baseline preserved.
+**Plans**: 6 plans
+- [ ] 05-01-PLAN.md — GATE-A decision record: captain P1/P3 rulings + adversarial-pass decision (no Solidity; gates the phase)
+- [ ] 05-02-PLAN.md — Pre-loop ProtocolPaused fast-revert + BatchTooLarge edge (SET-11, SET-12; P3-dependent)
+- [ ] 05-03-PLAN.md — Per-event EndpointPaused at the LOCKED D-LOCK-PREC slot (SET-11)
+- [ ] 05-04-PLAN.md — Exposure-cap clamp + P1 ExposureCapClamped inference + 1-hour-reset (SET-10; P1-dependent)
+- [ ] 05-05-PLAN.md — Pool-depleted clamp + D-LOCK-CLAMP-ORDER precedence + no-rollback (SET-09)
+- [ ] 05-06-PLAN.md — Test port completion + N-A matrix + full WP-02/03/04/05 regression + GATE B
 
 ### Phase 6: WP-EVM-06 TS Client + Suite + Parity Matrix
 **Goal**: `@pact-network/protocol-evm-v1-client` (viem) + consolidated fuzz/gas suite + parity-matrix doc + formal spec-defect corrections.
