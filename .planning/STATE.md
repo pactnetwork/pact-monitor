@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-last_updated: "2026-05-18T15:04:16.753Z"
+last_updated: "2026-05-18T16:27:29.253Z"
 last_activity: 2026-05-18
 progress:
   total_phases: 7
   completed_phases: 1
   total_plans: 10
-  completed_plans: 6
-  percent: 60
+  completed_plans: 7
+  percent: 70
 ---
 
 # Project State
@@ -25,14 +25,18 @@ the parity oracle. This is a PORT, not a redesign.
 ## Current Position
 
 Phase: 05 (wp-evm-05-pactsettler-hardening) — EXECUTING
-Plan: 2 of 6 COMPLETE — executing plan 3 next
+Plan: 3 of 6 COMPLETE — executing plan 4 next
 Status: Executing Phase 05
-Last activity: 2026-05-18 -- 05-02 complete (ProtocolPaused + BatchTooLarge pre-loop guards; 94/94 forge green)
+Last activity: 2026-05-18 -- 05-03 complete (EndpointPaused per-event at D-LOCK-PREC slot; 97/97 forge green)
 `.planning/` scaffold for the GSD plan-phase pipeline (spec §8 mandates GSD for
 WP-04/05). WP-EVM-01/02/03 complete and pushed; WP-02/03 were plan-doc-driven
 (no `.planning/`), so WP-04 is the first GSD-orchestrated phase.
 
 Progress: WP-01 ✓ · WP-02 ✓ · WP-03 ✓ · WP-04 ✓ COMPLETE (GATE B approved + pushed + PR #204) · WP-05/06/07 pending
+
+## Decisions (WP-EVM-05 plan 05-03)
+
+- **05-03 SET-11 EndpointPaused per-event**: `if (ep.paused) revert EndpointPaused();` inserted at D-LOCK-PREC slot — after dedup READ (:84) and getEndpoint, before RecipientCoverageMismatch. Ports `settle_batch.rs:209`. Pure additive; only WP-04 placeholder comment removed. 3 new tests; 97/97 forge green. LOCKED test `test_DuplicateCallIdPrecedesRecipientCoverageMismatch` still GREEN.
 
 ## Decisions (WP-EVM-05 plan 05-02)
 

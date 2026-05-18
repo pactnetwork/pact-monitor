@@ -67,7 +67,7 @@ subset of `tests/05-settle-batch.test.ts`.
 
 - [ ] **SET-09**: Pool-depleted clamp → `PoolDepleted` status.
 - [ ] **SET-10**: Exposure-cap clamp → `ExposureCapClamped`; hourly window.
-- [ ] **SET-11**: Protocol-paused fast-revert; endpoint-paused per event.
+- [x] **SET-11**: Protocol-paused fast-revert; endpoint-paused per event.
 - [ ] **SET-12**: `BatchTooLarge` edge (batch ≤ MAX_BATCH_SIZE).
 
 ## Client / Matrix / Deploy (Phases 6-7 — placeholders)
