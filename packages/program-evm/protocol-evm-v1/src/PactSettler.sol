@@ -167,24 +167,31 @@ contract PactSettler is IPactSettler, AccessControl {
         // Step 6 — Pool gross credit (settle_batch.rs:357-369).
         pool.creditPremium(ev.endpointSlug, ev.premium);
 
-        // Step 7 — Seed WP-05-ready refund local (settle_batch.rs:380).
-        // In WP-04 this is never reduced; the WP-05 cap-clamp seam is inside
-        // recordCallAndCapAccrual (adjusts the return value, not this local).
-        uint64 intendedRefundAfterCap = ev.refund;
-
-        // Step 7c — ep mutation point 1: BEFORE the fee fan-out
-        // (settle_batch.rs:385-414). Accumulates totalCalls/totalPremiums/
-        // totalBreaches, runs the WP-04 period reset, accrues
-        // currentPeriodRefunds. Returns payableRefund (== ev.refund in WP-04;
-        // WP-05 returns the cap-clamped amount with zero call-site change —
-        // GATE-A E1 SPLIT hook 1, D-SPLIT).
+        // Step 7 + 7c — Seed the intended-refund value (settle_batch.rs:380)
+        // then invoke ep mutation point 1 (settle_batch.rs:385-414). ev.refund
+        // is the intendedRefundAfterCap seed (inlined to free one stack slot
+        // that would otherwise cause stack-too-deep with the status local added
+        // in WP-05). Semantics are identical: intendedRefundAfterCap == ev.refund
+        // and the call site is UNCHANGED (P1 pin, 05-GATE-A-DECISIONS.md).
+        // Returns payableRefund: == ev.refund in WP-04; cap-clamped in WP-05.
         uint64 payableRefund = IPactRegistry(address(registry))
             .recordCallAndCapAccrual(
                 ev.endpointSlug,
                 ev.premium,
                 ev.breach,
-                intendedRefundAfterCap
+                ev.refund        // intendedRefundAfterCap == ev.refund (settle_batch.rs:380)
             );
+
+        // P1 (05-GATE-A-DECISIONS.md) -- infer ExposureCapClamped from the
+        // seam-pinned return-value reduction. payableRefund < ev.refund
+        // <=> intendedRefundAfterCap (ev.refund) > cap_remaining
+        // <=> Solana intended > cap_remaining (settle_batch.rs:404-407).
+        // Set BEFORE the pool-balance check so a later PoolDepleted overwrites
+        // it (D-LOCK-CLAMP-ORDER; mirrors Solana :407-then-:468).
+        SettlementStatus status = SettlementStatus.Settled;
+        if (payableRefund < ev.refund) {
+            status = SettlementStatus.ExposureCapClamped;
+        }
 
         // Step 8 — Fee fan-out (settle_batch.rs:418-453).
         // fee = floor(uint256(premium) * bps / 10_000) cast to uint64.
@@ -245,7 +252,7 @@ contract PactSettler is IPactSettler, AccessControl {
             ev.premium,
             ev.refund,
             actualRefund,
-            SettlementStatus.Settled, // DelegateFailed path already continued
+            status, // P1: ExposureCapClamped|PoolDepleted|Settled; DelegateFailed path already continued
             ev.breach,
             ev.latencyMs,
             ev.timestamp
