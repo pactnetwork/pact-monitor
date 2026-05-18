@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-last_updated: "2026-05-18T16:38:50.582Z"
+last_updated: "2026-05-18T16:50:34.278Z"
 last_activity: 2026-05-18
 progress:
   total_phases: 7
   completed_phases: 1
   total_plans: 10
-  completed_plans: 8
-  percent: 80
+  completed_plans: 9
+  percent: 90
 ---
 
 # Project State
@@ -25,14 +25,22 @@ the parity oracle. This is a PORT, not a redesign.
 ## Current Position
 
 Phase: 05 (wp-evm-05-pactsettler-hardening) — EXECUTING
-Plan: 4 of 6 COMPLETE — executing plan 5 next
+Plan: 5 of 6 COMPLETE — executing plan 6 next
 Status: Executing Phase 05
-Last activity: 2026-05-18 -- 05-04 complete (exposure-cap clamp seam 1 + P1 inference; 100/100 forge green)
+Last activity: 2026-05-18 -- 05-05 complete (PoolDepleted clamp seam 2; 102/102 forge green)
 `.planning/` scaffold for the GSD plan-phase pipeline (spec §8 mandates GSD for
 WP-04/05). WP-EVM-01/02/03 complete and pushed; WP-02/03 were plan-doc-driven
 (no `.planning/`), so WP-04 is the first GSD-orchestrated phase.
 
 Progress: WP-01 ✓ · WP-02 ✓ · WP-03 ✓ · WP-04 ✓ COMPLETE (GATE B approved + pushed + PR #204) · WP-05/06/07 pending
+
+## Decisions (WP-EVM-05 plan 05-05)
+
+- **05-05 SET-09 PoolDepleted clamp (seam 2)**: filled empty `if (ps.currentBalance < payableRefund) {}` in `_settleSuccess` with `status = SettlementStatus.PoolDepleted; actualRefund = 0;`. Ports `settle_batch.rs:462-469`. Executes AFTER the 05-04 ExposureCapClamped inference — PoolDepleted naturally overwrites (D-LOCK-CLAMP-ORDER final-status precedence: PoolDepleted > ExposureCapClamped > Settled). WP-04 else branch byte-identical; recordRefundPaid guard (`if (actualRefund > 0)`) correctly skips; no currentPeriodRefunds rollback (P1(b)).
+
+- **05-05 pool-seed accounting for strict-< test**: pool net = seed + creditPremium - debitForFees must be strictly less than the clamped payableRefund for the PoolDepleted branch to fire. For cap=1000/premium=1000/fee=100: seed+900 < 1000 → seed must be 0 (unfunded). Seeding 100 gives net=1000 which fails the strict-< check — the else branch fires erroneously.
+
+- **05-05 forge result**: 102/102 green (100 prior + 2 new PoolDepleted tests). test_DuplicateCallIdPrecedesRecipientCoverageMismatch PASS.
 
 ## Decisions (WP-EVM-05 plan 05-04)
 

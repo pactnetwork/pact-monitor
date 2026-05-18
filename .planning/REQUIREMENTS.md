@@ -65,7 +65,7 @@ subset of `tests/05-settle-batch.test.ts`.
 
 ## Settler — Hardening (Phase 5 — placeholders)
 
-- [ ] **SET-09**: Pool-depleted clamp → `PoolDepleted` status.
+- [x] **SET-09**: Pool-depleted clamp → `PoolDepleted` status.
 - [x] **SET-10**: Exposure-cap clamp → `ExposureCapClamped`; hourly window.
 - [x] **SET-11**: Protocol-paused fast-revert; endpoint-paused per event.
 - [ ] **SET-12**: `BatchTooLarge` edge (batch ≤ MAX_BATCH_SIZE).

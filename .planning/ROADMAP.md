@@ -75,7 +75,7 @@ Phase numbers equal work-package numbers (Phase N == WP-EVM-0N).
 - [x] 05-02-PLAN.md — Pre-loop ProtocolPaused fast-revert + BatchTooLarge edge (SET-11, SET-12; P3-dependent)
 - [x] 05-03-PLAN.md — Per-event EndpointPaused at the LOCKED D-LOCK-PREC slot (SET-11)
 - [x] 05-04-PLAN.md — Exposure-cap clamp + P1 ExposureCapClamped inference + 1-hour-reset (SET-10; P1-dependent)
-- [ ] 05-05-PLAN.md — Pool-depleted clamp + D-LOCK-CLAMP-ORDER precedence + no-rollback (SET-09)
+- [x] 05-05-PLAN.md — Pool-depleted clamp + D-LOCK-CLAMP-ORDER precedence + no-rollback (SET-09)
 - [ ] 05-06-PLAN.md — Test port completion + N-A matrix + full WP-02/03/04/05 regression + GATE B
 
 ### Phase 6: WP-EVM-06 TS Client + Suite + Parity Matrix
