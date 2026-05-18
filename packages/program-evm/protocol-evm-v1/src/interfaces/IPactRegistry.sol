@@ -70,4 +70,26 @@ interface IPactRegistry {
     function authority() external view returns (address);
     function treasuryVault() external view returns (address);
     function maxTotalFeeBps() external view returns (uint16);
+
+    // -----------------------------------------------------------------------
+    // WP-EVM-04 GATE-A E1 (OPTION (a)) — SETTLER_ROLE-gated endpoint-stats
+    // hooks mirroring settle_batch.rs's TWO distinct ep.* mutation points.
+    // -----------------------------------------------------------------------
+
+    /// @notice settle_batch.rs:385-414 — ep mutation point 1, called BEFORE
+    ///         fee fan-out. Accumulates totalCalls/totalPremiums/totalBreaches,
+    ///         performs the WP-04 period reset, then accrues currentPeriodRefunds.
+    ///         Returns payableRefund (== intendedRefund in WP-04; WP-05 returns
+    ///         the cap-clamped amount without changing this signature).
+    function recordCallAndCapAccrual(
+        bytes16 slug,
+        uint64 premium,
+        bool breach,
+        uint64 intendedRefund
+    ) external returns (uint64 payableRefund);
+
+    /// @notice settle_batch.rs:493-499 — ep mutation point 2, called AFTER the
+    ///         refund transfer. Accumulates totalRefunds with the ACTUAL paid
+    ///         amount (distinct from intendedRefund — differs when WP-05 clamps).
+    function recordRefundPaid(bytes16 slug, uint64 actualRefund) external;
 }
