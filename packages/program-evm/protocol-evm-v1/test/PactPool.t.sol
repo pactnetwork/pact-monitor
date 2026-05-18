@@ -142,4 +142,20 @@ contract PactPoolTest is Test {
         assertEq(pool.balanceOf(SLUG).currentBalance, 400_000);
         assertEq(pool.balanceOf(SLUG_B).currentBalance, 0);
     }
+
+    // --- Task 4: ArithmeticOverflow parity pin (D6, add direction) ---
+
+    function test_TopUp_OverflowRevertsArithmeticOverflow() public {
+        // Solana checked_add failure → PactError::ArithmeticOverflow. The EVM
+        // port must revert the NAMED error, not a Solidity Panic(0x11).
+        _register(SLUG);
+        uint64 max = type(uint64).max;
+        usdc.mint(authority, uint256(max) + 1);
+        vm.startPrank(authority);
+        usdc.approve(address(pool), uint256(max) + 1);
+        pool.topUp(SLUG, max); // currentBalance = 2^64-1
+        vm.expectRevert(ArithmeticOverflow.selector);
+        pool.topUp(SLUG, 1); // overflow → named error, not Panic
+        vm.stopPrank();
+    }
 }
