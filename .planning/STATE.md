@@ -2,8 +2,8 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-last_updated: "2026-05-18T12:49:13.414Z"
+status: WP-EVM-04 COMPLETE — GATE B approved (90/90 forge); pushed + PR #204; WP-EVM-05 next
+last_updated: "2026-05-18T13:07:12.492Z"
 last_activity: 2026-05-18
 progress:
   total_phases: 7
@@ -20,19 +20,19 @@ progress:
 **Core value:** Behavioral-parity port of the Solana `pact-network-v1-pinocchio`
 on-chain program to Circle Arc (EVM L1), driven by the 10 LiteSVM test files as
 the parity oracle. This is a PORT, not a redesign.
-**Current focus:** WP-EVM-04 — PactSettler happy path — GATE B reached; awaiting captain approval
+**Current focus:** WP-EVM-05 — PactSettler hardening (fresh crew, captain spawns); WP-EVM-04 COMPLETE
 
 ## Current Position
 
-Phase: 4 of 7 (PactSettler Happy Path)
-Plan: 4 of 4 complete in current phase
-Status: GATE B — forge build + forge test green (89/89); awaiting captain approval before push/PR
-Last activity: 2026-05-18 -- 04-04 complete (economic loop + 9 ported tests + GATE B report)
+Phase: 5 of 7 (wp evm 05 pactsettler hardening)
+Plan: Not started
+Status: WP-EVM-04 COMPLETE — GATE B approved by captain (90/90 forge tests); pushed + PR #204 commented; handoff extended. WP-EVM-05 = fresh crew (captain spawns).
+Last activity: 2026-05-18 -- WP-EVM-04 complete: settleBatch happy path + 9 ported 05 tests + dedup-precedence GATE-B fix; gsd-verifier passed (8/8); pushed; PR #204 commented; handoff extended for WP-05
 `.planning/` scaffold for the GSD plan-phase pipeline (spec §8 mandates GSD for
 WP-04/05). WP-EVM-01/02/03 complete and pushed; WP-02/03 were plan-doc-driven
 (no `.planning/`), so WP-04 is the first GSD-orchestrated phase.
 
-Progress: WP-01 ✓ · WP-02 ✓ · WP-03 ✓ · WP-04 (04-01 ✓, 04-02 ✓, 04-03 ✓, 04-04 ✓ GATE-B) · WP-05/06/07 pending
+Progress: WP-01 ✓ · WP-02 ✓ · WP-03 ✓ · WP-04 ✓ COMPLETE (GATE B approved + pushed + PR #204) · WP-05/06/07 pending
 
 ## Decisions (WP-EVM-04)
 
@@ -64,8 +64,13 @@ Progress: WP-01 ✓ · WP-02 ✓ · WP-03 ✓ · WP-04 (04-01 ✓, 04-02 ✓, 04
   (ep point 1, BEFORE fee fan-out) → fee fan-out → refund transfer →
   recordRefundPaid (ep point 2, AFTER transfer). Mirrors settle_batch.rs exactly.
 
-- **04-04 GATE B reached 2026-05-18**: forge build+test green (89/89); report at
-  04-REPORT-gateB.md; no push; no PR comment. Awaiting captain approval.
+- **04-04 GATE B APPROVED 2026-05-18**: captain spot-checked the
+  dedup-precedence fix (4c2fd86); forge 90/90; gsd-verifier passed (8/8,
+  04-VERIFICATION.md); phase 04 marked complete; pushed; PR #204 completion
+  comment posted; handoff extended with a WP-EVM-04 OUTCOMES section for the
+  fresh WP-05 crew. Guard precedence is now LOCKED:
+  guards -> DuplicateCallId(:194) -> RecipientCoverageMismatch(:213) ->
+  dedup-SET -> premium-in (WP-05 must preserve).
 
 ## Notes
 
