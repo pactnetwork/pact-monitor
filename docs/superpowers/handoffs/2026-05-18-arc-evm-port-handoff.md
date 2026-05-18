@@ -586,3 +586,80 @@ touch `CLAUDE.md`/`.claude/skills`; never run a `pact` skill installer),
 GitNexus deferral (§e), and file-report convention. ALL WP-02/03/04/05
 locked rulings + the §(b) list + ruling #8 + WP-04 OUTCOMES + WP-05 OUTCOMES
 remain intact and are NOT reopened.
+
+---
+
+## PARITY PORT COMPLETE — WP-07 deploy prerequisites (2026-05-19)
+
+WP-EVM-06 is COMPLETE: captain GATE A + GATE B APPROVED (independently
+verified), authored-at-turn (NOT GSD — the correct method call). **The Arc
+EVM behavioral-parity port (WP-EVM-02..06) is COMPLETE.** Everything above
+this section remains settled law and is NOT reopened. Only WP-EVM-07 (Arc
+testnet deploy + arcscan verify) remains — a SEPARATE cycle, captain/Rick
+-initiated, explicitly out of the parity scope.
+
+### (a) Parity-complete state + full WP-02..06 lineage
+
+- Parity-complete at `fa6f023` (pushed `origin/feat/arc-protocol-v1`,
+  `fd18f4d..fa6f023`). PR #204 PORT-COMPLETION comment posted
+  (`pull/204#issuecomment-4480443276`). This completion section + final
+  tracking are docs commits on top.
+- WP-02: `62ae70b`/`8a85e02`/`74a6ddf`/`531995a`/`d6c8460`/`35565c6`/
+  `24ccc42`. WP-03: `8369f8a`/`c44f7bd`/`467c4a0`/`9d25856`/`de3f15e`.
+  WP-04: `4cb699d` (final) + lineage in "WP-EVM-04 OUTCOMES" §(a).
+  WP-05: `b601982` (final) + lineage in "WP-EVM-05 OUTCOMES" §(a).
+  WP-06: `73cde55` GATE-A · `0c82e52` scaffold+D-A drift guard ·
+  `6f52e07` T2 · `0b1efa8` T3 · `bf448a9` T4 · `a02b191` T5 · `6b8d301` T6 ·
+  `cc15f4c` T7 fuzz+gas · `585086b` T8 USDC-decimals · `af6891d` T9 matrix ·
+  `7db633c` T10 spec corrections · `203e1b5` GATE-B · `3073990`
+  milestone-complete · `fa6f023` GATE-B verdict.
+- Final test totals: **forge 109/109** (102 ported regression preserved + 5
+  fuzz @257 runs + 2 USDC-decimals); **client 41/41**; D-A drift guard PASS
+  (T1/T7/T11).
+
+### (b) Authoritative docs for WP-07 / future readers — USE THE CORRECTED SPEC
+
+- Parity matrix (per-variant proof, the canonical divergence record):
+  `docs/superpowers/specs/2026-05-18-arc-parity-matrix.md` — 30/30
+  `PactError` variants + §3 behaviors + §(d) 1-8 + `05-NA-MATRIX` rows + P3,
+  each tagged IDENTICAL / OPTIMIZED-DIVERGENCE / N-A-ON-EVM with file:line.
+- Design spec `docs/superpowers/specs/2026-05-15-arc-parity-port-design.md`
+  is now FORMALLY CORRECTED (all §(d) 1-8; "WP-EVM-06 Corrections"
+  appendix; §3 → 30 variants; §4 #7 fixed; §4 rows 9/10; PR #201 §7.1
+  corrected). WP-07 and future readers MUST use the corrected spec + the
+  matrix, not the pre-correction text.
+
+### (c) What WP-07 needs concretely (deploy cycle)
+
+- **Fill the deployed addresses:** `packages/protocol-evm-v1-client/
+  src/addresses.ts` ships Arc Testnet chain id + USDC populated and the
+  protocol contract addresses (`registry`/`pool`/`settler`) as `null`
+  placeholders. Post-deploy, set them via the env overlay
+  (`resolveDeployment(chainId, env)` reads `PACT_EVM_REGISTRY`/
+  `PACT_EVM_POOL`/`PACT_EVM_SETTLER`, checksum-validated) and/or bake the
+  final addresses into `DEPLOYMENTS`.
+- **USDC decimals guard already in place:** the live
+  `IERC20(USDC).decimals()==6` assertion is enforced
+  (`test/UsdcDecimals.t.sol`) with a reusable `require()`-shaped guard;
+  wire the same guard into the WP-07 deploy script so a wrong-decimals USDC
+  fails the deploy loudly.
+- **Committed-ABI regen/drift guard:** `packages/protocol-evm-v1-client/
+  scripts/gen-abi.mjs` regenerates `src/abi/*.ts` from the forge build +
+  locked `PactErrors.sol`; `scripts/check-abi-drift.mjs`
+  (`pnpm --filter @pact-network/protocol-evm-v1-client check:abi`) fails
+  loudly on any drift vs the locked contracts. Run `check:abi` in WP-07 CI
+  before/after deploy to prove the deployed bytecode's ABI still matches the
+  committed client ABI.
+- **NO contract change is permitted at deploy.** The contracts are LOCKED
+  through WP-05; WP-06 added ZERO contract behavior (additive: 2 forge test
+  files + 1 comment-only `ArcConfig` line + the client package + 2 docs).
+  WP-07 is deploy + verify ONLY — any contract edit is a new captain-gated
+  cycle, not WP-07.
+
+### (d) Locked rulings remain in force
+
+ALL WP-02/03 §(b) rulings 1-7 + ruling #8 (D1-scope refinement) + §(c)
+methodology + §(e) conventions + WP-04 OUTCOMES (E1-E4 / guard precedence /
+seams) + WP-05 OUTCOMES (P1/P3 final forms, the LOCKED-ACCEPTED `2157b75`
+alias, the 4 filled seams) remain intact and are NOT reopened by WP-07 or any
+future work. The parity port is closed.
