@@ -261,16 +261,21 @@ contract PactRegistry is IPactRegistry, PactEvents, AccessControl {
             ep.currentPeriodStart = uint64(block.timestamp);
             ep.currentPeriodRefunds = 0;
         }
-        payableRefund = intendedRefund; // WP-04: NO clamp
-        // settle_batch.rs:400-408  (WP-05 cap-clamp DECISION) — clean additive
-        // seam: WP-05 inserts HERE, between the period reset and the
-        // currentPeriodRefunds accrual:
-        //   uint64 capRemaining = ep.exposureCapPerHour.saturatingSub(ep.currentPeriodRefunds);
-        //   if (payableRefund > capRemaining) { payableRefund = capRemaining;
-        //       status = ExposureCapClamped; }
-        // and the clamped payableRefund is returned to 04-04 driving the
-        // refund transfer. Do NOT implement; do NOT collapse this seam.
-        // settle_batch.rs:409-414  (WP-04) — uses the post-cap amount
+        payableRefund = intendedRefund;
+        // settle_batch.rs:400-408 -- exposure-cap clamp (SET-10). Solana
+        // saturating_sub on uint64 -> ternary guard (no underflow possible).
+        // The clamped payableRefund is returned to the UNCHANGED _settleSuccess
+        // call site (P1, 05-GATE-A-DECISIONS.md). The accrual below uses the
+        // post-cap amount (D-LOCK-CLAMP-ORDER; NOT rolled back on PoolDepleted).
+        if (payableRefund > 0) {
+            uint64 capRemaining = ep.exposureCapPerHour > ep.currentPeriodRefunds
+                ? ep.exposureCapPerHour - ep.currentPeriodRefunds
+                : 0;
+            if (payableRefund > capRemaining) {
+                payableRefund = capRemaining;
+            }
+        }
+        // settle_batch.rs:409-414 -- uses the post-cap (clamped) amount
         if (payableRefund > 0) {
             ep.currentPeriodRefunds = _ckAdd(ep.currentPeriodRefunds, payableRefund);
         }
