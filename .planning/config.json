@@ -9,7 +9,9 @@
     "nyquist_validation": false,
     "security_enforcement": false,
     "discuss_mode": "discuss",
-    "research_before_questions": false
+    "research_before_questions": false,
+    "use_worktrees": false,
+    "code_review": false
   },
   "planning": {
     "commit_docs": false,
