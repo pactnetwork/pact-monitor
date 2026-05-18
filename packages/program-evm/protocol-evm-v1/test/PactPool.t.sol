@@ -25,6 +25,10 @@ contract PactPoolTest is Test {
     bytes16 constant SLUG = bytes16("helius");
     bytes16 constant SLUG_B = bytes16("jupiter");
 
+    /// @dev Cached so test bodies never make a `pool.SETTLER_ROLE()` external
+    ///      call that would consume a single-shot `vm.prank`.
+    bytes32 settlerRole;
+
     function setUp() public {
         usdc = new MockUSDC();
         IPactRegistry.FeeRecipient[8] memory d;
@@ -35,6 +39,7 @@ contract PactPoolTest is Test {
             authority, address(usdc), treasuryVault, ArcConfig.DEFAULT_MAX_TOTAL_FEE_BPS, d, 1
         );
         pool = new PactPool(address(usdc), address(reg));
+        settlerRole = pool.SETTLER_ROLE();
     }
 
     function _register(bytes16 slug) internal {
@@ -157,5 +162,112 @@ contract PactPoolTest is Test {
         vm.expectRevert(ArithmeticOverflow.selector);
         pool.topUp(SLUG, 1); // overflow → named error, not Panic
         vm.stopPrank();
+    }
+
+    // --- Task 5: settler-gated hooks (settle_batch.rs:360-498, §4 #5) ---
+
+    function _grantSettler() internal {
+        vm.prank(authority); // DEFAULT_ADMIN_ROLE
+        pool.grantRole(settlerRole, settler);
+    }
+
+    function test_Hooks_RejectNonSettler() public {
+        _register(SLUG);
+        vm.prank(funder);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector, funder, settlerRole
+            )
+        );
+        pool.creditPremium(SLUG, 100);
+    }
+
+    function test_CreditPremium_AddsBalanceAndPremiums() public {
+        // settle_batch.rs:360-368 — current_balance += p AND total_premiums += p.
+        _register(SLUG);
+        _grantSettler();
+        vm.prank(settler);
+        pool.creditPremium(SLUG, 1000);
+        IPactPool.PoolState memory s = pool.balanceOf(SLUG);
+        assertEq(s.currentBalance, 1000);
+        assertEq(s.totalPremiums, 1000);
+    }
+
+    function test_DebitForFees_SubtractsBalance() public {
+        // settle_batch.rs:448-453 — current_balance -= total_fee_paid.
+        _register(SLUG);
+        _grantSettler();
+        vm.startPrank(settler);
+        pool.creditPremium(SLUG, 1000);
+        pool.debitForFees(SLUG, 300);
+        vm.stopPrank();
+        assertEq(pool.balanceOf(SLUG).currentBalance, 700);
+    }
+
+    function test_DebitForRefund_SubtractsBalanceAddsRefunds() public {
+        // settle_batch.rs:481-490 — current_balance -= r AND total_refunds += r.
+        _register(SLUG);
+        _grantSettler();
+        vm.startPrank(settler);
+        pool.creditPremium(SLUG, 1000);
+        pool.debitForRefund(SLUG, 250);
+        vm.stopPrank();
+        IPactPool.PoolState memory s = pool.balanceOf(SLUG);
+        assertEq(s.currentBalance, 750);
+        assertEq(s.totalRefunds, 250);
+    }
+
+    function test_DebitForFeesUnderflowRevertsArithmeticOverflow() public {
+        // Solana checked_sub failure → PactError::ArithmeticOverflow (D6, sub).
+        _register(SLUG);
+        _grantSettler();
+        vm.prank(settler);
+        vm.expectRevert(ArithmeticOverflow.selector);
+        pool.debitForFees(SLUG, 1);
+    }
+
+    function test_DebitForRefundUnderflowRevertsArithmeticOverflow() public {
+        // D6 condition: EVERY debit hook, both directions, named error.
+        _register(SLUG);
+        _grantSettler();
+        vm.prank(settler);
+        vm.expectRevert(ArithmeticOverflow.selector);
+        pool.debitForRefund(SLUG, 1);
+    }
+
+    function test_CreditPremiumOverflowRevertsArithmeticOverflow() public {
+        // D6 condition: checked_add overflow on creditPremium → named error.
+        _register(SLUG);
+        _grantSettler();
+        uint64 max = type(uint64).max;
+        vm.startPrank(settler);
+        pool.creditPremium(SLUG, max); // currentBalance = totalPremiums = 2^64-1
+        vm.expectRevert(ArithmeticOverflow.selector);
+        pool.creditPremium(SLUG, 1);
+        vm.stopPrank();
+    }
+
+    function test_Payout_OnlySettler_TransfersUsdc() public {
+        _register(SLUG);
+        _grantSettler();
+        usdc.mint(authority, 1_000);
+        vm.startPrank(authority);
+        usdc.approve(address(pool), 1_000);
+        pool.topUp(SLUG, 1_000);
+        vm.stopPrank();
+        vm.prank(settler);
+        pool.payout(funder, 400);
+        assertEq(usdc.balanceOf(funder), 400);
+        assertEq(usdc.balanceOf(address(pool)), 600);
+    }
+
+    function test_Payout_RejectsNonSettler() public {
+        vm.prank(funder);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector, funder, settlerRole
+            )
+        );
+        pool.payout(funder, 1);
     }
 }

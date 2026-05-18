@@ -75,23 +75,64 @@ contract PactPool is IPactPool, AccessControl {
         return _pools[slug];
     }
 
-    /// @inheritdoc IPactPool
-    function creditPremium(bytes16, uint64) external override {
-        revert("NOT_IMPLEMENTED");
+    /// @dev Checked add mirroring Solana `checked_add → ArithmeticOverflow`.
+    function _ckAdd(uint64 a, uint64 b) private pure returns (uint64 c) {
+        unchecked {
+            c = a + b;
+        }
+        if (c < a) revert ArithmeticOverflow();
+    }
+
+    /// @dev Checked sub mirroring Solana `checked_sub → ArithmeticOverflow`.
+    function _ckSub(uint64 a, uint64 b) private pure returns (uint64 c) {
+        if (b > a) revert ArithmeticOverflow();
+        unchecked {
+            c = a - b;
+        }
     }
 
     /// @inheritdoc IPactPool
-    function debitForFees(bytes16, uint64) external override {
-        revert("NOT_IMPLEMENTED");
+    /// @dev settle_batch.rs:360-368 — current_balance += p; total_premiums += p.
+    function creditPremium(bytes16 slug, uint64 amount)
+        external
+        override
+        onlyRole(SETTLER_ROLE)
+    {
+        if (!registry.isRegistered(slug)) revert EndpointNotFound();
+        PoolState storage p = _pools[slug];
+        p.currentBalance = _ckAdd(p.currentBalance, amount);
+        p.totalPremiums = _ckAdd(p.totalPremiums, amount);
     }
 
     /// @inheritdoc IPactPool
-    function debitForRefund(bytes16, uint64) external override {
-        revert("NOT_IMPLEMENTED");
+    /// @dev settle_batch.rs:448-453 — current_balance -= total_fee_paid.
+    function debitForFees(bytes16 slug, uint64 amount)
+        external
+        override
+        onlyRole(SETTLER_ROLE)
+    {
+        if (!registry.isRegistered(slug)) revert EndpointNotFound();
+        PoolState storage p = _pools[slug];
+        p.currentBalance = _ckSub(p.currentBalance, amount);
     }
 
     /// @inheritdoc IPactPool
-    function payout(address, uint64) external override {
-        revert("NOT_IMPLEMENTED");
+    /// @dev settle_batch.rs:481-490 — current_balance -= r; total_refunds += r.
+    function debitForRefund(bytes16 slug, uint64 amount)
+        external
+        override
+        onlyRole(SETTLER_ROLE)
+    {
+        if (!registry.isRegistered(slug)) revert EndpointNotFound();
+        PoolState storage p = _pools[slug];
+        p.currentBalance = _ckSub(p.currentBalance, amount);
+        p.totalRefunds = _ckAdd(p.totalRefunds, amount);
+    }
+
+    /// @inheritdoc IPactPool
+    /// @dev USDC egress for fee fan-out + refund (the SPL transfers
+    ///      settle_batch.rs performs). Composed by WP-EVM-04.
+    function payout(address to, uint64 amount) external override onlyRole(SETTLER_ROLE) {
+        _usdc.safeTransfer(to, amount);
     }
 }
