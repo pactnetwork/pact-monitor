@@ -18,7 +18,7 @@ import { startCrank } from "./crank/index.js";
 import { adminRoutes } from "./routes/admin.js";
 import { faucetRoutes } from "./routes/faucet.js";
 import { keysRoutes } from "./routes/keys.js";
-import { betaRoutes } from "./routes/beta.js";
+import { metricsRoutes } from "./routes/metrics.js";
 import { metricsHook } from "./middleware/metrics.js";
 import { detectAndCacheNetwork } from "./utils/network.js";
 import { getSolanaConfig } from "./utils/solana.js";
@@ -56,7 +56,10 @@ await app.register(partnersRoutes);
 await app.register(adminRoutes);
 await app.register(faucetRoutes);
 await app.register(keysRoutes);
-await app.register(betaRoutes);
+// Prometheus scrape endpoint. Exposes the GoldRush verification counters
+// + latency histogram and any future prom-client instrumentation in this
+// process. Unauth'd by convention — gated at the network layer.
+await app.register(metricsRoutes);
 
 const port = parseInt(process.env.PORT || "3001", 10);
 

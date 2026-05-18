@@ -7,6 +7,12 @@ import {
 import { query } from "../db.js";
 import { requireApiKey } from "../middleware/auth.js";
 import { canonicalHostname } from "../utils/hostname.js";
+import {
+  GoldRushVerifier,
+  createDefaultClient,
+  type VerificationDetail,
+} from "../services/goldrush-verifier.js";
+import { recordGoldrushMetric } from "../services/goldrush-metrics.js";
 
 interface CallRecordRow {
   id: string;
@@ -18,7 +24,22 @@ interface CallRecordRow {
   status_code: number;
   classification: CallRecord["classification"];
   created_at: Date;
+  // Additive in the SELECT — these were already on call_records but
+  // claims-submit wasn't reading them. Without these we can't ask
+  // GoldRush whether the upstream tx actually happened.
+  tx_hash: string | null;
+  recipient_address: string | null;
 }
+
+// Singleton verifier per process. Cheap to construct (just reads env), but
+// allocating once also keeps the in-memory dedupe cache shared across
+// requests. createDefaultClient() returns null when GOLDRUSH_API_KEY is
+// unset, which downgrades verify() to a no-op "skipped" result — the
+// integration is fully optional at runtime.
+const goldrushVerifier = new GoldRushVerifier({
+  client: createDefaultClient(),
+  recordMetric: recordGoldrushMetric,
+});
 
 export async function claimsSubmitRoute(app: FastifyInstance): Promise<void> {
   app.post<{ Body: { callRecordId: string; providerHostname: string } }>(
@@ -52,7 +73,9 @@ export async function claimsSubmitRoute(app: FastifyInstance): Promise<void> {
                 cr.latency_ms,
                 cr.status_code,
                 cr.classification,
-                cr.created_at
+                cr.created_at,
+                cr.tx_hash,
+                cr.recipient_address
          FROM call_records cr
          JOIN providers p ON p.id = cr.provider_id
          WHERE cr.id = $1`,
@@ -82,6 +105,46 @@ export async function claimsSubmitRoute(app: FastifyInstance): Promise<void> {
         });
       }
 
+      // ────────────────────────────────────────────────────────────────
+      // GoldRush verification gate (additive, non-blocking).
+      // ────────────────────────────────────────────────────────────────
+      // The verifier always resolves, never throws. On any failure mode
+      // — down, slow, rate-limited, stale, no API key configured — we
+      // log it as `verification_unavailable` and continue with the
+      // existing trust-the-agent + on-chain caps logic. This is the
+      // brief's "golden rule extended": GoldRush MUST NOT block claims.
+      //
+      // The result is attached to the response and emitted as a
+      // structured log line so Conv 2 has 14 days of telemetry, not a
+      // single demo screenshot.
+      let verification: VerificationDetail | null = null;
+      try {
+        verification = await goldrushVerifier.verify({
+          txSignature: row.tx_hash,
+          agentPubkey: row.agent_pubkey,
+          recipientAddress: row.recipient_address,
+          expectedAmount: row.payment_amount != null ? Number(row.payment_amount) : null,
+          callTimestamp: row.created_at,
+        });
+        request.log.info(
+          {
+            event: "goldrush_verification",
+            callRecordId,
+            tx_sig: row.tx_hash,
+            result: verification.result,
+            confidence: verification.confidence,
+            latency_ms: verification.latencyMs,
+            cache_hit: verification.cacheHit,
+          },
+          "goldrush verification",
+        );
+      } catch (err) {
+        // Belt-and-suspenders. GoldRushVerifier.verify() is documented to
+        // never throw; if it does we still fall through to the existing
+        // path. We do NOT short-circuit claim adjudication on this.
+        request.log.warn({ err }, "GoldRush verifier unexpectedly threw; falling through");
+      }
+
       const callRecord: CallRecord = {
         id: row.id,
         agent_id: row.agent_id,
@@ -109,6 +172,16 @@ export async function claimsSubmitRoute(app: FastifyInstance): Promise<void> {
           signature: settlement.signature,
           slot: settlement.slot,
           refundAmount: settlement.refundAmount,
+          // Additive in the response. Existing clients ignore unknown keys.
+          // SDKs that want to surface "verified by GoldRush" to the agent
+          // can read this; SDKs that don't, don't notice the change.
+          verification: verification
+            ? {
+                result: verification.result,
+                confidence: verification.confidence,
+                reason: verification.reason,
+              }
+            : null,
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
