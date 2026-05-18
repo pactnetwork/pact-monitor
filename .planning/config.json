@@ -11,7 +11,8 @@
     "discuss_mode": "discuss",
     "research_before_questions": false,
     "use_worktrees": false,
-    "code_review": false
+    "code_review": false,
+    "_auto_chain_active": false
   },
   "planning": {
     "commit_docs": false,

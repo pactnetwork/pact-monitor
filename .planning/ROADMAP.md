@@ -71,8 +71,8 @@ Phase numbers equal work-package numbers (Phase N == WP-EVM-0N).
 **Success Criteria** (what must be TRUE):
   1. PoolDepleted + ExposureCapClamped clamps (pool-then-cap final-status precedence: PoolDepleted > ExposureCapClamped > Settled), hourly rolling window reset asserted end-to-end, protocol-paused fast-revert before any per-event work, endpoint-paused per event at the LOCKED D-LOCK-PREC slot, BatchTooLarge edge (50 OK / 51 rejects); ported pause/exposure tests green; full WP-02/03/04/05 forge regression green with the WP-04 90/90 baseline preserved.
 **Plans**: 6 plans
-- [ ] 05-01-PLAN.md — GATE-A decision record: captain P1/P3 rulings + adversarial-pass decision (no Solidity; gates the phase)
-- [ ] 05-02-PLAN.md — Pre-loop ProtocolPaused fast-revert + BatchTooLarge edge (SET-11, SET-12; P3-dependent)
+- [x] 05-01-PLAN.md — GATE-A decision record: captain P1/P3 rulings + adversarial-pass decision (no Solidity; gates the phase)
+- [x] 05-02-PLAN.md — Pre-loop ProtocolPaused fast-revert + BatchTooLarge edge (SET-11, SET-12; P3-dependent)
 - [ ] 05-03-PLAN.md — Per-event EndpointPaused at the LOCKED D-LOCK-PREC slot (SET-11)
 - [ ] 05-04-PLAN.md — Exposure-cap clamp + P1 ExposureCapClamped inference + 1-hour-reset (SET-10; P1-dependent)
 - [ ] 05-05-PLAN.md — Pool-depleted clamp + D-LOCK-CLAMP-ORDER precedence + no-rollback (SET-09)

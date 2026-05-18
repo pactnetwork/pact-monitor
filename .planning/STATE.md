@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: WP-EVM-04 COMPLETE — GATE B approved (90/90 forge); pushed + PR #204; WP-EVM-05 next
-last_updated: "2026-05-18T13:07:12.492Z"
+status: executing
+last_updated: "2026-05-18T15:04:16.753Z"
 last_activity: 2026-05-18
 progress:
   total_phases: 7
   completed_phases: 1
-  total_plans: 4
-  completed_plans: 4
-  percent: 100
+  total_plans: 10
+  completed_plans: 6
+  percent: 60
 ---
 
 # Project State
@@ -20,19 +20,27 @@ progress:
 **Core value:** Behavioral-parity port of the Solana `pact-network-v1-pinocchio`
 on-chain program to Circle Arc (EVM L1), driven by the 10 LiteSVM test files as
 the parity oracle. This is a PORT, not a redesign.
-**Current focus:** WP-EVM-05 — PactSettler hardening (fresh crew, captain spawns); WP-EVM-04 COMPLETE
+**Current focus:** Phase 05 — wp-evm-05-pactsettler-hardening
 
 ## Current Position
 
-Phase: 5 of 7 (wp evm 05 pactsettler hardening)
-Plan: Not started
-Status: WP-EVM-04 COMPLETE — GATE B approved by captain (90/90 forge tests); pushed + PR #204 commented; handoff extended. WP-EVM-05 = fresh crew (captain spawns).
-Last activity: 2026-05-18 -- WP-EVM-04 complete: settleBatch happy path + 9 ported 05 tests + dedup-precedence GATE-B fix; gsd-verifier passed (8/8); pushed; PR #204 commented; handoff extended for WP-05
+Phase: 05 (wp-evm-05-pactsettler-hardening) — EXECUTING
+Plan: 2 of 6 COMPLETE — executing plan 3 next
+Status: Executing Phase 05
+Last activity: 2026-05-18 -- 05-02 complete (ProtocolPaused + BatchTooLarge pre-loop guards; 94/94 forge green)
 `.planning/` scaffold for the GSD plan-phase pipeline (spec §8 mandates GSD for
 WP-04/05). WP-EVM-01/02/03 complete and pushed; WP-02/03 were plan-doc-driven
 (no `.planning/`), so WP-04 is the first GSD-orchestrated phase.
 
 Progress: WP-01 ✓ · WP-02 ✓ · WP-03 ✓ · WP-04 ✓ COMPLETE (GATE B approved + pushed + PR #204) · WP-05/06/07 pending
+
+## Decisions (WP-EVM-05 plan 05-02)
+
+- **05-02 SET-11 ProtocolPaused**: `if (registry.protocolPaused()) revert ProtocolPaused();` inserted as FIRST statement in `settleBatch` body, before `BatchTooLarge` and the per-event loop. Ports `settle_batch.rs:99-115`. Additive only; zero WP-04 lines deleted.
+
+- **05-02 SET-12 BatchTooLarge**: `if (events.length > ArcConfig.MAX_BATCH_SIZE) revert BatchTooLarge();` inserted after pause gate, before loop. Strictly greater: 50 OK, 51 rejects. Ports `settle_batch.rs:132-135`.
+
+- **05-02 P3 OPTIMIZED-DIVERGENCE confirmed**: authorized-settler+paused paths tested (4 new tests GREEN); unauthorized+paused corner intentionally diverges — EVM returns AccessControlUnauthorizedAccount, documented for WP-06 parity matrix. No WP-04 code reopened.
 
 ## Decisions (WP-EVM-04)
 
