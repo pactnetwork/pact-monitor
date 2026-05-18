@@ -47,3 +47,19 @@ Progress: WP-01 ✓ · WP-02 ✓ · WP-03 ✓ · WP-04 (planning) · WP-05/06/07
   WAIT for captain approval BEFORE any Solidity; (2) final parity gate (GATE B)
   — after impl + `forge build && forge test` green, report, WAIT, no push / no
   PR comment until approved.
+
+- WP-EVM-04 GATE A RULED 2026-05-18 (see 04-GATE-A-DECISIONS.md). E1=(a):
+  PactRegistry gains a SETTLER_ROLE-gated endpoint-stats writer. This REFINES
+  WP-03 ruling D1 (NOT a contradiction): D1 barred `PactPool` reaching into
+  the registry; it does NOT bar WP-04 adding its own gated stat-writer where
+  spec §6 places `EndpointConfig` state. Append to the handoff locked-rulings
+  list as ruling #8 during the WP-06 §d formal-correction pass.
+- D-SPLIT refinement: the hourly-window PERIOD RESET + `currentPeriodRefunds
+  += intendedRefund` are WP-04 happy-path state (in the registry stat hook);
+  ONLY the 3 clamp DECISIONS (ExposureCapClamped, PoolDepleted, pause
+  kill-switches) are WP-05, layered additively.
+- Config: Nyquist/security GSD gates DISABLED for WP-04 (ported LiteSVM oracle
+  + strict TDD is the validation contract). WP-05 enables a settlement
+  threat-model/adversarial pass; WP-06 fuzz/gas covers statistical adequacy.
+- Reporting: gate reports go to `.planning/phases/<phase>/<phase>-REPORT-<gate>.md`
+  AND a short `cockpit runtime send pact-network` notice (relay unreliable).

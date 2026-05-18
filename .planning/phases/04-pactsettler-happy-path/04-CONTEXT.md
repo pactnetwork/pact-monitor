@@ -35,11 +35,27 @@ suite; every Solana balance/amount/status assertion reproduced exactly.
 - Ported happy-path subset of `05-settle-batch.test.ts`; existing 70 tests
   stay green.
 
+**GATE A REFINEMENT (captain-ruled 2026-05-18 — see 04-GATE-A-DECISIONS.md
+D-SPLIT; OVERRIDES the earlier "period reset is WP-05" text below):** the
+hourly-window PERIOD RESET (`settle_batch.rs:396-399`:
+`if now > current_period_start + 3600 -> current_period_start = now;
+current_period_refunds = 0`) AND `current_period_refunds += intended_refund`
+(`:409-414`) are **WP-04 happy-path state** and ARE implemented here (inside
+the E1 PactRegistry stat hook, in exact source order). ONLY the three clamp
+DECISIONS are WP-05: (i) the `ExposureCapClamped` saturating-sub clamp branch
+(`:401-408`), (ii) the `PoolDepleted` `pool_balance < intended_refund` branch
+(`:462-469`), (iii) protocol/endpoint pause kill-switches. WP-04 MUST preserve
+`settle_batch.rs` mutation ORDER and leave clean ADDITIVE insertion points so
+WP-05 layers the 3 clamps without rewriting WP-04.
+
 **OUT of scope (deferred to WP-EVM-05 — do NOT implement here):**
-- `PoolDepleted` clamp (refund > pool balance).
-- `ExposureCapClamped` clamp + the hourly rolling-window *enforcement*
-  (`current_period_start`/`current_period_refunds` reset + cap-remaining
-  saturating-sub clamp branch). See E-decision note on accounting vs clamp.
+- `PoolDepleted` clamp DECISION only — `if pool_balance < intended_refund {
+  status = PoolDepleted; actual_refund = 0 }` (`:462-469`). The
+  sufficient-balance `else` (transfer + debits) IS WP-04.
+- `ExposureCapClamped` clamp DECISION only — the cap-remaining
+  `saturating_sub` + `if intended_refund > cap_remaining { clamp; status =
+  ExposureCapClamped }` branch (`:401-408`). The PERIOD RESET and
+  `current_period_refunds += intended_refund` are WP-04 (see refinement above).
 - Protocol-paused fast-revert (`ProtocolPaused`) and endpoint-paused per event.
 - `BatchTooLarge` (batch > MAX_BATCH_SIZE) edge.
 - Ports of `06-pause.test.ts`, `07-exposure-cap.test.ts`,
@@ -107,7 +123,51 @@ suite; every Solana balance/amount/status assertion reproduced exactly.
     ExposureCapClamped"; "rejects with ProtocolPaused when paused=1";
     "resumes after pause → unpause".
 
-### OPEN — GATE A design decisions (captain rules; planner records, not resolves)
+### RESOLVED — GATE A decisions (captain-ruled 2026-05-18; canonical record in 04-GATE-A-DECISIONS.md — cite THAT verbatim)
+
+- **E1 = OPTION (a) RULED.** Extend `PactRegistry` with SETTLER_ROLE-gated
+  endpoint-stats hook(s) symmetric to the WP-03 `PactPool` hooks. Conditions:
+  (1) PactRegistry gains OZ AccessControl + SETTLER_ROLE (same ctor pattern as
+  PactPool; deployed PactSettler granted the registry's SETTLER_ROLE);
+  (2) mutations BIT-IDENTICAL to `settle_batch.rs:385-499` in SAME ORDER —
+  `total_calls+=1`, `total_premiums+=premium`, `total_breaches+=1` on breach,
+  the PERIOD RESET, `current_period_refunds+=intended_refund`,
+  `total_refunds+=actual_refund` — all checked → `ArithmeticOverflow`;
+  (3) PURE ADDITION — every existing WP-02 PactRegistry test stays green +
+  new hook tests (role-gated, arithmetic, ordering, period reset);
+  (4) this REFINES WP-03 D1's scope (not a contradiction): D1 barred
+  `PactPool` reaching into the registry; it does NOT bar WP-04 adding its own
+  gated stat-writer where spec §6 puts that state. Recorded in STATE.md;
+  append to handoff locked-rulings (WP-06 §d pass).
+- **E2 = CONFIRM lead RULED.** OZ AccessControl SETTLER_ROLE on `PactSettler`;
+  ctor 4-arg → 3-arg (drop `address settler_`); `DEFAULT_ADMIN_ROLE` →
+  `registry.authority()` (exact PactPool pattern); `Deployment.t.sol`
+  `test_DeployPactSettler` → 3-arg. INTERPLAY with E1(a): the deployed
+  `PactSettler` holds `SETTLER_ROLE` on BOTH `PactPool` AND `PactRegistry` —
+  wire in deployment + test setup.
+- **E3 = CONFIRM lead RULED.** Emit ONLY `IPactSettler.CallSettled` (typed
+  enum); `PactEvents.CallSettled` is the indexer alias, NO second emission
+  (exactly one per call). Add an explicit ABI-identity assertion (topic0 +
+  field types identical — enum encodes as `uint8` in the signature); record
+  for WP-06 matrix.
+- **E4 = CONFIRM lead RULED, MUST-VERIFY RESOLVED FROM SOURCE.**
+  `CallRecord` PDA → `CallSettled` event-as-truth + `mapping(bytes16=>bool)`
+  dedup as the only persisted per-call state; port `cr[2]`/`readU64(cr,80)`/
+  `readU64(cr,88)` → `vm.expectEmit` on `CallSettled.{status,refund,
+  actualRefund}`. Source-verified (NOT ambiguous): `settle_batch.rs:243-247`
+  comment + `:255` `create_account` + `:332-352` — the call_id is consumed
+  even on `DelegateFailed`; therefore set the dedup mapping BEFORE the
+  premium-in try/catch and emit one `CallSettled` per call with the final
+  status (Settled or DelegateFailed).
+
+**Config flag (captain):** Nyquist/security gates stay DISABLED for WP-04
+(ported LiteSVM oracle + strict TDD IS the validation contract). WP-05 enables
+a settlement threat-model/adversarial pass; WP-06 fuzz/gas covers statistical
+adequacy. **Reporting:** write gate reports to
+`.planning/phases/04-pactsettler-happy-path/04-REPORT-<gate>.md` AND send a
+short `cockpit runtime send pact-network` notice (relay is unreliable).
+
+#### Original OPEN framing (superseded — kept for provenance)
 
 - **E1 (PRIMARY) — endpoint-stats write path.** `settle_batch.rs:385-498`
   mutates `EndpointConfig` stats (`total_calls`, `total_premiums`,
@@ -177,14 +237,19 @@ Re-derive in full from source; this is orientation. Per event, in order:
    `transferFrom(agent, pool, premium)` (§4#1).
 6. On success: pool `current_balance += premium; total_premiums += premium`
    (`:360-368` → `PactPool.creditPremium`).
-7. Endpoint stats: `total_calls += 1; total_premiums += premium;
-   if breach total_breaches += 1` (`:385-395`). Period reset + cap-remaining
-   clamp branch is WP-05; the `current_period_refunds += refund` ACCOUNTING
-   on a non-clamped refund is part of faithful refund bookkeeping — planner
-   derives from source exactly which lines are WP-04 vs WP-05 (the clamp
-   *decision* `status = ExposureCapClamped` and the period RESET are WP-05;
-   pure additive accounting on a fully-paid refund is WP-04). Flag any
-   ambiguity here — do NOT guess.
+7. Endpoint stats (ALL inside the E1 PactRegistry SETTLER_ROLE hook, exact
+   source order): `total_calls += 1` (`:385`); `total_premiums += premium`
+   (`:386-389`); `if breach total_breaches += 1` (`:390-395`); **PERIOD RESET
+   — `if now > current_period_start + 3600 { current_period_start = now;
+   current_period_refunds = 0 }` (`:396-399`) — WP-04 (GATE-A D-SPLIT
+   refinement)**; `current_period_refunds += intended_refund_after_cap`
+   (`:409-414`) — WP-04. ONLY the cap-remaining `saturating_sub` + clamp
+   DECISION `if intended > cap_remaining { clamp; status = ExposureCapClamped }`
+   (`:401-408`) is WP-05 — leave a clean additive seam, do NOT implement it.
+   `current_period_refunds` uses the post-cap INTENDED amount; `total_refunds`
+   uses the ACTUAL paid amount — keep these DISTINCT inputs (in WP-04 happy
+   path intended==actual; WP-05 clamp makes them differ). Source is explicit;
+   STOP-AND-ASK only if a real ambiguity arises — do NOT guess.
 8. Fee fan-out: for each recipient `fee = premium*bps/10_000` (u128 math,
    floor); skip if 0; `payout` egress; `total_fee_paid += fee`. Then
    `current_balance -= total_fee_paid` (`:418-453` → `debitForFees` +
