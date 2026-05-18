@@ -94,9 +94,12 @@ contract PactSettler is IPactSettler, AccessControl {
             if (_settledCallIds[ev.callId]) revert DuplicateCallId();
 
             // Step 4: endpoint snapshot — settle_batch.rs:200-221.
-            // Endpoint-paused check (settle_batch.rs:209-211) is WP-05; skip.
             IPactRegistry.EndpointConfig memory ep =
                 IPactRegistry(address(registry)).getEndpoint(ev.endpointSlug);
+            // settle_batch.rs:209 — EndpointPaused (SET-11). D-LOCK-PREC slot:
+            // AFTER the DuplicateCallId dedup READ (:84) and getEndpoint, BEFORE
+            // RecipientCoverageMismatch. Pure additive insert — no WP-04 reorder.
+            if (ep.paused) revert EndpointPaused();
             if (ep.feeRecipientCount != ev.feeRecipientCountHint)
                 revert RecipientCoverageMismatch();
 
