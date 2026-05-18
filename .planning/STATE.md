@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-last_updated: "2026-05-18T16:50:34.278Z"
+last_updated: "2026-05-18T17:15:00.000Z"
 last_activity: 2026-05-18
 progress:
   total_phases: 7
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 10
-  completed_plans: 9
-  percent: 90
+  completed_plans: 10
+  percent: 100
 ---
 
 # Project State
@@ -25,14 +25,26 @@ the parity oracle. This is a PORT, not a redesign.
 ## Current Position
 
 Phase: 05 (wp-evm-05-pactsettler-hardening) — EXECUTING
-Plan: 5 of 6 COMPLETE — executing plan 6 next
-Status: Executing Phase 05
-Last activity: 2026-05-18 -- 05-05 complete (PoolDepleted clamp seam 2; 102/102 forge green)
+Plan: 6 of 6 COMPLETE — all plans executed; awaiting captain GATE B
+Status: GATE B awaiting captain approval (Tasks 1-2 complete; Task 3 = checkpoint)
+Last activity: 2026-05-18
 `.planning/` scaffold for the GSD plan-phase pipeline (spec §8 mandates GSD for
 WP-04/05). WP-EVM-01/02/03 complete and pushed; WP-02/03 were plan-doc-driven
 (no `.planning/`), so WP-04 is the first GSD-orchestrated phase.
 
 Progress: WP-01 ✓ · WP-02 ✓ · WP-03 ✓ · WP-04 ✓ COMPLETE (GATE B approved + pushed + PR #204) · WP-05/06/07 pending
+
+## Decisions (WP-EVM-05 plan 05-06)
+
+- **05-06 PORT inventory**: All 15 PORT rows confirmed green via 05-02..05-05 + WP-02 — zero gaps, no new Foundry tests needed in 05-06. 07:25 two-sub-case coverage confirmed by test_ExposureCap_CumulativeClampAcrossBatches (batch-1 Settled under-cap + batch-2 ExposureCapClamped over-cap + batch-3 saturatingSub=0).
+
+- **05-06 N-A matrix**: 05-NA-MATRIX.md created with 7 N-A-ON-EVM rows (09:47/78/144/172, 10:94/128, D-LOCK-EXPCAP-NA), P3 OPTIMIZED-DIVERGENCE corner documentation, bounded adversarial-pass review (3 vectors, all CLEAN), and PORT coverage summary. All 4 WP-02 surviving-invariant tests confirmed PASS.
+
+- **05-06 adversarial-pass vectors**: V1 cross-agent cap saturation/saturatingSub=0 boundary — CLEAN (already tested by 05-04 third batch); V2 empty-batch pause-bypass — CLEAN (protocolPaused fires pre-loop); V3 reentrancy via protocolPaused()/pool hooks — CLEAN (no external calls on PoolDepleted path; dedup SET before premium-in protects).
+
+- **05-06 GATE B regression**: forge build clean; forge test 102/102 passed, 0 failed. test_DuplicateCallIdPrecedesRecipientCoverageMismatch PASS. WP-04 90/90 baseline preserved. Working tree uncontaminated. No push, no PR comment. GATE B awaiting captain.
+
+- **05-04 Rule 3 flag for captain**: stack-too-deep inline of intendedRefundAfterCap -> ev.refund in _settleSuccess is provably parity-neutral (settle_batch.rs:380 seeds intended = refund_lamports = ev.refund; P1 predicate preserved verbatim). Flagged for captain ratification at GATE B.
 
 ## Decisions (WP-EVM-05 plan 05-05)
 
