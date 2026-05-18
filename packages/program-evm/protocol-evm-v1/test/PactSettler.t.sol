@@ -385,4 +385,90 @@ contract PactSettlerTest is Test {
         vm.expectRevert(RecipientCoverageMismatch.selector);
         settler.settleBatch(events);
     }
+
+    // -----------------------------------------------------------------------
+    // Task 2 (04-03) — SET-04 dedup mapping + SET-02 premium-in DelegateFailed
+    // Ported from 05-settle-batch.test.ts tests 5 + 7.
+    // -----------------------------------------------------------------------
+
+    /// @notice 05 test 7: duplicate call_id rejected (SET-04).
+    ///         settle_batch.rs:194-196. First settle succeeds; second identical
+    ///         callId reverts DuplicateCallId.
+    function test_DuplicateCallIdRejected() public {
+        _register(SLUG);
+        _fundPool(SLUG, 5_000_000);
+        address agent = makeAddr("agent");
+        _provisionAgent(agent, 10_000_000, 10_000_000);
+
+        IPactSettler.SettlementEvent[] memory events = new IPactSettler.SettlementEvent[](1);
+        events[0] = _makeEvent(0x28, agent, SLUG, 1_000, 0, 0, false, 1, 1);
+
+        // First settle — must not revert.
+        vm.prank(settlerSigner);
+        settler.settleBatch(events);
+
+        // Second settle with identical callId — must revert DuplicateCallId.
+        vm.prank(settlerSigner);
+        vm.expectRevert(DuplicateCallId.selector);
+        settler.settleBatch(events);
+    }
+
+    /// @notice 05 test 5: revoke between events — DelegateFailed and continues
+    ///         (SET-02). Tests:
+    ///         (a) second batch does NOT revert as a tx,
+    ///         (b) agent balance unchanged (no funds moved),
+    ///         (c) exactly one IPactSettler.CallSettled emitted with
+    ///             status == DelegateFailed (GATE-A E3: only IPactSettler event),
+    ///         (d) retry of the same callId reverts DuplicateCallId (GATE-A E4:
+    ///             dedup mapping set even on DelegateFailed).
+    function test_RevokeMarksDelegateFailedAndContinues() public {
+        _register(SLUG);
+        _fundPool(SLUG, 5_000_000);
+        address agent = makeAddr("agent");
+        _provisionAgent(agent, 10_000_000, 10_000_000);
+
+        // First batch: callId fill(20), premium=1_000 — succeeds.
+        IPactSettler.SettlementEvent[] memory ev1 = new IPactSettler.SettlementEvent[](1);
+        ev1[0] = _makeEvent(0x14, agent, SLUG, 1_000, 0, 0, false, 1, 1);
+
+        vm.prank(settlerSigner);
+        settler.settleBatch(ev1);
+
+        uint256 balanceAfterFirst = usdc.balanceOf(agent);
+
+        // Revoke: set allowance to 0 so transferFrom fails.
+        vm.prank(agent);
+        usdc.approve(address(settler), 0);
+
+        // Second batch: callId fill(21), premium=1_000.
+        IPactSettler.SettlementEvent[] memory ev2 = new IPactSettler.SettlementEvent[](1);
+        ev2[0] = _makeEvent(0x15, agent, SLUG, 1_000, 0, 0, false, 1, 1);
+
+        // (c) expect exactly one CallSettled with DelegateFailed.
+        vm.expectEmit(true, true, true, true);
+        emit IPactSettler.CallSettled(
+            ev2[0].callId,
+            ev2[0].endpointSlug,
+            ev2[0].agent,
+            ev2[0].premium,
+            ev2[0].refund,
+            0,                                        // actualRefund = 0 on DelegateFailed
+            IPactSettler.SettlementStatus.DelegateFailed,
+            ev2[0].breach,
+            ev2[0].latencyMs,
+            ev2[0].timestamp
+        );
+
+        // (a) must NOT revert as a tx.
+        vm.prank(settlerSigner);
+        settler.settleBatch(ev2);
+
+        // (b) agent balance unchanged — no premium deducted.
+        assertEq(usdc.balanceOf(agent), balanceAfterFirst, "agent balance must be unchanged on DelegateFailed");
+
+        // (d) retry same callId fill(21) -> DuplicateCallId (dedup set even on failure).
+        vm.prank(settlerSigner);
+        vm.expectRevert(DuplicateCallId.selector);
+        settler.settleBatch(ev2);
+    }
 }
