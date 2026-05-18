@@ -40,11 +40,18 @@ contract DeploymentTest {
     }
 
     function test_DeployPactSettler() external {
+        // WP-EVM-04: 3-arg ctor per GATE-A E2 ruling (drop address settler_,
+        // DEFAULT_ADMIN_ROLE -> registry.authority()). Registry + pool wired
+        // identically to test_DeployPactPool.
+        IPactRegistry.FeeRecipient[8] memory emptyDefaults;
+        PactRegistry r = new PactRegistry(
+            address(this), ArcConfig.ARC_TESTNET_USDC, address(0x1), 3000, emptyDefaults, 0
+        );
+        PactPool p = new PactPool(ArcConfig.ARC_TESTNET_USDC, address(r));
         PactSettler s = new PactSettler(
             ArcConfig.ARC_TESTNET_USDC,
-            address(0x1), // registry placeholder (wired in WP-EVM-07)
-            address(0x2), // pool placeholder
-            address(this) // settler role placeholder
+            address(r),
+            address(p)
         );
         require(address(s).code.length > 0, "settler: no bytecode");
         require(s.usdc() == ArcConfig.ARC_TESTNET_USDC, "settler: usdc not set");
