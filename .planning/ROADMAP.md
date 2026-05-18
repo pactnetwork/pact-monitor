@@ -16,8 +16,15 @@ Phase numbers equal work-package numbers (Phase N == WP-EVM-0N).
 - [x] **Phase 3: WP-EVM-03 PactPool** - full pool logic + settler-gated hooks + ported pool tests
 - [x] **Phase 4: WP-EVM-04 PactSettler Happy Path** - settleBatch happy path + ported settle-batch happy tests (completed 2026-05-18)
 - [x] **Phase 5: WP-EVM-05 PactSettler Hardening** - clamps, kill switches, batch-limit edges + ported pause/exposure tests (completed 2026-05-19)
-- [ ] **Phase 6: WP-EVM-06 TS Client + Suite + Parity Matrix** - protocol-evm-v1-client, fuzz/gas suite, parity matrix doc
-- [ ] **Phase 7: WP-EVM-07 Deploy** - deploy script + Arc testnet deploy + arcscan verify (deferred, separate cycle)
+- [x] **Phase 6: WP-EVM-06 TS Client + Suite + Parity Matrix** - protocol-evm-v1-client, fuzz/gas suite, parity matrix doc + formal spec corrections (completed 2026-05-19)
+- [ ] **Phase 7: WP-EVM-07 Deploy** - deploy script + Arc testnet deploy + arcscan verify (deferred, SEPARATE cycle — NOT part of the parity effort)
+
+> **MILESTONE STATUS: ARC EVM PARITY PORT COMPLETE (WP-EVM-02..06), 2026-05-19.**
+> Behavioral parity to Solana `pact-network-v1-pinocchio` verified by the ported
+> LiteSVM oracle + fuzz (forge 109/109 + client 41/41); every divergence
+> recorded in `docs/superpowers/specs/2026-05-18-arc-parity-matrix.md`; design
+> spec formally corrected. Only WP-EVM-07 (Arc testnet deploy/verify) remains —
+> a separate cycle, captain/Rick-initiated, out of the parity scope.
 
 ## Phase Details
 

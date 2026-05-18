@@ -72,6 +72,6 @@ subset of `tests/05-settle-batch.test.ts`.
 
 ## Client / Matrix / Deploy (Phases 6-7 — placeholders)
 
-- [ ] **CLIENT-01**: `@pact-network/protocol-evm-v1-client` mirrors protocol-v1-client.
-- [ ] **MATRIX-01**: Parity-matrix doc + formal spec-defect corrections.
-- [ ] **DEPLOY-01**: Arc testnet deploy + arcscan verify (deferred).
+- [x] **CLIENT-01**: `@pact-network/protocol-evm-v1-client` mirrors protocol-v1-client. (WP-EVM-06, 2026-05-19 — builds + 41/41 tests)
+- [x] **MATRIX-01**: Parity-matrix doc + formal spec-defect corrections. (WP-EVM-06, 2026-05-19 — `docs/superpowers/specs/2026-05-18-arc-parity-matrix.md`; all §(d) 1-8 corrected)
+- [ ] **DEPLOY-01**: Arc testnet deploy + arcscan verify (deferred — WP-EVM-07, SEPARATE cycle).

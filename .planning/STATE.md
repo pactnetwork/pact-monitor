@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: completed
-last_updated: "2026-05-18T17:10:34.780Z"
-last_activity: 2026-05-18
+last_updated: "2026-05-19T01:00:00.000Z"
+last_activity: 2026-05-19
 progress:
   total_phases: 7
   completed_phases: 2
@@ -20,19 +20,23 @@ progress:
 **Core value:** Behavioral-parity port of the Solana `pact-network-v1-pinocchio`
 on-chain program to Circle Arc (EVM L1), driven by the 10 LiteSVM test files as
 the parity oracle. This is a PORT, not a redesign.
-**Current focus:** Phase 05 — wp-evm-05-pactsettler-hardening
+**Current focus:** ARC EVM PARITY PORT COMPLETE (WP-EVM-02..06). Only
+WP-EVM-07 (Arc testnet deploy/verify) remains — a separate cycle.
 
 ## Current Position
 
-Phase: 6
-Plan: Not started
-Status: GATE B awaiting captain approval (Tasks 1-2 complete; Task 3 = checkpoint)
-Last activity: 2026-05-18
-`.planning/` scaffold for the GSD plan-phase pipeline (spec §8 mandates GSD for
-WP-04/05). WP-EVM-01/02/03 complete and pushed; WP-02/03 were plan-doc-driven
-(no `.planning/`), so WP-04 is the first GSD-orchestrated phase.
+Phase: 6 — COMPLETE
+Plan: WP-EVM-06 authored-at-turn (T0-T11), GATE A + GATE B captain-APPROVED
+Status: MILESTONE COMPLETE — Arc EVM parity port done 2026-05-19
+Last activity: 2026-05-19
+WP-EVM-06 delivered `@pact-network/protocol-evm-v1-client` (viem, mirrors
+protocol-v1-client), the consolidated fuzz + gas-snapshot suite, the live
+USDC-decimals assertion, the per-variant parity matrix
+(`docs/superpowers/specs/2026-05-18-arc-parity-matrix.md`), and the formal
+design-spec corrections for all §(d) 1-8. forge 109/109 + client 41/41.
 
-Progress: WP-01 ✓ · WP-02 ✓ · WP-03 ✓ · WP-04 ✓ COMPLETE (GATE B approved + pushed + PR #204) · WP-05/06/07 pending
+Progress: WP-01 ✓ · WP-02 ✓ · WP-03 ✓ · WP-04 ✓ · WP-05 ✓ · WP-06 ✓ COMPLETE
+(GATE A+B approved) · WP-07 pending (SEPARATE deploy cycle, out of parity scope)
 
 ## Decisions (WP-EVM-05 plan 05-06)
 
