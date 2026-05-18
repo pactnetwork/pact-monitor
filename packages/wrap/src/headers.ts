@@ -14,6 +14,10 @@ export const HEADERS = {
   OUTCOME: "X-Pact-Outcome",
   POOL: "X-Pact-Pool",
   SETTLEMENT_PENDING: "X-Pact-Settlement-Pending",
+  // Set by attachPactHeaders() below; declared here so consumers (e.g.
+  // @pact-network/sdk's proxy-transport) can reference the constant instead
+  // of a string literal. Additive only — no behavior change.
+  CALL_ID: "X-Pact-Call-Id",
 } as const;
 
 export interface PactHeaderInputs {

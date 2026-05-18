@@ -26,7 +26,11 @@
       "@pact-network/market-dashboard": ["./packages/market-dashboard/app/page.tsx"],
       "@pact-network/market-dashboard/*": ["./packages/market-dashboard/*"],
       "@pact-network/protocol-v1-client": ["./packages/protocol-v1-client/src/index.ts"],
-      "@pact-network/protocol-v1-client/*": ["./packages/protocol-v1-client/src/*"]
+      "@pact-network/protocol-v1-client/*": ["./packages/protocol-v1-client/src/*"],
+      "@pact-network/wrap": ["./packages/wrap/src/index.ts"],
+      "@pact-network/wrap/*": ["./packages/wrap/src/*"],
+      "@pact-network/sdk": ["./packages/sdk/src/index.ts"],
+      "@pact-network/sdk/*": ["./packages/sdk/src/*"]
     }
   }
 }
