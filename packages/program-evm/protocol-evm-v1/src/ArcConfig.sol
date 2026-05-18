@@ -17,8 +17,10 @@ library ArcConfig {
     /// @notice USDC decimals Pact's premium math assumes (Solana 6-decimal
     ///         parity, design §2 / §4.8.4). 18-decimal native gas accounting
     ///         is chain-level and does not touch premium math.
-    /// @dev TODO(WP-EVM-06): assert `IERC20(ARC_TESTNET_USDC).decimals() == 6`
-    ///      against a forked/mock USDC so a decimals mismatch fails loudly.
+    /// @dev WP-EVM-06 T8: the live `IERC20Metadata(USDC).decimals() == 6`
+    ///      assertion is enforced in `test/UsdcDecimals.t.sol` (a decimals
+    ///      mismatch fails loudly); the same require() guard wires into the
+    ///      WP-EVM-07 deploy script.
     uint8 internal constant EXPECTED_USDC_DECIMALS = 6;
 
     // --- Ported from Solana constants.rs (parity invariants, design spec §3) ---
