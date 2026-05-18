@@ -62,6 +62,16 @@ contract PactSettler is IPactSettler, AccessControl {
         override
         onlyRole(SETTLER_ROLE)
     {
+        // settle_batch.rs:99-115 — protocol-paused fast-revert (SET-11).
+        // PRE-loop, FIRST body statement (D-LOCK-PROTO-PAUSE). For the
+        // operationally-real authorized settler this is bit-identical to Solana
+        // ProtocolPaused; the unauthorized+paused corner is the P3
+        // OPTIMIZED-DIVERGENCE (05-GATE-A-DECISIONS.md P3).
+        if (registry.protocolPaused()) revert ProtocolPaused();
+        // settle_batch.rs:132-135 — BatchTooLarge edge (SET-12). Strictly
+        // greater: 50 OK, 51 rejects. AFTER the pause gate, BEFORE the loop
+        // (D-LOCK-BATCH).
+        if (events.length > ArcConfig.MAX_BATCH_SIZE) revert BatchTooLarge();
         for (uint256 i = 0; i < events.length; i++) {
             SettlementEvent calldata ev = events[i];
 
