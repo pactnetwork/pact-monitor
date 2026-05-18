@@ -937,4 +937,182 @@ contract PactSettlerTest is Test {
         vm.expectRevert(DuplicateCallId.selector);
         settler.settleBatch(ev1);
     }
+
+    // -----------------------------------------------------------------------
+    // WP-05 plan 05-04 -- SET-10 exposure-cap clamp (ExposureCapClamped)
+    // Ports settle_batch.rs:400-408 (cap clamp inside recordCallAndCapAccrual)
+    // and the captain-ratified P1 inference in _settleSuccess
+    // (05-GATE-A-DECISIONS.md P1): payableRefund < intendedRefundAfterCap
+    // => status = ExposureCapClamped, set BEFORE the pool-balance check so
+    // a later PoolDepleted can overwrite it (D-LOCK-CLAMP-ORDER).
+    // currentPeriodRefunds accrues the CLAMPED amount and is NOT rolled back.
+    // -----------------------------------------------------------------------
+
+    /// @notice settle_batch.rs:400-408 -- exposure cap clamps the refund to
+    ///         cap_remaining; status becomes ExposureCapClamped (enum 3).
+    ///         Port of 05-settle-batch.test.ts:485 and 07-exposure-cap.test.ts:25.
+    ///         cap=1000, refund=5000, pool=5_000_000.
+    ///         RED: cap clamp absent -> payableRefund=5000 (not clamped) AND
+    ///         emit hardcodes Settled -> expectEmit ExposureCapClamped mismatches.
+    function test_ExposureCapClamped_PartialActualRefund() public {
+        // Register SLUG_C with a small exposureCapPerHour=1000.
+        IPactRegistry.FeeRecipient[8] memory none;
+        vm.prank(authority);
+        reg.registerEndpoint(SLUG_C, 500, 0, 5000, 1000, 1_000, false, 0, none);
+        _fundPool(SLUG_C, 5_000_000);
+
+        address agent = makeAddr("agent");
+        _provisionAgent(agent, 10_000_000, 10_000_000);
+
+        // cap=1000, refund=5000 -> cap_remaining=1000, intended (5000) > cap_remaining
+        // -> clamped to 1000, ExposureCapClamped.
+        IPactSettler.SettlementEvent[] memory events = new IPactSettler.SettlementEvent[](1);
+        events[0] = _makeEvent(0x46, agent, SLUG_C, 1_000, 5_000, 6000, true, 1, 1);
+
+        vm.expectEmit(true, true, true, true);
+        emit IPactSettler.CallSettled(
+            events[0].callId, SLUG_C, agent,
+            1_000, 5_000, 1_000,
+            IPactSettler.SettlementStatus.ExposureCapClamped,
+            true, 6000, events[0].timestamp
+        );
+        vm.prank(settlerSigner);
+        settler.settleBatch(events);
+
+        // Agent: paid 1000 premium, received 1000 (clamped) refund -> net 0.
+        assertEq(usdc.balanceOf(agent), 10_000_000, "agent net must be 0 (premium == clamped refund)");
+        // currentPeriodRefunds accrues the CLAMPED amount (not rolled back).
+        assertEq(reg.getEndpoint(SLUG_C).currentPeriodRefunds, 1_000, "currentPeriodRefunds must accrue clamped amount");
+    }
+
+    /// @notice settle_batch.rs:400-408 cumulative: two batches exhaust the cap.
+    ///         Port of 07-exposure-cap.test.ts:25. cap=1_000_000.
+    ///         Batch 1: refund=600_000 -> full (Settled), currentPeriodRefunds=600_000.
+    ///         Batch 2: refund=500_000, cap_remaining=400_000 -> clamped to 400_000
+    ///         (ExposureCapClamped). currentPeriodRefunds after both == 1_000_000.
+    ///         RED: no clamp -> batch 2 emits Settled with actualRefund=500_000;
+    ///         expectEmit ExposureCapClamped mismatches.
+    ///         Also covers adversarial vector 1 (GATE-A): saturatingSub boundary
+    ///         currentPeriodRefunds >= exposureCap -> cap_remaining=0 -> clamp-to-0.
+    function test_ExposureCap_CumulativeClampAcrossBatches() public {
+        // Register SLUG_C with cap=1_000_000.
+        IPactRegistry.FeeRecipient[8] memory none;
+        vm.prank(authority);
+        reg.registerEndpoint(SLUG_C, 500, 0, 5000, 1000, 1_000_000, false, 0, none);
+        _fundPool(SLUG_C, 5_000_000);
+
+        address agent = makeAddr("agent");
+        _provisionAgent(agent, 20_000_000, 20_000_000);
+
+        // Batch 1: refund=600_000 < cap=1_000_000 -> full Settled.
+        IPactSettler.SettlementEvent[] memory ev1 = new IPactSettler.SettlementEvent[](1);
+        ev1[0] = _makeEvent(0x71, agent, SLUG_C, 1_000, 600_000, 6000, true, 1, 1);
+
+        vm.expectEmit(true, true, true, true);
+        emit IPactSettler.CallSettled(
+            ev1[0].callId, SLUG_C, agent,
+            1_000, 600_000, 600_000,
+            IPactSettler.SettlementStatus.Settled,
+            true, 6000, ev1[0].timestamp
+        );
+        vm.prank(settlerSigner);
+        settler.settleBatch(ev1);
+
+        assertEq(reg.getEndpoint(SLUG_C).currentPeriodRefunds, 600_000, "currentPeriodRefunds after batch 1");
+
+        // Batch 2: refund=500_000, cap_remaining=400_000 -> clamped to 400_000.
+        IPactSettler.SettlementEvent[] memory ev2 = new IPactSettler.SettlementEvent[](1);
+        ev2[0] = _makeEvent(0x72, agent, SLUG_C, 1_000, 500_000, 6000, true, 1, 1);
+
+        vm.expectEmit(true, true, true, true);
+        emit IPactSettler.CallSettled(
+            ev2[0].callId, SLUG_C, agent,
+            1_000, 500_000, 400_000,
+            IPactSettler.SettlementStatus.ExposureCapClamped,
+            true, 6000, ev2[0].timestamp
+        );
+        vm.prank(settlerSigner);
+        settler.settleBatch(ev2);
+
+        // currentPeriodRefunds == 600_000 + 400_000 = 1_000_000 (cap exhausted, not rolled back).
+        assertEq(reg.getEndpoint(SLUG_C).currentPeriodRefunds, 1_000_000, "currentPeriodRefunds must equal cap after both batches");
+
+        // Adversarial vector 1 (GATE-A adversarial pass, saturatingSub boundary):
+        // third batch when currentPeriodRefunds == exposureCap -> cap_remaining=0
+        // -> everything clamps to 0 (ExposureCapClamped, actualRefund=0).
+        IPactSettler.SettlementEvent[] memory ev3 = new IPactSettler.SettlementEvent[](1);
+        ev3[0] = _makeEvent(0x73, agent, SLUG_C, 1_000, 100_000, 6000, true, 1, 1);
+
+        vm.expectEmit(true, true, true, true);
+        emit IPactSettler.CallSettled(
+            ev3[0].callId, SLUG_C, agent,
+            1_000, 100_000, 0,
+            IPactSettler.SettlementStatus.ExposureCapClamped,
+            true, 6000, ev3[0].timestamp
+        );
+        vm.prank(settlerSigner);
+        settler.settleBatch(ev3);
+
+        // currentPeriodRefunds stays at cap (clamped-to-0 adds nothing, no rollback).
+        assertEq(reg.getEndpoint(SLUG_C).currentPeriodRefunds, 1_000_000, "currentPeriodRefunds must not change on 0-clamp");
+    }
+
+    /// @notice settle_batch.rs:396-399 period reset asserted end-to-end through
+    ///         settleBatch after WP-05 cap clamp is live. Port of
+    ///         07-exposure-cap.test.ts:81. cap=500_000. Batch 1: full 500_000
+    ///         used. vm.warp(currentPeriodStart + 3601). Batch 2: 500_000 again
+    ///         -> period reset fires inside recordCallAndCapAccrual -> Settled.
+    ///         Does NOT re-implement the period reset (already WP-04).
+    ///         RED: the reset path itself always passes; RED is confirmed by
+    ///         test_ExposureCapClamped_PartialActualRefund for the clamp predicate.
+    function test_ExposureCap_ResetsAfter1Hour() public {
+        IPactRegistry.FeeRecipient[8] memory none;
+        vm.prank(authority);
+        reg.registerEndpoint(SLUG_C, 500, 0, 5000, 1000, 500_000, false, 0, none);
+        _fundPool(SLUG_C, 5_000_000);
+
+        address agent = makeAddr("agent");
+        _provisionAgent(agent, 20_000_000, 20_000_000);
+
+        // Batch 1: refund=500_000 == cap -> NOT clamped (strict >), Settled.
+        // currentPeriodRefunds = 500_000 (cap exhausted).
+        IPactSettler.SettlementEvent[] memory ev1 = new IPactSettler.SettlementEvent[](1);
+        ev1[0] = _makeEvent(0x81, agent, SLUG_C, 1_000, 500_000, 6000, true, 1, 1);
+
+        vm.expectEmit(true, true, true, true);
+        emit IPactSettler.CallSettled(
+            ev1[0].callId, SLUG_C, agent,
+            1_000, 500_000, 500_000,
+            IPactSettler.SettlementStatus.Settled,
+            true, 6000, ev1[0].timestamp
+        );
+        vm.prank(settlerSigner);
+        settler.settleBatch(ev1);
+
+        assertEq(reg.getEndpoint(SLUG_C).currentPeriodRefunds, 500_000, "currentPeriodRefunds after batch 1");
+
+        // Warp > 3600 s past the stored period start to trigger the period reset.
+        uint64 storedStart = reg.getEndpoint(SLUG_C).currentPeriodStart;
+        vm.warp(uint256(storedStart) + 3601);
+
+        // Batch 2: refund=500_000 again. Period reset fires (currentPeriodRefunds=0,
+        // cap_remaining=500_000) -> not clamped -> Settled, full 500_000.
+        IPactSettler.SettlementEvent[] memory ev2 = new IPactSettler.SettlementEvent[](1);
+        ev2[0] = _makeEvent(0x82, agent, SLUG_C, 1_000, 500_000, 6000, true, 1, 1);
+
+        vm.expectEmit(true, true, true, true);
+        emit IPactSettler.CallSettled(
+            ev2[0].callId, SLUG_C, agent,
+            1_000, 500_000, 500_000,
+            IPactSettler.SettlementStatus.Settled,
+            true, 6000, ev2[0].timestamp
+        );
+        vm.prank(settlerSigner);
+        settler.settleBatch(ev2);
+
+        // Both refunds credited: -2000 premium + 1_000_000 refund.
+        assertEq(usdc.balanceOf(agent), 20_000_000 - 2_000 + 1_000_000, "agent must receive both full refunds after reset");
+        // currentPeriodRefunds = 500_000 (new period, only batch 2 accrued).
+        assertEq(reg.getEndpoint(SLUG_C).currentPeriodRefunds, 500_000, "currentPeriodRefunds after reset must be batch-2 amount only");
+    }
 }
