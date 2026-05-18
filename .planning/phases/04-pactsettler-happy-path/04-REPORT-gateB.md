@@ -290,3 +290,42 @@ Execution halted pending captain GATE B approval.
   Push and PR #204 comment happen ONLY after captain approval. On approval,
   the remaining GSD post-execution steps (gsd-verifier phase-goal check,
   ROADMAP/phase completion) run, THEN push + PR #204 comment.
+
+---
+
+## WP-EVM-04 DONE-STATE — GATE B CLOSED (captain-approved 2026-05-18)
+
+Captain spot-checked diff `4c2fd86` and APPROVED GATE B ("WP-EVM-04 is
+parity-faithful and COMPLETE"). Closeout executed in the captain's ordered
+sequence:
+
+1. **GSD post-exec verify + phase complete.** gsd-verifier → `passed`, 8/8
+   must-haves, 90/90 forge (`04-VERIFICATION.md`, commit `d6c0bad`).
+   `gsd-tools phase complete 04` → ROADMAP Phase 4 `[x] (completed
+   2026-05-18)`, REQUIREMENTS SET-01..08 `[x]`, STATE advanced to Phase 5
+   (no warnings). STATE status corrected to post-approval reality + committed.
+2. **Pushed.** `git push origin feat/arc-protocol-v1`:
+   `e61c69c..4cb699d` then `4cb699d..bc9d2ac` (handoff). HEAD == origin ==
+   `bc9d2ac`, 0 ahead, tree clean (only `?? .claude/pr-reviews/`), no
+   contamination. **PR #204 completion comment posted:**
+   https://github.com/pactnetwork/pact-monitor/pull/204#issuecomment-4478478946
+   (settleBatch happy path, 9 ported `05` tests + verbatim numbers, E1(a)
+   two-hook split + dedup-precedence fix, E2/E3/E4, WP-05 seams, carried
+   WP-06 spec-defect log).
+3. **Handoff extended for the fresh WP-05 crew.**
+   `docs/superpowers/handoffs/2026-05-18-arc-evm-port-handoff.md` gained a
+   "WP-EVM-04 OUTCOMES (LOCKED)" section: (a) commit lineage; (b) E1-E4 as
+   LOCKED rulings + the D1-scope refinement recorded as locked ruling #8;
+   (c) the LOCKED guard-precedence ordering WP-05 must preserve; (d) the
+   exact WP-05 additive seams with file:line (`PactRegistry.sol:265-271`
+   ExposureCapClamped; `PactSettler.sol:200-201` PoolDepleted; pause
+   kill-switches; BatchTooLarge); (e) WP-05 scope per D-SPLIT (4 deferred
+   tests + 06/07/09/10 ports); (f) WP-05 GSD process + same gate cadence /
+   methodology / contamination / file-report conventions. WP-02/03 locked
+   rulings left intact. Committed + pushed (`bc9d2ac`).
+4. **This done-state appended + cockpit notice sent. STOPPED — WP-EVM-05
+   NOT started.** The captain reviews the updated handoff, closes this crew,
+   and spawns a fresh WP-05 crew seeded with it.
+
+WP-EVM-04: COMPLETE, verified, pushed, PR-commented, handoff-seeded. No
+WP-05 work performed by this crew.
