@@ -2,9 +2,12 @@
 pragma solidity ^0.8.30;
 
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IPactSettler} from "./interfaces/IPactSettler.sol";
 import {IPactPool} from "./interfaces/IPactPool.sol";
 import {IPactRegistry} from "./interfaces/IPactRegistry.sol";
+import {ArcConfig} from "./ArcConfig.sol";
+import "./errors/PactErrors.sol";
 
 /// @title PactSettler
 /// @notice One-per-chain settlement executor (design PR #201 §3.3). Holds the
@@ -45,8 +48,38 @@ contract PactSettler is IPactSettler, AccessControl {
     }
 
     /// @inheritdoc IPactSettler
-    /// @dev SETTLER_ROLE-gated (SET-01). Logic ports in plans 03/04.
-    function settleBatch(SettlementEvent[] calldata) external override onlyRole(SETTLER_ROLE) {
-        revert("NOT_IMPLEMENTED");
+    /// @dev SETTLER_ROLE-gated (SET-01). Per-event guards (SET-03) in
+    ///      settle_batch.rs:158-215 exact order. Dedup + premium-in (SET-02/04)
+    ///      and economic half (SET-05/06/07/08) port in plans 03 Task 2 + 04.
+    function settleBatch(SettlementEvent[] calldata events)
+        external
+        override
+        onlyRole(SETTLER_ROLE)
+    {
+        for (uint256 i = 0; i < events.length; i++) {
+            SettlementEvent calldata ev = events[i];
+
+            // Step 2: per-event hard-revert guards — settle_batch.rs:158-166.
+            // These abort the entire batch transaction (Err return in Rust),
+            // not per-event continues.
+            if (ev.timestamp > uint64(block.timestamp)) revert InvalidTimestamp();
+            if (ev.premium < ArcConfig.MIN_PREMIUM) revert PremiumTooSmall();
+            if (ev.feeRecipientCountHint > ArcConfig.MAX_FEE_RECIPIENTS)
+                revert FeeRecipientArrayTooLong();
+
+            // Step 3: endpoint snapshot — settle_batch.rs:200-221.
+            // Endpoint-paused check (settle_batch.rs:209-211) is WP-05; skip.
+            IPactRegistry.EndpointConfig memory ep =
+                IPactRegistry(address(registry)).getEndpoint(ev.endpointSlug);
+            if (ep.feeRecipientCount != ev.feeRecipientCountHint)
+                revert RecipientCoverageMismatch();
+
+            // Steps 4-10 (dedup + premium-in + economic half) port in
+            // Task 2 (plan 04-03) and plan 04-04. Reaching here with a
+            // valid guarded event is currently a no-op; plan 04-03 Task 2
+            // adds the dedup mapping and premium-in try/catch immediately
+            // after this comment.
+            // TODO(WP-EVM-04-task2): dedup check + set + premium-in try/catch
+        }
     }
 }
