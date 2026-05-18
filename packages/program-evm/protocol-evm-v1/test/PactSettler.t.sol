@@ -462,6 +462,36 @@ contract PactSettlerTest is Test {
         settler.settleBatch(events);
     }
 
+    /// @notice GATE-B precedence pin (parity): an event that is SIMULTANEOUSLY
+    ///         a replayed/duplicate callId AND has feeRecipientCountHint !=
+    ///         stored ep.feeRecipientCount MUST revert DuplicateCallId — NOT
+    ///         RecipientCoverageMismatch. Mirrors settle_batch.rs ordering:
+    ///         the dedup check (:194 `!call_record.is_data_empty()`) fires
+    ///         BEFORE the endpoint-snapshot RecipientCoverageMismatch (:213
+    ///         `ep_count != fee_count_hint`). Same input -> same error as
+    ///         Solana (precedence parity; not a §4-ledger divergence).
+    function test_DuplicateCallIdPrecedesRecipientCoverageMismatch() public {
+        _register(SLUG); // stored feeRecipientCount resolves to 1 (default Treasury)
+        _fundPool(SLUG, 5_000_000);
+        address agent = makeAddr("agent");
+        _provisionAgent(agent, 10_000_000, 10_000_000);
+
+        // First settle — valid (hint = stored count = 1) — consumes the callId.
+        IPactSettler.SettlementEvent[] memory first = new IPactSettler.SettlementEvent[](1);
+        first[0] = _makeEvent(0x99, agent, SLUG, 1_000, 0, 0, false, 1, 1);
+        vm.prank(settlerSigner);
+        settler.settleBatch(first);
+
+        // Second event: SAME callId (0x99) AND feeRecipientCountHint = 2 !=
+        // stored 1 — BOTH DuplicateCallId AND RecipientCoverageMismatch apply.
+        // settle_batch.rs:194 precedes :213 -> MUST revert DuplicateCallId.
+        IPactSettler.SettlementEvent[] memory second = new IPactSettler.SettlementEvent[](1);
+        second[0] = _makeEvent(0x99, agent, SLUG, 1_000, 0, 0, false, 2, 1);
+        vm.prank(settlerSigner);
+        vm.expectRevert(DuplicateCallId.selector);
+        settler.settleBatch(second);
+    }
+
     /// @notice 05 test 5: revoke between events — DelegateFailed and continues
     ///         (SET-02). Tests:
     ///         (a) second batch does NOT revert as a tx,
