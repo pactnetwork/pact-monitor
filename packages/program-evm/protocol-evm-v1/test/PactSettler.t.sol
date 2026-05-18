@@ -857,4 +857,84 @@ contract PactSettlerTest is Test {
         vm.prank(settlerSigner);
         settler.settleBatch(events); // must NOT revert
     }
+
+    // -----------------------------------------------------------------------
+    // WP-05 plan 05-03 — SET-11 per-event EndpointPaused (D-LOCK-PREC slot)
+    // Ports settle_batch.rs:209 — `if ep.paused != 0 -> EndpointPaused` —
+    // inserted AFTER the DuplicateCallId dedup READ (:194) and BEFORE
+    // RecipientCoverageMismatch (:213). Additive only; no WP-04 reorder.
+    // -----------------------------------------------------------------------
+
+    /// @notice settle_batch.rs:209 — endpoint paused per-event reverts
+    ///         EndpointPaused (SET-11). Pause via registry authority; attempt
+    ///         settleBatch; must revert EndpointPaused.selector.
+    ///         RED: no per-event pause check exists yet — batch proceeds and
+    ///         does NOT revert EndpointPaused.
+    function test_EndpointPaused_RevertsPerEvent() public {
+        _register(SLUG);
+        _fundPool(SLUG, 5_000_000);
+        address agent = makeAddr("agent");
+        _provisionAgent(agent, 10_000_000, 10_000_000);
+
+        vm.prank(authority);
+        reg.pauseEndpoint(SLUG, true);
+
+        IPactSettler.SettlementEvent[] memory events = new IPactSettler.SettlementEvent[](1);
+        events[0] = _makeEvent(0x60, agent, SLUG, 1_000, 0, 50, false, 1, 1);
+
+        vm.prank(settlerSigner);
+        vm.expectRevert(EndpointPaused.selector);
+        settler.settleBatch(events);
+    }
+
+    /// @notice settle_batch.rs:209 resume path — pause endpoint then unpause;
+    ///         settleBatch with a fresh callId must NOT revert.
+    ///         RED: no per-event pause check yet — this test passes even when
+    ///         paused (incorrect), so RED is confirmed by test_EndpointPaused_RevertsPerEvent.
+    function test_EndpointPaused_CanResumeAfterUnpause() public {
+        _register(SLUG);
+        _fundPool(SLUG, 5_000_000);
+        address agent = makeAddr("agent");
+        _provisionAgent(agent, 10_000_000, 10_000_000);
+
+        vm.prank(authority);
+        reg.pauseEndpoint(SLUG, true);
+        vm.prank(authority);
+        reg.pauseEndpoint(SLUG, false);
+
+        IPactSettler.SettlementEvent[] memory events = new IPactSettler.SettlementEvent[](1);
+        events[0] = _makeEvent(0x61, agent, SLUG, 1_000, 0, 50, false, 1, 1);
+
+        vm.prank(settlerSigner);
+        settler.settleBatch(events); // must NOT revert
+    }
+
+    /// @notice D-LOCK-PREC regression: dedup READ (:194) precedes EndpointPaused
+    ///         (:209). Consume callId while endpoint is live; pause endpoint;
+    ///         replay same callId -> must revert DuplicateCallId (NOT EndpointPaused).
+    ///         Conditional RED: dedup READ already exists at :84, so this test
+    ///         passes pre-impl (DuplicateCallId fires before any pause check).
+    ///         It is the regression guard — must stay GREEN after impl too.
+    function test_EndpointPaused_DedupReadPrecedesEndpointPaused() public {
+        _register(SLUG);
+        _fundPool(SLUG, 5_000_000);
+        address agent = makeAddr("agent");
+        _provisionAgent(agent, 10_000_000, 10_000_000);
+
+        // Consume callId while endpoint is live.
+        IPactSettler.SettlementEvent[] memory ev1 = new IPactSettler.SettlementEvent[](1);
+        ev1[0] = _makeEvent(0x62, agent, SLUG, 1_000, 0, 50, false, 1, 1);
+        vm.prank(settlerSigner);
+        settler.settleBatch(ev1);
+
+        // Pause endpoint.
+        vm.prank(authority);
+        reg.pauseEndpoint(SLUG, true);
+
+        // Replay same callId with endpoint paused -> DuplicateCallId (NOT EndpointPaused).
+        // Proves dedup READ precedes EndpointPaused (D-LOCK-PREC).
+        vm.prank(settlerSigner);
+        vm.expectRevert(DuplicateCallId.selector);
+        settler.settleBatch(ev1);
+    }
 }
