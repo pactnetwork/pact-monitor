@@ -1057,6 +1057,97 @@ contract PactSettlerTest is Test {
         assertEq(reg.getEndpoint(SLUG_C).currentPeriodRefunds, 1_000_000, "currentPeriodRefunds must not change on 0-clamp");
     }
 
+    // -----------------------------------------------------------------------
+    // WP-05 plan 05-05 — SET-09 pool-depleted clamp (PoolDepleted)
+    // Ports settle_batch.rs:462-469 — fills the empty
+    // `if (ps.currentBalance < payableRefund) {}` block in _settleSuccess.
+    // D-LOCK-CLAMP-ORDER: PoolDepleted (set :468, AFTER :407) OVERWRITES
+    // ExposureCapClamped when both fire. No currentPeriodRefunds rollback.
+    // -----------------------------------------------------------------------
+
+    /// @notice settle_batch.rs:462-469 — pool funded only 100, intended refund
+    ///         200_000 (cap 5_000_000 -> no cap clamp). Pool (100) < payableRefund
+    ///         (200_000) -> PoolDepleted (enum 2), actualRefund=0. Premium still
+    ///         charged. Port of 05-settle-batch.test.ts:442.
+    ///         RED: empty if leaves status as Settled (default); expectEmit
+    ///         PoolDepleted mismatches.
+    function test_PoolDepleted_RefundSkippedAndMarked() public {
+        _register(SLUG);
+        _fundPool(SLUG, 100);  // only 100 in pool -- far below refund 200_000
+
+        address agent = makeAddr("agent");
+        _provisionAgent(agent, 10_000_000, 10_000_000);
+
+        IPactSettler.SettlementEvent[] memory events = new IPactSettler.SettlementEvent[](1);
+        events[0] = _makeEvent(0x3C, agent, SLUG, 1_000, 200_000, 6000, true, 1, 1);
+
+        vm.expectEmit(true, true, true, true);
+        emit IPactSettler.CallSettled(
+            events[0].callId, SLUG, agent,
+            1_000, 200_000, 0,
+            IPactSettler.SettlementStatus.PoolDepleted,
+            true, 6000, events[0].timestamp
+        );
+        vm.prank(settlerSigner);
+        settler.settleBatch(events);
+
+        // Agent paid premium, received no refund (pool could not cover).
+        assertEq(usdc.balanceOf(agent), 10_000_000 - 1_000, "agent must pay premium; no refund on PoolDepleted");
+    }
+
+    /// @notice D-LOCK-CLAMP-ORDER precedence: small cap clamps refund (sets
+    ///         ExposureCapClamped), then pool (100) < clamped amount (1000) ->
+    ///         PoolDepleted OVERWRITES ExposureCapClamped (final status = 2).
+    ///         currentPeriodRefunds == clamped amount (1000), NOT rolled back
+    ///         (P1(b) no-rollback -- Solana :409-414 accrual is unconditional
+    ///         within the cap block; pool check fires later).
+    ///         totalRefunds UNCHANGED (recordRefundPaid NOT called; actualRefund=0).
+    ///         RED: empty if leaves status as ExposureCapClamped (set by 05-04
+    ///         inference); expectEmit PoolDepleted mismatches.
+    function test_PoolDepleted_OverwritesExposureCapClamped() public {
+        // Register SLUG_B with small exposureCapPerHour=1000 and no fee
+        // override (uses protocol default Treasury 10% -> 1 recipient).
+        IPactRegistry.FeeRecipient[8] memory none;
+        vm.prank(authority);
+        reg.registerEndpoint(SLUG_B, 500, 0, 5000, 1000, 1_000, false, 0, none);
+        // Fund pool with only 100 -- below the clamped cap (1000).
+        _fundPool(SLUG_B, 100);
+
+        address agent = makeAddr("agent");
+        _provisionAgent(agent, 10_000_000, 10_000_000);
+
+        // refund=5000 > cap=1000 -> cap clamps to 1000 (ExposureCapClamped inferred).
+        // Then pool (100) < clamped (1000) -> PoolDepleted fires and OVERWRITES.
+        IPactSettler.SettlementEvent[] memory events = new IPactSettler.SettlementEvent[](1);
+        events[0] = _makeEvent(0x3D, agent, SLUG_B, 1_000, 5_000, 6000, true, 1, 1);
+
+        vm.expectEmit(true, true, true, true);
+        emit IPactSettler.CallSettled(
+            events[0].callId, SLUG_B, agent,
+            1_000, 5_000, 0,
+            IPactSettler.SettlementStatus.PoolDepleted,
+            true, 6000, events[0].timestamp
+        );
+        vm.prank(settlerSigner);
+        settler.settleBatch(events);
+
+        // currentPeriodRefunds == clamped amount (1000) -- accrued by
+        // recordCallAndCapAccrual, NOT rolled back on PoolDepleted.
+        assertEq(
+            reg.getEndpoint(SLUG_B).currentPeriodRefunds,
+            1_000,
+            "currentPeriodRefunds must equal clamped amount (no rollback on PoolDepleted)"
+        );
+        // totalRefunds UNCHANGED (recordRefundPaid not called; actualRefund=0).
+        assertEq(
+            reg.getEndpoint(SLUG_B).totalRefunds,
+            0,
+            "totalRefunds must be 0 (recordRefundPaid skipped on PoolDepleted)"
+        );
+        // Agent paid premium only -- no refund.
+        assertEq(usdc.balanceOf(agent), 10_000_000 - 1_000, "agent pays premium only on PoolDepleted");
+    }
+
     /// @notice settle_batch.rs:396-399 period reset asserted end-to-end through
     ///         settleBatch after WP-05 cap clamp is live. Port of
     ///         07-exposure-cap.test.ts:81. cap=500_000. Batch 1: full 500_000
