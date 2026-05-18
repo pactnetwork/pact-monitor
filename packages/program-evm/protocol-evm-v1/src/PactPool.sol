@@ -40,8 +40,31 @@ contract PactPool is IPactPool, AccessControl {
     }
 
     /// @inheritdoc IPactPool
-    function topUp(bytes16, uint64) external override {
-        revert("NOT_IMPLEMENTED");
+    /// @dev Port of top_up_coverage_pool.rs. Authority-gated (D3 — Solana
+    ///      requires signer == coverage_pool.authority == register-time
+    ///      ProtocolConfig.authority); slug must be registered (D1); pulls
+    ///      `amount` USDC msg.sender→this; checked adds → ArithmeticOverflow
+    ///      (D6, mirrors checked_add → PactError::ArithmeticOverflow).
+    function topUp(bytes16 slug, uint64 amount) external override {
+        if (msg.sender != registry.authority()) revert UnauthorizedAuthority();
+        if (!registry.isRegistered(slug)) revert EndpointNotFound();
+
+        _usdc.safeTransferFrom(msg.sender, address(this), amount);
+
+        PoolState storage p = _pools[slug];
+        uint64 newBal;
+        uint64 newDep;
+        unchecked {
+            newBal = p.currentBalance + amount;
+            newDep = p.totalDeposits + amount;
+        }
+        if (newBal < p.currentBalance) revert ArithmeticOverflow();
+        if (newDep < p.totalDeposits) revert ArithmeticOverflow();
+        p.currentBalance = newBal;
+        p.totalDeposits = newDep;
+        if (p.createdAt == 0) p.createdAt = uint64(block.timestamp);
+
+        emit PoolToppedUp(slug, msg.sender, amount);
     }
 
     /// @inheritdoc IPactPool

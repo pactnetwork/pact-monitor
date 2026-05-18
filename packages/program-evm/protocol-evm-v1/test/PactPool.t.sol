@@ -51,4 +51,63 @@ contract PactPoolTest is Test {
         assertTrue(pool.hasRole(0x00, authority));
         assertFalse(pool.hasRole(pool.SETTLER_ROLE(), settler));
     }
+
+    // --- Task 2: topUp (port of top_up_coverage_pool.rs) ---
+
+    function test_TopUp_CreditsOnlyTargetedSlugPool() public {
+        // Ported from 01-pool.test.ts "credits only the targeted slug pool"
+        // — identical balance assertions.
+        _register(SLUG);
+        _register(SLUG_B);
+        usdc.mint(authority, 1_000_000);
+        vm.prank(authority);
+        usdc.approve(address(pool), 500_000);
+        vm.prank(authority);
+        pool.topUp(SLUG, 500_000);
+
+        assertEq(pool.balanceOf(SLUG).currentBalance, 500_000);
+        assertEq(usdc.balanceOf(address(pool)), 500_000);
+        assertEq(pool.balanceOf(SLUG_B).currentBalance, 0);
+    }
+
+    function test_TopUp_UpdatesTotalDeposits() public {
+        _register(SLUG);
+        usdc.mint(authority, 1_000_000);
+        vm.prank(authority);
+        usdc.approve(address(pool), 300_000);
+        vm.prank(authority);
+        pool.topUp(SLUG, 300_000);
+        IPactPool.PoolState memory s = pool.balanceOf(SLUG);
+        assertEq(s.currentBalance, 300_000);
+        assertEq(s.totalDeposits, 300_000);
+    }
+
+    function test_TopUp_RejectsNonAuthority() public {
+        _register(SLUG);
+        usdc.mint(funder, 1_000_000);
+        vm.prank(funder);
+        usdc.approve(address(pool), 500_000);
+        vm.prank(funder);
+        vm.expectRevert(UnauthorizedAuthority.selector);
+        pool.topUp(SLUG, 500_000);
+    }
+
+    function test_TopUp_RejectsUnregisteredSlug() public {
+        // EVM-meaningful residual of the N/A "mismatched pool/slug pair".
+        usdc.mint(authority, 1_000_000);
+        vm.prank(authority);
+        usdc.approve(address(pool), 500_000);
+        vm.prank(authority);
+        vm.expectRevert(EndpointNotFound.selector);
+        pool.topUp(SLUG, 500_000);
+    }
+
+    function test_TopUp_RevertsOnInsufficientAllowance() public {
+        _register(SLUG);
+        usdc.mint(authority, 1_000_000);
+        // no approve
+        vm.prank(authority);
+        vm.expectRevert();
+        pool.topUp(SLUG, 500_000);
+    }
 }
