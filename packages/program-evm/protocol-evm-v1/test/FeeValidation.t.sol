@@ -34,6 +34,7 @@ contract FeeValidationTest is Test {
     address T = makeAddr("treasury");
     address TV = makeAddr("treasuryVault");
     address A1 = makeAddr("affiliate1");
+    address A2 = makeAddr("affiliate2");
     address T2 = makeAddr("treasury2");
     address DUP = makeAddr("dup");
 
@@ -160,5 +161,45 @@ contract FeeValidationTest is Test {
         r[1] = _rec(0, T2, 2000);
         vm.expectRevert(MultipleTreasuryRecipients.selector);
         harness.validate(r, 2, 3000, T);
+    }
+
+    // --- §4 #7 EVM-adapted affiliate validation (captain Gate 2 required) ---
+
+    function test_RejectsZeroAddressAffiliate() public {
+        // Single non-duplicate zero-address affiliate. Solana would reject it
+        // at register via validate_affiliate_atas; EVM residual = non-zero
+        // guard → InvalidAffiliateAta (spec §4 #7). Treasury raw dest = T
+        // (non-zero) so the pre-sub dup pass does not false-trigger vs the
+        // zero affiliate.
+        IPactRegistry.FeeRecipient[8] memory r;
+        r[0] = _rec(0, T, 1000);
+        r[1] = _rec(1, address(0), 500);
+        vm.expectRevert(InvalidAffiliateAta.selector);
+        harness.validate(r, 2, 3000, T);
+    }
+
+    function test_PrecedenceDuplicateBeatsAffiliateNonZero() public {
+        // Two zero-address affiliates: simultaneously zero-address AND
+        // duplicates. The duplicate-destination check (fee.rs:73-77 in-loop /
+        // :153-159 post-sub) precedes the non-zero guard →
+        // FeeRecipientDuplicateDestination, NOT InvalidAffiliateAta.
+        IPactRegistry.FeeRecipient[8] memory r;
+        r[0] = _rec(0, T, 1000);
+        r[1] = _rec(1, address(0), 500);
+        r[2] = _rec(1, address(0), 500);
+        vm.expectRevert(FeeRecipientDuplicateDestination.selector);
+        harness.validate(r, 3, 3000, T);
+    }
+
+    function test_AcceptsTreasuryPlusNonZeroAffiliates() public {
+        // Regression: valid Treasury + non-zero kind-1 and kind-2 affiliates
+        // still pass after the non-zero guard (guard scopes to kind != 0,
+        // any-affiliate-kind, and must not reject valid affiliates).
+        IPactRegistry.FeeRecipient[8] memory r;
+        r[0] = _rec(0, T, 1000);
+        r[1] = _rec(1, A1, 500);
+        r[2] = _rec(2, A2, 500);
+        uint32 sum = harness.validate(r, 3, 3000, T);
+        assertEq(sum, 2000);
     }
 }

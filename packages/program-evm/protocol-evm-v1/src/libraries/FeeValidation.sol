@@ -93,5 +93,22 @@ library FeeValidation {
                 }
             }
         }
+
+        // EVM-adapted affiliate validation (design spec §4 #7, lines 94/135).
+        // Solana's validate_affiliate_atas (fee.rs:175-217, called AFTER
+        // validate_post_substitution in register_endpoint) does SPL token-
+        // account introspection with no EVM equivalent. The residual EVM-
+        // meaningful invariant from §4 #7 is "non-zero": an affiliate
+        // (kind != Treasury, i.e. 1/2 — kind already bounded to 0..2 above)
+        // must not be the zero address, else it registers fine then breaks
+        // settlement. InvalidAffiliateAta is the affiliate-validity error in
+        // error.rs; trigger narrowed (ATA introspection -> zero-address guard)
+        // => OPTIMIZED-DIVERGENCE, not N/A — recorded for the WP-06 parity
+        // matrix / §4 #7 wording fix.
+        for (uint256 i = 0; i < count; i++) {
+            if (recipients[i].kind != 0 && recipients[i].destination == address(0)) {
+                revert InvalidAffiliateAta();
+            }
+        }
     }
 }
