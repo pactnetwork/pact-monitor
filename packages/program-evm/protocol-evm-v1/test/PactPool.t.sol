@@ -110,4 +110,36 @@ contract PactPoolTest is Test {
         vm.expectRevert();
         pool.topUp(SLUG, 500_000);
     }
+
+    // --- Task 3: balanceOf + ported register/isolation scenarios ---
+
+    function test_BalanceOf_RegisteredPoolZeroInitialised() public {
+        // Ported (parity subset) from 01-pool.test.ts "register_endpoint
+        // creates per-slug coverage pool with correct state".
+        _register(SLUG);
+        IPactPool.PoolState memory s = pool.balanceOf(SLUG);
+        assertEq(s.currentBalance, 0);
+        assertEq(s.totalDeposits, 0);
+        assertEq(s.totalPremiums, 0);
+        assertEq(s.totalRefunds, 0);
+    }
+
+    function test_BalanceOf_RevertsUnregistered() public {
+        vm.expectRevert(EndpointNotFound.selector);
+        pool.balanceOf(SLUG);
+    }
+
+    function test_TwoEndpointsIsolatedPools() public {
+        // Ported (behavior) from 01-pool.test.ts "two endpoints have isolated
+        // coverage pools".
+        _register(SLUG);
+        _register(SLUG_B);
+        usdc.mint(authority, 1_000_000);
+        vm.prank(authority);
+        usdc.approve(address(pool), 400_000);
+        vm.prank(authority);
+        pool.topUp(SLUG, 400_000);
+        assertEq(pool.balanceOf(SLUG).currentBalance, 400_000);
+        assertEq(pool.balanceOf(SLUG_B).currentBalance, 0);
+    }
 }

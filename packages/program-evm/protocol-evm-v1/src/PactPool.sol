@@ -68,8 +68,11 @@ contract PactPool is IPactPool, AccessControl {
     }
 
     /// @inheritdoc IPactPool
-    function balanceOf(bytes16) external view override returns (PoolState memory) {
-        revert("NOT_IMPLEMENTED");
+    /// @dev Pool exists iff endpoint registered (D1) — mirrors Solana
+    ///      `top_up`'s pool-account existence requirement.
+    function balanceOf(bytes16 slug) external view override returns (PoolState memory) {
+        if (!registry.isRegistered(slug)) revert EndpointNotFound();
+        return _pools[slug];
     }
 
     /// @inheritdoc IPactPool
