@@ -253,3 +253,150 @@ Specs/plans:
 - `docs/superpowers/plans/2026-05-15-arc-parity-port.md` (WP-02 + WP-03
   detailed; WP-04..06 scoped — WP-04/05 detailed via GSD at turn)
 - This handoff: `docs/superpowers/handoffs/2026-05-18-arc-evm-port-handoff.md`
+
+---
+
+## WP-EVM-04 OUTCOMES (LOCKED — read before WP-EVM-05)
+
+WP-EVM-04 (PactSettler happy path) is COMPLETE: captain GATE A + GATE B
+approved, gsd-verifier passed (8/8 must-haves, `04-VERIFICATION.md`),
+`forge build` clean, `forge test` 90/90 (0 failed; full WP-02/03 regression
+held), phase 04 marked complete, pushed (`feat/arc-protocol-v1` @ `4cb699d`),
+PR #204 completion comment posted. All §(b) WP-02/03 LOCKED rulings + the
+§(c) methodology + §(e) conventions REMAIN IN FORCE. The following are now
+ALSO settled law — do NOT re-derive.
+
+### (a) WP-EVM-04 commit lineage (on `feat/arc-protocol-v1`)
+
+- Planning/GATE-A: `8bf87d7` research · `4cc7f49` GSD scaffold + plans ·
+  `05443db` GATE-A rulings + parity-seam fix (E1 hook split) · `4a6bac9`
+  04-01 closure + sequential-exec config.
+- 04-02 (foundation): `bd22432` PactSettler AccessControl (E2) · `0b01648`
+  split E1 hooks (E1) · `566e695` PactSettler.t.sol harness · `e42c8ed`
+  SUMMARY · `f0d68a1` REQUIREMENTS.
+- 04-03 (guards/dedup/premium-in): `525e6a1` RED · `ce1c281` GREEN guards ·
+  `3abe9c0` RED · `9602147` GREEN dedup+premium-in · `3a16d6b` SUMMARY.
+- 04-04 (economic loop + 9 tests + GATE B): `f46a0b6` RED · `8cc7b1a` GREEN
+  settleBatch loop · `8592faf` 9 ported tests · `ee26e2f` SUMMARY ·
+  `ea9dc0d` orchestrator GATE-B addendum.
+- GATE-B fix: `6adc459` RED precedence test · `4c2fd86` fix (the captain
+  spot-checked diff) · `6f4db0a` report FIX section.
+- Closeout: `d6c0bad` gsd-verifier VERIFICATION · phase-complete +
+  STATE-complete commits.
+- Canonical decision record: `.planning/phases/04-pactsettler-happy-path/04-GATE-A-DECISIONS.md`;
+  outcome: `.../04-REPORT-gateB.md`; verification: `.../04-VERIFICATION.md`.
+
+### (b) E1-E4 final resolutions — LOCKED
+
+- **E1 (LOCKED):** `PactRegistry` now has OZ `AccessControl` +
+  `SETTLER_ROLE` (`PactRegistry.sol:28,30`) and TWO SETTLER_ROLE-gated
+  endpoint-stat hooks mirroring `settle_batch.rs`'s two `ep.*` mutation
+  points: `recordCallAndCapAccrual(slug,premium,breach,intendedRefund)
+  returns (uint64 payableRefund)` (`PactRegistry.sol:244`; ports
+  `settle_batch.rs:385-414` — totalCalls/totalPremiums/totalBreaches,
+  the WP-04 hourly PERIOD RESET `:396-399` at `PactRegistry.sol:260-263`,
+  then `currentPeriodRefunds += payableRefund`) called BEFORE fee fan-out;
+  and `recordRefundPaid(slug,actualRefund)` (`PactRegistry.sol:284`; ports
+  `settle_batch.rs:493-499` — `totalRefunds += actual`) called AFTER the
+  refund transfer. Both `onlyRole(SETTLER_ROLE)`, checked →
+  `ArithmeticOverflow`. **D1-SCOPE REFINEMENT (now LOCKED ruling #8):**
+  WP-03 ruling D1 ("NO modification of committed WP-02 `PactRegistry`")
+  was scoped to `PactPool` reaching into the registry — it does NOT bar
+  WP-04+ adding their own SETTLER_ROLE-gated writers where design-spec §6
+  places `EndpointConfig` state. This refinement (NOT a contradiction) is
+  hereby appended to the §(b) locked-rulings list as ruling #8; WP-06 §(d)
+  formally records it in the spec.
+- **E2 (LOCKED):** `PactSettler` is `IPactSettler, AccessControl`, 3-arg
+  ctor `(usdc_, registry_, pool_)` (dropped `address settler_`),
+  `DEFAULT_ADMIN_ROLE → registry.authority()`, `settleBatch` is
+  `onlyRole(SETTLER_ROLE)`. The deployed `PactSettler` MUST hold
+  `SETTLER_ROLE` on BOTH `PactPool` AND `PactRegistry` (two-layer grant;
+  wired in `PactSettler.t.sol` setUp; `Deployment.t.sol` is 3-arg).
+- **E3 (LOCKED):** emit exactly ONE `IPactSettler.CallSettled` (typed
+  enum) per call (DelegateFailed path + Settled path each emit once);
+  `PactEvents.CallSettled` is an indexer-facing alias with byte-identical
+  topic0 (enum encodes as `uint8` in the signature) — asserted by
+  `test_CallSettled_ABI_Identity`. No second emission anywhere.
+- **E4 (LOCKED):** no `CallRecord` on EVM. `mapping(bytes16=>bool)
+  _settledCallIds` is the only persisted per-call state; it is SET
+  (`PactSettler.sol:98`) BEFORE the premium-in `try IERC20.transferFrom`
+  (`PactSettler.sol:106`) so a `DelegateFailed` event still consumes the
+  callId and is not retryable — source-verified `settle_batch.rs:243-262`
+  (CallRecord allocated up-front; DelegateFailed path writes it). The `05`
+  byte assertions (`cr[2]`/`readU64(cr,80)`/`readU64(cr,88)`) are ported
+  to `vm.expectEmit` on `CallSettled.{status,refund,actualRefund}`.
+
+### (c) Guard-precedence LOCKED ordering (WP-05 MUST preserve)
+
+Per-event order in `PactSettler.settleBatch`, bit-identical to
+`settle_batch.rs` and pinned by `test_DuplicateCallIdPrecedesRecipientCoverageMismatch`:
+
+`guards (timestamp :158 / MIN_PREMIUM :161 / feeCountHint :164)` →
+**`DuplicateCallId` dedup READ** (`PactSettler.sol:84`, `settle_batch.rs:194`)
+→ endpoint snapshot **`RecipientCoverageMismatch`** (`PactSettler.sol:89-91`,
+`settle_batch.rs:213`) → **dedup SET** (`PactSettler.sol:98`,
+`settle_batch.rs:248-262`) → **premium-in** (`PactSettler.sol:106`).
+An input that is BOTH a replayed callId AND `feeCountHint != stored count`
+MUST revert `DuplicateCallId` (same input → same error as Solana). WP-05's
+`EndpointPaused` (`settle_batch.rs:209`) slots BETWEEN the dedup READ and
+`RecipientCoverageMismatch` (additive, no WP-04 rewrite). Re-derived
+`settle_batch.rs:144-262` confirmed this is the only WP-04 ordering point;
+everything else between guards and `:194` is N-A-on-EVM.
+
+### (d) EXACT WP-05 additive seams left in code (file:line)
+
+WP-05 inserts these ADDITIVELY — do NOT rewrite WP-04 shape (line numbers
+are post-fix `4cb699d`; the `settle_batch.rs` anchors are authoritative):
+
+1. **`ExposureCapClamped`** — inside `PactRegistry.recordCallAndCapAccrual`,
+   BETWEEN the period reset (`PactRegistry.sol:260-263`) and the
+   `currentPeriodRefunds` accrual (`PactRegistry.sol:274-275`). The exact
+   insertion is spelled out as a comment at `PactRegistry.sol:265-271`
+   (`capRemaining = exposureCapPerHour.saturatingSub(currentPeriodRefunds);
+   if (payableRefund > capRemaining) { payableRefund = capRemaining; status
+   = ExposureCapClamped; }`). WP-05 adjusts the returned `payableRefund`;
+   the `PactSettler` call site is unchanged. Ports `settle_batch.rs:400-408`.
+2. **`PoolDepleted`** — the EMPTY `if (ps.currentBalance < payableRefund) {}`
+   block in `PactSettler._settleSuccess` (`PactSettler.sol:200-201`,
+   comment `:195,:201`). WP-05 sets `status = PoolDepleted; actualRefund =
+   0` here; the populated `else` (payout + debitForRefund) stays. Ports
+   `settle_batch.rs:462-469`.
+3. **Pause kill-switches** — protocol-paused fast-revert PRE-loop (before
+   any per-event work, `settle_batch.rs:99-115`) and per-event
+   `EndpointPaused` (`settle_batch.rs:209`, slots into the precedence order
+   per §(c)). Not present in WP-04.
+4. **`BatchTooLarge`** — `events.length > MAX_BATCH_SIZE (50)` pre-loop
+   (`settle_batch.rs:133-135`). Not present in WP-04.
+
+### (e) WP-EVM-05 scope (D-SPLIT reading A — LOCKED)
+
+WP-05 = the 4 deferred `05-settle-batch.test.ts` clamp/kill-switch tests
+(pool-depleted → `PoolDepleted`; exposure-cap-clamp → `ExposureCapClamped`;
+`ProtocolPaused` when paused=1; resume-after-unpause) PLUS the full ports
+of `tests/06-pause.test.ts`, `tests/07-exposure-cap.test.ts`,
+`tests/10-pause-protocol.test.ts`, `tests/09-auth-pda.test.ts` (auth →
+`SETTLER_ROLE` model). Parity invariants: hourly rolling-window reset is
+ALREADY WP-04 (in `recordCallAndCapAccrual` — do NOT re-implement; WP-05
+only adds the clamp DECISION); clamp ordering pool-balance THEN exposure
+cap; protocol-paused fast-revert before any per-event work or transfer.
+Config flag: WP-05 SHOULD enable a settlement threat-model / adversarial
+pass (Nyquist/security were intentionally OFF for WP-04); WP-06 fuzz/gas
+covers statistical adequacy.
+
+### (f) WP-EVM-05 process
+
+WP-05 is GSD per spec §8: `/gsd:plan-phase` then `/gsd:execute-phase`
+(the `.planning/` scaffold + ROADMAP Phase 5 `wp-evm-05-pactsettler-hardening`
+already exist; STATE.md advanced to Phase 5). Same captain gate cadence:
+(1) plan-review gate (GATE A) — author plan, report, WAIT for approval
+BEFORE any Solidity; (2) final parity gate (GATE B) — after impl +
+`forge build && forge test` green, report, WAIT, NO push / NO PR #204
+comment until approved. Same methodology (§c — Solana source authority,
+STOP-AND-ASK on parity ambiguity, strict TDD RED-before-GREEN, file-scoped
+conventional commits), contamination guardrail (§e — only
+`?? .claude/pr-reviews/` expected; never touch `CLAUDE.md`/`.claude/skills`),
+and file-report convention (gate reports →
+`.planning/phases/<phase>/<phase>-REPORT-<gate>.md` AND a short
+`cockpit runtime send pact-network` notice). GSD `use_worktrees:false` +
+`code_review:false` + Nyquist/security off are set in `.planning/config.json`
+(WP-05 may re-enable a threat-model pass per §(e)).
