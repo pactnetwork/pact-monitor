@@ -59,8 +59,8 @@ Phase numbers equal work-package numbers (Phase N == WP-EVM-0N).
   7. One `CallSettled` event emitted per call carrying premium/refund/actualRefund/status/breach/latencyMs/timestamp.
   8. Ported happy-path subset of `tests/05-settle-batch.test.ts` is green under `forge test`; existing 70 tests stay green.
 **Plans**: 4 plans
-- [ ] 04-01-PLAN.md — GATE-A decision record: E1-E4 captain rulings (no Solidity)
-- [ ] 04-02-PLAN.md — Foundation: PactSettler AccessControl (E2) + endpoint-stats path (E1) + test harness
+- [x] 04-01-PLAN.md — GATE-A decision record: E1-E4 captain rulings (no Solidity)
+- [x] 04-02-PLAN.md — Foundation: PactSettler AccessControl (E2) + endpoint-stats path (E1) + test harness
 - [ ] 04-03-PLAN.md — Per-event guards + dedup + premium-in try/catch -> DelegateFailed (SET-01..04)
 - [ ] 04-04-PLAN.md — Pool credit + fee fan-out + breach refund + CallSettled + 9 ported tests + GATE B (SET-05..08)
 
