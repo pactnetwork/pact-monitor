@@ -35,6 +35,12 @@ contract PactSettler is IPactSettler, AccessControl {
     /// @notice Pool that custodies endpoint liquidity.
     IPactPool public immutable pool;
 
+    /// @notice Dedup sentinel — mirrors the Solana CallRecord PDA existence
+    ///         check (settle_batch.rs:194-196). Set BEFORE the premium-in
+    ///         try/catch so DelegateFailed events also consume the callId and
+    ///         are not retryable (GATE-A E4, settle_batch.rs:243-262).
+    mapping(bytes16 => bool) private _settledCallIds;
+
     /// @dev settle_batch.rs:396-399 — 3-arg ctor, DEFAULT_ADMIN_ROLE ->
     ///      registry.authority() (mirrors PactPool.sol:35).
     constructor(address usdc_, address registry_, address pool_) {
@@ -74,12 +80,74 @@ contract PactSettler is IPactSettler, AccessControl {
             if (ep.feeRecipientCount != ev.feeRecipientCountHint)
                 revert RecipientCoverageMismatch();
 
-            // Steps 4-10 (dedup + premium-in + economic half) port in
-            // Task 2 (plan 04-03) and plan 04-04. Reaching here with a
-            // valid guarded event is currently a no-op; plan 04-03 Task 2
-            // adds the dedup mapping and premium-in try/catch immediately
-            // after this comment.
-            // TODO(WP-EVM-04-task2): dedup check + set + premium-in try/catch
+            // Step 4: dedup check — settle_batch.rs:194-196.
+            // Hard revert (aborts the whole batch), same as the Rust Err return.
+            if (_settledCallIds[ev.callId]) revert DuplicateCallId();
+
+            // Step 4 (cont): allocate dedup sentinel BEFORE premium-in —
+            // settle_batch.rs:243-262 allocates the CallRecord PDA before the
+            // delegate pre-flight so a replay of the same callId hits
+            // DuplicateCallId even when the original event ended DelegateFailed
+            // (GATE-A E4 ruling, MUST-VERIFY RESOLVED FROM SOURCE).
+            _settledCallIds[ev.callId] = true;
+
+            // Step 5: premium-in — settle_batch.rs:295-355.
+            // Raw IERC20.transferFrom (NOT SafeERC20) inside try/catch so both
+            // a false return and a revert are caught as DelegateFailed without
+            // aborting the batch (RESEARCH §Q3 / pitfall 1).
+            // Funds flow: agent -> address(pool) (pool is the USDC custodian).
+            SettlementStatus status = SettlementStatus.Settled;
+            bool premiumInOk;
+            try IERC20(usdc).transferFrom(ev.agent, address(pool), ev.premium)
+                returns (bool ok) { premiumInOk = ok; }
+            catch { premiumInOk = false; }
+
+            if (!premiumInOk) {
+                // settle_batch.rs:332-355: DelegateFailed — write record,
+                // continue. No funds move, no pool credit, no fee fan-out,
+                // no refund, no endpoint-stats hook call.
+                // GATE-A E3: emit ONLY IPactSettler.CallSettled (typed enum);
+                // no second PactEvents emission; exactly one per call.
+                status = SettlementStatus.DelegateFailed;
+                emit CallSettled(
+                    ev.callId,
+                    ev.endpointSlug,
+                    ev.agent,
+                    ev.premium,
+                    ev.refund,
+                    0,           // actualRefund = 0 — no funds moved
+                    status,
+                    ev.breach,
+                    ev.latencyMs,
+                    ev.timestamp
+                );
+                continue;
+            }
+
+            // Steps 6-10 (pool credit + endpoint stats + fee fan-out + refund
+            // + final CallSettled emit) port in plan 04-04.
+            //
+            // PROVISIONAL SEAM (plan 04-03 → plan 04-04):
+            // premium-in succeeded — funds have moved agent→pool. The economic
+            // half (creditPremium / recordCallAndCapAccrual / fee fan-out /
+            // debitForRefund / recordRefundPaid) is not yet implemented.
+            // Emit a provisional CallSettled(Settled, actualRefund=0) so the
+            // first settle in test_DuplicateCallIdRejected does not revert.
+            // Plan 04-04 MUST replace this provisional emit with the full
+            // economic emit (still exactly one IPactSettler.CallSettled per
+            // call per GATE-A E3 ruling).
+            emit CallSettled(
+                ev.callId,
+                ev.endpointSlug,
+                ev.agent,
+                ev.premium,
+                ev.refund,
+                0,           // PROVISIONAL: actualRefund=0; plan 04-04 fills real value
+                status,      // Settled
+                ev.breach,
+                ev.latencyMs,
+                ev.timestamp
+            );
         }
     }
 }
