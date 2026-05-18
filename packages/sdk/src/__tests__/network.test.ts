@@ -11,12 +11,20 @@ describe("network config", () => {
     );
   });
 
-  it("devnet/localnet leave programId null until the operator confirms (B1)", () => {
-    expect(NETWORK_CONFIGS.devnet.programId).toBeNull();
-    expect(NETWORK_CONFIGS.localnet.programId).toBeNull();
+  it("devnet carries the verified canonical program ID (B1 resolved)", () => {
+    // B1 resolved 2026-05-18: 5jBQ… proven live on devnet via
+    // scripts/devnet/verify-network.ts. The old constants.ts ORPHAN label
+    // was a misnomer; network:"devnet" now carries it by default.
+    expect(NETWORK_CONFIGS.devnet.programId).toBe(
+      "5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5",
+    );
     expect(NETWORK_CONFIGS.devnet.usdcMint).toBe(
       "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
     );
+  });
+
+  it("localnet leaves programId null (sed-replaced per-env build)", () => {
+    expect(NETWORK_CONFIGS.localnet.programId).toBeNull();
   });
 
   it("resolveNetwork applies overrides and strips trailing slashes", () => {

@@ -26,6 +26,7 @@
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "tweetnacl": "^1.0.3",
+    "undici": "^6.21.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {

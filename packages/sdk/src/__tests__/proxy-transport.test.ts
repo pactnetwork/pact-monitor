@@ -11,6 +11,7 @@ import {
   isPactProcessed,
   bodyToBytes,
 } from "../proxy-transport.js";
+import { sha256Hex } from "../crypto.js";
 
 describe("buildSignaturePayload", () => {
   it("is byte-identical to the market-proxy contract", () => {
@@ -45,13 +46,13 @@ describe("buildProxiedUrl", () => {
 });
 
 describe("buildAuthHeaders", () => {
-  it("produces a signature the proxy's verify step would accept", () => {
+  it("produces a signature the proxy's verify step would accept", async () => {
     const kp = nacl.sign.keyPair();
     const agentPubkey = bs58.encode(kp.publicKey);
     const proxiedUrl = "https://market.pactnetwork.io/v1/helius/v0/x?y=1";
     const bodyBytes = new TextEncoder().encode('{"a":1}');
 
-    const h = buildAuthHeaders({
+    const h = await buildAuthHeaders({
       method: "POST",
       proxiedUrl,
       bodyBytes,
@@ -84,10 +85,10 @@ describe("buildAuthHeaders", () => {
     expect(ok).toBe(true);
   });
 
-  it("uses an empty bodyHash for an empty body", () => {
+  it("uses an empty bodyHash for an empty body", async () => {
     const kp = nacl.sign.keyPair();
     const proxiedUrl = "https://m.io/v1/dummy/q";
-    const h = buildAuthHeaders({
+    const h = await buildAuthHeaders({
       method: "GET",
       proxiedUrl,
       bodyBytes: null,
@@ -167,5 +168,61 @@ describe("bodyToBytes", () => {
     expect(bodyToBytes(null)).toBeNull();
     expect(bodyToBytes("")).toBeNull();
     expect(bodyToBytes(new ReadableStream())).toBeNull();
+  });
+});
+
+describe("sha256Hex (WebCrypto) byte-equivalence to node:crypto", () => {
+  // The 401 guard: the proxy hashes raw wire bytes with node:crypto
+  // (verify-signature.ts). The SDK now hashes with WebCrypto. ANY divergence
+  // is a silent pact_auth_bad_sig. Pin equality over every body shape,
+  // including a non-UTF-8 Uint8Array (the case a string-reencoding bug would
+  // expose) and a view with a non-zero byteOffset.
+  const big = new Uint8Array(300);
+  for (let i = 0; i < big.length; i++) big[i] = (i * 37) % 256;
+  const sliceView = big.subarray(5, 200); // byteOffset != 0
+
+  const cases: Array<[string, Uint8Array]> = [
+    ["empty", new Uint8Array(0)],
+    ["ascii", new TextEncoder().encode("hello world")],
+    ["multibyte utf8", new TextEncoder().encode("héllo · 日本語 · 🦊")],
+    ["raw non-utf8 bytes", new Uint8Array([0, 255, 128, 1, 254, 200, 0xfe])],
+    ["offset view", sliceView],
+  ];
+
+  for (const [name, bytes] of cases) {
+    it(`matches node:crypto for ${name}`, async () => {
+      const expected = createHash("sha256").update(bytes).digest("hex");
+      expect(await sha256Hex(bytes)).toBe(expected);
+    });
+  }
+
+  it("buildAuthHeaders signs over the WebCrypto hash the proxy will recompute", async () => {
+    const kp = nacl.sign.keyPair();
+    const bodyBytes = new Uint8Array([0, 255, 7, 200]); // non-utf8
+    const proxiedUrl = "https://m.io/v1/dummy/x?z=1";
+    const h = await buildAuthHeaders({
+      method: "POST",
+      proxiedUrl,
+      bodyBytes,
+      agentPubkey: bs58.encode(kp.publicKey),
+      secretKey: kp.secretKey,
+      project: "default",
+      now: () => 1_700_000_000_000,
+    });
+    const bodyHash = createHash("sha256").update(bodyBytes).digest("hex");
+    const payload = buildSignaturePayload({
+      method: "POST",
+      path: "/v1/dummy/x?z=1",
+      timestampMs: 1_700_000_000_000,
+      nonce: h["x-pact-nonce"],
+      bodyHash,
+    });
+    expect(
+      nacl.sign.detached.verify(
+        new TextEncoder().encode(payload),
+        bs58.decode(h["x-pact-signature"]),
+        kp.publicKey,
+      ),
+    ).toBe(true);
   });
 });

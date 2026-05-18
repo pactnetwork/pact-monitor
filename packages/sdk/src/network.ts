@@ -1,27 +1,29 @@
 /**
  * Per-network configuration.
  *
- * `programId` is the one value the repo cannot answer for devnet/localnet
- * (plan blocker B1): `@pact-network/protocol-v1-client` ships `PROGRAM_ID`
- * for mainnet only and explicitly marks every prior devnet deploy ORPHAN
- * ("New code MUST NOT send transactions to these"). Because the
- * SettlementAuthority delegate PDA is derived from the program ID, guessing
- * it would silently send the agent's SPL approve to the wrong delegate and
- * premiums/refunds would never settle.
+ * `programId` derives the SettlementAuthority delegate PDA, so a wrong value
+ * silently sends the agent's SPL approve to the wrong delegate and
+ * premiums/refunds never settle. Both public networks now carry a verified
+ * canonical ID:
+ * - mainnet  = `PROGRAM_ID` (`5bCJcdWdK…`)
+ * - devnet   = `PROGRAM_ID_DEVNET` (`5jBQb7fL…`) — verified LIVE on
+ *   `api.devnet.solana.com` 2026-05-18 via `scripts/devnet/verify-network.ts`
+ *   (former plan blocker B1, resolved on-chain; the old `constants.ts` ORPHAN
+ *   label was a misnomer). Still overridable via `createPact({ programId })`.
+ * - localnet = `null`: local builds sed-replace the program ID per-env
+ *   (smoke-tier2 harness), so the operator must pass `programId`.
  *
- * Therefore: mainnet uses the canonical constant; devnet/localnet
- * `programId` is `null` until the operator passes a confirmed value via
- * `createPact({ programId })`. Proxy-routed covered calls, discovery, and
- * indexer reads do NOT need the program ID — only the explicit on-chain ops
- * (`setup`/`topUp`/`revoke`/`policy`) do, and those throw a clear error on
- * devnet/localnet when `programId` is unset.
+ * Proxy-routed covered calls, discovery, and indexer reads do NOT need the
+ * program ID — only explicit on-chain ops (`setup`/`topUp`/`revoke`/`policy`)
+ * do, and those throw a clear error when `programId` is unset.
  *
- * `indexerBaseUrl` reachability is unverified by any deploy manifest
- * (plan blocker B2): indexer polling is best-effort and never affects the
- * golden rule. Override the host if it differs from the published default.
+ * `indexerBaseUrl` (`indexer.pactnetwork.io`) is reachable (former plan
+ * blocker B2, probed green 2026-05-18); polling stays best-effort and never
+ * affects the golden rule. Override the host if it differs.
  */
 import {
   PROGRAM_ID,
+  PROGRAM_ID_DEVNET,
   USDC_MINT_MAINNET,
   USDC_MINT_DEVNET,
 } from "@pact-network/protocol-v1-client";
@@ -46,8 +48,8 @@ export const NETWORK_CONFIGS: Record<Network, NetworkConfig> = {
     defaultRpcUrl: "https://api.mainnet-beta.solana.com",
   },
   devnet: {
-    // B1: unverified — operator must confirm and pass via config.
-    programId: null,
+    // B1 resolved: verified live on devnet 2026-05-18 (verify-network.ts).
+    programId: PROGRAM_ID_DEVNET.toBase58(),
     usdcMint: USDC_MINT_DEVNET.toBase58(),
     proxyBaseUrl: "https://market.pactnetwork.io",
     indexerBaseUrl: "https://indexer.pactnetwork.io",

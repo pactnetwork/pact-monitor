@@ -78,6 +78,55 @@ describe("wrapClient", () => {
     expect((resp.data as { ok: boolean }).ok).toBe(true);
   });
 
+  it("wraps a got instance via beforeRequest short-circuit (json + GET)", async () => {
+    const { pactFetch, calls } = recordingFetch();
+    let hook!: (o: unknown) => Promise<unknown>;
+    const got = Object.assign(
+      function () {
+        /* got callable */
+      },
+      {
+        defaults: { options: {} },
+        extend(opts: { hooks: { beforeRequest: ((o: unknown) => Promise<unknown>)[] } }) {
+          hook = opts.hooks.beforeRequest[0];
+          return { __gotExtended: true };
+        },
+      },
+    );
+    const wrapped = wrapClient(got, pactFetch) as { __gotExtended: boolean };
+    expect(wrapped.__gotExtended).toBe(true);
+
+    // POST with `json` -> materialized to a JSON body + content-type before
+    // pact.fetch signs/sends it (got would otherwise ignore post-hoc json).
+    const resLike = (await hook({
+      url: new URL("https://api.helius.xyz/v0/x?k=v"),
+      method: "post",
+      headers: { "x-test": "1" },
+      json: { a: 1 },
+    })) as {
+      statusCode: number;
+      headers: Record<string, string>;
+      complete: boolean;
+      pipe: unknown;
+    };
+    expect(calls[0].url).toBe("https://api.helius.xyz/v0/x?k=v");
+    expect(calls[0].init?.method).toBe("POST");
+    expect(calls[0].init?.body).toBe(JSON.stringify({ a: 1 }));
+    expect(
+      (calls[0].init?.headers as Record<string, string>)["content-type"],
+    ).toBe("application/json");
+    // Returned object is an IncomingMessage-like got can consume.
+    expect(resLike.statusCode).toBe(200);
+    expect(resLike.complete).toBe(true);
+    expect(typeof resLike.pipe).toBe("function");
+    expect(resLike.headers["x-pact-call-id"]).toBe("c");
+
+    await hook({ url: new URL("https://api.helius.xyz/g"), method: "GET" });
+    expect(calls[1].url).toBe("https://api.helius.xyz/g");
+    expect(calls[1].init?.method).toBe("GET");
+    expect(calls[1].init?.body).toBeUndefined();
+  });
+
   it("throws a typed error for an unsupported client", () => {
     const { pactFetch } = recordingFetch();
     try {

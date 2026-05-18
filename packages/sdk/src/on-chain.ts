@@ -65,6 +65,11 @@ export function buildCreateAtaIdempotentIx(params: {
       { pubkey: SYSTEM_PROGRAM_ID, isSigner: false, isWritable: false },
       { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
     ],
+    // @solana/web3.js 1.x types TransactionInstruction.data as Buffer.
+    // on-chain.ts is the server-only on-chain surface (setup/topUp/revoke);
+    // it is never on the browser covered-call path, and @solana/web3.js
+    // itself requires a Buffer polyfill in browsers anyway — so Buffer here
+    // is correct and does not block the isomorphic covered-call path.
     data: Buffer.from([1]),
   });
 }

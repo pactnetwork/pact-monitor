@@ -138,10 +138,13 @@ describe("createPact", () => {
     await pact.shutdown();
   });
 
-  it("setup() rejects with the B1 program-ID error on devnet", async () => {
+  // B1 is resolved: devnet now carries a verified program ID, so the
+  // missing-program-ID guard is exercised on localnet (sed-replaced per-env
+  // build => no static default) instead.
+  it("setup() rejects with the missing-program-ID error on localnet", async () => {
     const { fetchImpl } = dispatcher({});
     const pact = await createPact({
-      network: "devnet",
+      network: "localnet",
       signer,
       storagePath,
       fetchImpl,
@@ -151,16 +154,17 @@ describe("createPact", () => {
       (e: unknown) =>
         e instanceof PactError &&
         e.code === PactErrorCode.CONFIG_INVALID &&
-        /B1/.test(e.message),
+        /program id/i.test(e.message) &&
+        /localnet/.test(e.message),
     );
     await pact.shutdown();
   });
 
-  it("autoTopUp on devnet without a program ID fails fast at createPact", async () => {
+  it("autoTopUp on localnet without a program ID fails fast at createPact", async () => {
     const { fetchImpl } = dispatcher({});
     await expect(
       createPact({
-        network: "devnet",
+        network: "localnet",
         signer,
         storagePath,
         fetchImpl,

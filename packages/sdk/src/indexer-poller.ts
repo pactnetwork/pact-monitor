@@ -14,7 +14,7 @@
  * silent, surfaces an optional `onError`, and retries next tick. It NEVER
  * throws and NEVER affects the golden rule.
  */
-import type { ObservationBuffer } from "./observation-buffer.js";
+import type { PactStorage } from "./storage.js";
 
 /** Wire shape from indexer agents.controller.ts `serializeCall`. */
 interface AgentCallWire {
@@ -51,13 +51,31 @@ export interface BilledEventData {
 export interface IndexerPollerOptions {
   indexerBaseUrl: string;
   agentPubkey: string;
-  buffer: ObservationBuffer;
+  buffer: PactStorage;
   intervalMs: number;
   limit?: number;
   fetchImpl?: typeof fetch;
   onRefund?: (e: RefundEventData) => void;
   onBilled?: (e: BilledEventData) => void;
+  /**
+   * Unified sink. When provided, each pending matched row is routed here
+   * INSTEAD of onRefund/onBilled, and the poller does NOT markReconciled
+   * itself — the sink owns the idempotent check->emit->reconcile critical
+   * section (factory `recordSettled`), which is what makes webhook+poll
+   * dedupe correct. onRefund/onBilled remain for standalone poller use/tests.
+   */
+  onSettled?: (n: SettledNotification) => void;
   onError?: (err: Error) => void;
+}
+
+export interface SettledNotification {
+  callId: string;
+  slug: string;
+  premiumLamports: bigint;
+  refundLamports: bigint;
+  breach: boolean;
+  settledAt: Date;
+  txSignature: string;
 }
 
 function toBig(s: string): bigint {
@@ -122,6 +140,21 @@ export class IndexerPoller {
         const premium = toBig(row.premiumLamports);
         const refund = toBig(row.refundLamports);
 
+        if (this.opts.onSettled) {
+          // Unified path: the sink owns emit + markReconciled (idempotent,
+          // race-safe vs. the webhook receiver).
+          this.opts.onSettled({
+            callId: row.callId,
+            slug: row.endpointSlug,
+            premiumLamports: premium,
+            refundLamports: refund,
+            breach: row.breach,
+            settledAt,
+            txSignature: row.signature,
+          });
+          continue;
+        }
+        // Legacy standalone path (no shared sink).
         if (premium > 0n) {
           this.opts.onBilled?.({
             callId: row.callId,

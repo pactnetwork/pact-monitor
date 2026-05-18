@@ -12,8 +12,6 @@
  * `pool-created` from the design draft is intentionally absent — V1 has no
  * agent-side provisioning.
  */
-import { EventEmitter } from "node:events";
-
 export interface FailureEvent {
   callId: string | null;
   slug: string;
@@ -62,19 +60,29 @@ export interface PactEventMap {
 
 export type PactEventName = keyof PactEventMap;
 
-export class PactEventEmitter {
-  private readonly emitter = new EventEmitter();
+type AnyListener = (...args: unknown[]) => void;
 
-  constructor() {
-    // Many independent listeners (one per concern) are normal here.
-    this.emitter.setMaxListeners(50);
-  }
+/**
+ * Minimal typed event emitter — isomorphic (no `node:events`, works in the
+ * browser) and strictly better-typed than the old `as unknown[]` casts.
+ *
+ * A faulting user listener MUST NOT break the golden-rule path that emits
+ * `degraded`/`failure` (Node's `EventEmitter.emit` would rethrow), so each
+ * listener is invoked in its own try/catch and a throw is swallowed.
+ */
+export class PactEventEmitter {
+  private readonly map = new Map<PactEventName, Set<AnyListener>>();
 
   on<K extends PactEventName>(
     event: K,
     listener: (...args: PactEventMap[K]) => void,
   ): this {
-    this.emitter.on(event, listener as (...args: unknown[]) => void);
+    let set = this.map.get(event);
+    if (!set) {
+      set = new Set();
+      this.map.set(event, set);
+    }
+    set.add(listener as AnyListener);
     return this;
   }
 
@@ -82,15 +90,25 @@ export class PactEventEmitter {
     event: K,
     listener: (...args: PactEventMap[K]) => void,
   ): this {
-    this.emitter.off(event, listener as (...args: unknown[]) => void);
+    this.map.get(event)?.delete(listener as AnyListener);
     return this;
   }
 
   emit<K extends PactEventName>(event: K, ...args: PactEventMap[K]): boolean {
-    return this.emitter.emit(event, ...args);
+    const set = this.map.get(event);
+    if (!set || set.size === 0) return false;
+    // Copy so a listener that on()/off()s mid-emit can't mutate the iteration.
+    for (const listener of [...set]) {
+      try {
+        listener(...args);
+      } catch {
+        // A listener fault never escapes the emit (golden rule).
+      }
+    }
+    return true;
   }
 
   removeAllListeners(): void {
-    this.emitter.removeAllListeners();
+    this.map.clear();
   }
 }

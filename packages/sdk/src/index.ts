@@ -29,3 +29,12 @@ export type {
   ClaimRecord,
   PremiumEstimate,
 } from "./state.js";
+
+export { createWebhookHandler, startWebhookServer } from "./webhook.js";
+export type {
+  WebhookConfig,
+  WebhookDeps,
+  WebhookHandlerRequest,
+  WebhookHandlerResponse,
+  SettlementNotification,
+} from "./webhook.js";

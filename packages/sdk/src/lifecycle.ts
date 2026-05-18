@@ -16,6 +16,8 @@ export interface LifecycleDeps {
   poller: IndexerPoller;
   autoTopUp?: AutoTopUpWatcher;
   installSignalHandlers: boolean;
+  /** Optional extra teardown (e.g. close the webhook server). */
+  onShutdown?: () => Promise<void> | void;
 }
 
 export class LifecycleManager {
@@ -32,17 +34,23 @@ export class LifecycleManager {
 
   install(): void {
     if (this.installed || !this.deps.installSignalHandlers) return;
-    process.once("SIGTERM", this.onSignal);
-    process.once("SIGINT", this.onSignal);
-    process.once("beforeExit", this.onBeforeExit);
+    // No Node process in a browser — signal traps are a no-op there.
+    const p = (globalThis as { process?: NodeJS.Process }).process;
+    if (typeof p?.once !== "function") return;
+    p.once("SIGTERM", this.onSignal);
+    p.once("SIGINT", this.onSignal);
+    p.once("beforeExit", this.onBeforeExit);
     this.installed = true;
   }
 
   private uninstall(): void {
     if (!this.installed) return;
-    process.off("SIGTERM", this.onSignal);
-    process.off("SIGINT", this.onSignal);
-    process.off("beforeExit", this.onBeforeExit);
+    const p = (globalThis as { process?: NodeJS.Process }).process;
+    if (typeof p?.off === "function") {
+      p.off("SIGTERM", this.onSignal);
+      p.off("SIGINT", this.onSignal);
+      p.off("beforeExit", this.onBeforeExit);
+    }
     this.installed = false;
   }
 
@@ -57,6 +65,11 @@ export class LifecycleManager {
       }
       this.deps.poller.stop();
       this.deps.autoTopUp?.stop();
+      try {
+        await this.deps.onShutdown?.();
+      } catch {
+        // best-effort teardown
+      }
       this.uninstall();
     })();
     return this.shuttingDown;

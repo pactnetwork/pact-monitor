@@ -82,6 +82,21 @@ export class OnChainSyncService implements OnModuleInit {
     this.logger.log(
       `OnChainSyncService configured rpc=${rpcUrl} program=${this.programId.toBase58()}`,
     );
+    // The code default is intentionally the mainnet PROGRAM_ID (prod safety).
+    // On a devnet RPC without an explicit PROGRAM_ID env this silently scans
+    // the mainnet program and finds zero EndpointConfig PDAs — a misconfig
+    // that masquerades as "indexer down". Warn loudly; the fix is env, not a
+    // code-default change (see indexer .env.example: devnet requires PROGRAM_ID).
+    if (
+      /devnet/i.test(rpcUrl) &&
+      this.programId.toBase58() === DEFAULT_PROGRAM_ID
+    ) {
+      this.logger.warn(
+        `RPC looks like devnet but PROGRAM_ID is the mainnet default ` +
+          `(${DEFAULT_PROGRAM_ID}). Set PROGRAM_ID=5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5 ` +
+          `for devnet, or on-chain endpoint sync will return nothing.`,
+      );
+    }
   }
 
   /**

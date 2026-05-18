@@ -1,5 +1,5 @@
 /**
- * Durable, append-only JSONL buffer of pending observations.
+ * Node JSONL implementation of `PactStorage`.
  *
  * Mirrors the durability PATTERN of `packages/monitor/src/storage.ts`
  * (synchronous append before any network, full-file rewrite to mark
@@ -10,6 +10,10 @@
  *
  * A hard kill never loses data — the next `createPact()` reloads the file and
  * the indexer poller resumes reconciling the unreconciled tail.
+ *
+ * This module statically imports `node:fs`/`node:path`; it is loaded ONLY via
+ * the dynamic import in `storage-select.ts` (Node branch) so a browser bundle
+ * never resolves `node:*`. `MemoryStorage` is the browser impl.
  */
 import {
   appendFileSync,
@@ -19,23 +23,16 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname } from "node:path";
+import {
+  aggregate,
+  type ObservationStats,
+  type PactStorage,
+  type PendingObservation,
+} from "./storage.js";
 
-export interface PendingObservation {
-  callId: string;
-  agentPubkey: string;
-  slug: string;
-  host: string;
-  /** ISO-8601 of the agent's outbound call. */
-  ts: string;
-  /** Provisional value from the X-Pact-Premium response header. */
-  premiumLamports: string | null;
-  refundLamports: string | null;
-  outcome: string | null;
-  breach: boolean | null;
-  reconciled: boolean;
-}
+export type { PendingObservation } from "./storage.js";
 
-export class ObservationBuffer {
+export class FsObservationBuffer implements PactStorage {
   private readonly path: string;
 
   constructor(storagePath: string) {
@@ -72,7 +69,7 @@ export class ObservationBuffer {
     return this.readAll().filter((o) => !o.reconciled);
   }
 
-  /** Mark a call settled. Full-file rewrite, same as PactStorage.markSynced. */
+  /** Mark a call settled. Idempotent: only flips a pending row. */
   markReconciled(callId: string): void {
     const all = this.readAll();
     let changed = false;
@@ -91,42 +88,14 @@ export class ObservationBuffer {
     }
   }
 
-  stats(): {
-    totalCalls: number;
-    reconciledCalls: number;
-    pendingCalls: number;
-    totalPremiumLamportsObserved: bigint;
-    totalRefundLamportsObserved: bigint;
-    bySlug: Record<string, { calls: number; breaches: number }>;
-  } {
-    const all = this.readAll();
-    let premium = 0n;
-    let refund = 0n;
-    let reconciled = 0;
-    const bySlug: Record<string, { calls: number; breaches: number }> = {};
-    for (const o of all) {
-      if (o.reconciled) reconciled++;
-      if (o.premiumLamports) premium += safeBig(o.premiumLamports);
-      if (o.refundLamports) refund += safeBig(o.refundLamports);
-      const s = (bySlug[o.slug] ??= { calls: 0, breaches: 0 });
-      s.calls++;
-      if (o.breach) s.breaches++;
-    }
-    return {
-      totalCalls: all.length,
-      reconciledCalls: reconciled,
-      pendingCalls: all.length - reconciled,
-      totalPremiumLamportsObserved: premium,
-      totalRefundLamportsObserved: refund,
-      bySlug,
-    };
+  stats(): ObservationStats {
+    return aggregate(this.readAll());
   }
 }
 
-function safeBig(s: string): bigint {
-  try {
-    return BigInt(s);
-  } catch {
-    return 0n;
-  }
-}
+/**
+ * Back-compat alias. The class was renamed `FsObservationBuffer` when the
+ * `PactStorage` abstraction was introduced; existing callers/tests construct
+ * `new ObservationBuffer(path)` and must keep working.
+ */
+export { FsObservationBuffer as ObservationBuffer };

@@ -21,10 +21,16 @@ import { resolveNetwork, type ResolvedNetwork } from "./network.js";
 import { resolveSecretKey, signerPublicKey } from "./signer.js";
 import { canonicalHostname } from "./hostname.js";
 import { SlugResolver } from "./slug-resolver.js";
-import { ObservationBuffer } from "./observation-buffer.js";
-import { IndexerPoller } from "./indexer-poller.js";
+import { selectStorage } from "./storage-select.js";
+import { IndexerPoller, type SettledNotification } from "./indexer-poller.js";
 import { PactEventEmitter, type PactEventMap, type PactEventName } from "./events.js";
 import { LifecycleManager } from "./lifecycle.js";
+import {
+  createWebhookHandler,
+  startWebhookServer,
+  type WebhookHandlerRequest,
+  type WebhookHandlerResponse,
+} from "./webhook.js";
 import { goldenFetch, type GoldenFetchDeps } from "./golden-fetch.js";
 import { wrapClient } from "./adapters.js";
 import {
@@ -68,8 +74,16 @@ export interface PactInstance {
   claims(opts?: { since?: number; limit?: number }): Promise<ClaimRecord[]>;
   estimate(hostnameOrUrl: string): Promise<PremiumEstimate>;
   stats(): AgentStats;
-  /** Route an existing ky / axios / fetch client through pact.fetch. */
+  /** Route an existing ky / axios / got / fetch client through pact.fetch. */
   wrap<T>(client: T): T;
+  /**
+   * Framework-agnostic webhook receiver (serverless/Express/etc). Present
+   * only when `config.webhook` is set. Verifies the indexer signature and
+   * feeds the SAME reconcile sink as the poller (no double-emit).
+   */
+  webhookHandler?: (
+    req: WebhookHandlerRequest,
+  ) => Promise<WebhookHandlerResponse>;
   on<K extends PactEventName>(
     event: K,
     listener: (...args: PactEventMap[K]) => void,
@@ -81,9 +95,10 @@ function requireProgramId(net: ResolvedNetwork): PublicKey {
   if (!net.programId) {
     throw new PactError(
       PactErrorCode.CONFIG_INVALID,
-      `On-chain ops need a program ID, but it is unconfirmed for "${net.network}" ` +
-        `(plan blocker B1: every prior devnet deploy is marked ORPHAN). ` +
-        `Pass createPact({ programId: "<confirmed devnet/localnet program id>" }). ` +
+      `On-chain ops need a program ID, but none is configured for ` +
+        `"${net.network}" (localnet builds sed-replace the program ID ` +
+        `per-env, so it has no static default; mainnet and devnet ship a ` +
+        `verified canonical ID). Pass createPact({ programId: "<program id>" }). ` +
         `Covered proxy calls do NOT require this.`,
     );
   }
@@ -110,7 +125,11 @@ export async function createPact(config: PactConfig): Promise<PactInstance> {
     proxyBaseUrl: net.proxyBaseUrl,
     fetchImpl: cfg.fetchImpl,
   });
-  const buffer = new ObservationBuffer(cfg.storagePath);
+  const buffer = await selectStorage({
+    storage: cfg.storage,
+    storagePath: cfg.storagePath,
+    memoryPersistKey: `pact:obs:${agentPubkey}`,
+  });
   const emitter = new PactEventEmitter();
 
   let connection: Connection | null = null;
@@ -125,18 +144,63 @@ export async function createPact(config: PactConfig): Promise<PactInstance> {
     usdcMint,
   });
 
+  // The ONE reconciliation critical section. Both the poller and the webhook
+  // receiver route through this. Idempotent by construction: it re-reads
+  // `buffer.loadPending()` (fresh, not a stale snapshot) so a call already
+  // reconciled by the other path emits AT MOST ONCE; `markReconciled` is
+  // itself idempotent. JS is single-threaded so this runs to completion
+  // without interleave. (Multi-instance caveat documented on `config.webhook`.)
+  function recordSettled(n: SettledNotification): void {
+    if (!buffer.loadPending().some((p) => p.callId === n.callId)) return;
+    if (n.premiumLamports > 0n) {
+      emitter.emit("billed", {
+        callId: n.callId,
+        slug: n.slug,
+        premiumLamports: n.premiumLamports,
+        settledAt: n.settledAt,
+        txSignature: n.txSignature,
+      });
+    }
+    if (n.breach && n.refundLamports > 0n) {
+      emitter.emit("refund", {
+        callId: n.callId,
+        slug: n.slug,
+        refundLamports: n.refundLamports,
+        settledAt: n.settledAt,
+        txSignature: n.txSignature,
+      });
+    }
+    buffer.markReconciled(n.callId);
+  }
+
   const poller = new IndexerPoller({
     indexerBaseUrl: net.indexerBaseUrl,
     agentPubkey,
     buffer,
     intervalMs: cfg.indexerPollIntervalMs,
     fetchImpl: cfg.fetchImpl,
-    onRefund: (e) => emitter.emit("refund", e),
-    onBilled: (e) => emitter.emit("billed", e),
+    onSettled: recordSettled,
     onError: () => {
       /* best-effort (B2): refunds still settle on-chain regardless */
     },
   });
+
+  let webhookServer: { close: () => Promise<void> } | null = null;
+  let webhookHandler:
+    | ((req: WebhookHandlerRequest) => Promise<WebhookHandlerResponse>)
+    | undefined;
+  if (cfg.webhook) {
+    webhookHandler = createWebhookHandler({
+      config: cfg.webhook,
+      reconcile: recordSettled,
+    });
+    if (cfg.webhook.port != null) {
+      webhookServer = await startWebhookServer({
+        config: cfg.webhook,
+        reconcile: recordSettled,
+      });
+    }
+  }
 
   let autoTopUp: AutoTopUpWatcher | undefined;
   if (cfg.autoTopUp) {
@@ -162,6 +226,7 @@ export async function createPact(config: PactConfig): Promise<PactInstance> {
     poller,
     autoTopUp,
     installSignalHandlers: cfg.installSignalHandlers,
+    onShutdown: () => webhookServer?.close(),
   });
   lifecycle.install();
   poller.start();
@@ -364,6 +429,8 @@ export async function createPact(config: PactConfig): Promise<PactInstance> {
     wrap(client) {
       return wrapClient(client, (url, init) => instance.fetch(url, init));
     },
+
+    webhookHandler,
 
     on(event, listener) {
       emitter.on(event, listener);

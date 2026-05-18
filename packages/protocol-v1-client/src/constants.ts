@@ -24,20 +24,39 @@ export const PROGRAM_ID = new PublicKey(
 );
 
 /**
- * Orphaned program IDs from earlier deploys. Kept here only so off-chain log
- * scrapers and migration tooling can recognise legacy traffic. New code MUST NOT
- * send transactions to these program IDs.
+ * Pact Network V1 program ID on **devnet**.
+ *
+ * CANONICAL devnet deploy. Verified LIVE on `api.devnet.solana.com` on
+ * 2026-05-18 by `scripts/devnet/verify-network.ts`: ProtocolConfig PDA
+ * `EFzSjDnAeb4yRA2LjXxmFmdyavdsEmsUNNDkxytvPdHU` exists, is program-owned,
+ * decodes with `paused=0` and `usdcMint=4zMMC9…` (= `USDC_MINT_DEVNET`);
+ * SettlementAuthority signer `47Fg5JqMsCeuRyDsFtD7Ra7YTdzVmTr2mZ1R2dUkZyfS`.
+ * Mainnet (`PROGRAM_ID` / `5bCJcdWdK…`) is a SEPARATE, independent deploy —
+ * the mainnet redeploy did NOT decommission this devnet program.
+ */
+export const PROGRAM_ID_DEVNET = new PublicKey(
+  "5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5"
+);
+
+/**
+ * Orphaned program ID from an earlier deploy. Kept here only so off-chain log
+ * scrapers and migration tooling can recognise legacy traffic. New code MUST
+ * NOT send transactions to this program ID.
  *
  * - `DhWibM…`: pre-Step-C Wave 1A devnet deploy, replaced by `5jBQb7fL…`
- * - `5jBQb7fL…`: Step-C devnet deploy, replaced by mainnet `5bCJcdWdK…`
+ *   (which is itself live — see `PROGRAM_ID_DEVNET`).
  */
 export const ORPHAN_PROGRAM_ID_PRE_STEP_C = new PublicKey(
   "DhWibM2z3Vwp5VmJyashoeZCAZHLFKeHab8o12qYsiQc"
 );
 
-export const ORPHAN_PROGRAM_ID_DEVNET_STEP_C = new PublicKey(
-  "5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5"
-);
+/**
+ * @deprecated Historical misnomer — `5jBQb7fL…` is NOT orphaned; it is the
+ * live devnet deploy. Use {@link PROGRAM_ID_DEVNET}. Retained as an alias so
+ * external consumers importing this symbol do not break (a removal would be a
+ * breaking change to this package's public surface).
+ */
+export const ORPHAN_PROGRAM_ID_DEVNET_STEP_C = PROGRAM_ID_DEVNET;
 
 /** Devnet USDC mint that the program hardcodes in src/constants.rs. */
 export const USDC_MINT_DEVNET = new PublicKey(

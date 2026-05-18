@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "description": "Unified Pact Network agent SDK: createPact() + pact.fetch(). Proxy-backed parametric refund coverage for any registered API on Pact Network V1.",
   "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
@@ -25,6 +29,7 @@
     "typecheck": "tsc --noEmit",
     "pretest": "pnpm run _build:deps",
     "test": "vitest run",
+    "test:e2e": "vitest run src/__tests__/integration.test.ts",
     "test:watch": "vitest",
     "coverage": "vitest run --coverage"
   },
@@ -52,6 +57,7 @@
   "devDependencies": {
     "@types/node": "^22.10.5",
     "@vitest/coverage-v8": "^3.0.4",
+    "happy-dom": "^15.11.7",
     "typescript": "^5.7.3",
     "vitest": "^3.0.4"
   }

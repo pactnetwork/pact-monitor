@@ -5,14 +5,21 @@
  * Robustly supported (structural detection, no client imported as a dep):
  *   - ky instance      -> client.extend({ fetch })           (ky's fetch hook)
  *   - axios instance   -> client.defaults.adapter = ...       (fetch adapter)
+ *   - got instance     -> client.extend({ hooks.beforeRequest })  (delegates
+ *                          fully to pact.fetch by returning a response-like,
+ *                          short-circuiting got's own transport — got's
+ *                          documented custom-transport/cache seam)
  *   - any fetch fn     -> returns a pact-routed fetch         (undici.fetch,
  *                                                              global fetch)
  *
- * `got` is intentionally not auto-wrapped — its transport is not fetch-shaped
- * and a partial shim would be brittle. `pact.wrap` throws a clear, typed
- * error for unsupported clients (use `pact.fetch` directly instead). Every
- * adapter inherits the golden rule from `pact.fetch`.
+ * `pact.wrap` throws a clear, typed error for unsupported clients (use
+ * `pact.fetch` directly instead). Every adapter — got included — inherits the
+ * golden rule from `pact.fetch`: since got's transport is short-circuited and
+ * the call is serviced by `pact.fetch`, the proxy/bare/degrade decision and
+ * "never throw on Pact's behalf" guarantee are exactly the same as a direct
+ * `pact.fetch`. No got-side bare-retry shim is needed or used.
  */
+import type { Readable as NodeReadable } from "node:stream";
 import { PactError, PactErrorCode } from "./errors.js";
 
 export type PactFetchFn = (
@@ -36,6 +43,19 @@ function isAxiosLike(
     (typeof c === "function" || typeof c === "object") &&
     typeof (c as { interceptors?: unknown }).interceptors === "object" &&
     typeof (c as { defaults?: unknown }).defaults === "object"
+  );
+}
+
+function isGotLike(c: unknown): c is { extend: (o: unknown) => unknown } {
+  // got instance: a callable with `.extend` and `.defaults.options`, but NOT
+  // ky (`.create`) and NOT axios (`.interceptors`).
+  return (
+    typeof c === "function" &&
+    typeof (c as { extend?: unknown }).extend === "function" &&
+    typeof (c as { create?: unknown }).create !== "function" &&
+    typeof (c as { interceptors?: unknown }).interceptors !== "object" &&
+    typeof (c as { defaults?: { options?: unknown } }).defaults?.options ===
+      "object"
   );
 }
 
@@ -164,8 +184,102 @@ function wrapAxios(client: unknown, pactFetch: PactFetchFn): unknown {
   return client;
 }
 
+interface GotOptionsish {
+  url: URL | string;
+  method?: string;
+  headers?: Record<string, string | string[] | undefined>;
+  body?: unknown;
+  json?: unknown;
+  form?: Record<string, unknown>;
+}
+
+function gotHeaders(h: GotOptionsish["headers"]): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!h) return out;
+  for (const [k, v] of Object.entries(h)) {
+    if (v == null) continue;
+    out[k] = Array.isArray(v) ? v.join(", ") : v;
+  }
+  return out;
+}
+
+/** Materialize got's intended request body to the exact bytes we'll send. */
+function gotBody(o: GotOptionsish): {
+  body?: BodyInit;
+  extraHeaders: Record<string, string>;
+} {
+  const m = (o.method ?? "GET").toUpperCase();
+  if (m === "GET" || m === "HEAD") return { body: undefined, extraHeaders: {} };
+  if (o.body != null) return { body: o.body as BodyInit, extraHeaders: {} };
+  if (o.json !== undefined) {
+    return {
+      body: JSON.stringify(o.json),
+      extraHeaders: { "content-type": "application/json" },
+    };
+  }
+  if (o.form !== undefined) {
+    const sp = new URLSearchParams();
+    for (const [k, v] of Object.entries(o.form)) {
+      if (v != null) sp.set(k, String(v));
+    }
+    return {
+      body: sp.toString(),
+      extraHeaders: {
+        "content-type": "application/x-www-form-urlencoded",
+      },
+    };
+  }
+  return { body: undefined, extraHeaders: {} };
+}
+
+/**
+ * got adapter. got's transport is not fetch-shaped, so instead of bridging
+ * it we use got's documented `beforeRequest` short-circuit: the hook returns
+ * an `IncomingMessage`-like, which makes got skip its own request entirely
+ * and use our response. The call is serviced by `pact.fetch`, so the golden
+ * rule (proxy/bare/degrade, never-throw-on-Pact's-behalf) is identical to a
+ * direct `pact.fetch`. No bare-retry shim — got never makes the request.
+ */
+function wrapGot(client: unknown, pactFetch: PactFetchFn): unknown {
+  const beforeRequest = async (opts: GotOptionsish): Promise<unknown> => {
+    const url = String(opts.url);
+    const { body, extraHeaders } = gotBody(opts);
+    const headers = { ...gotHeaders(opts.headers), ...extraHeaders };
+    const res = await pactFetch(url, {
+      method: (opts.method ?? "GET").toUpperCase(),
+      headers,
+      body,
+    });
+    const buf = Buffer.from(await res.arrayBuffer());
+    const { Readable } = await import("node:stream");
+    const stream = Readable.from(buf) as NodeReadable &
+      Record<string, unknown>;
+    const resHeaders: Record<string, string> = {};
+    res.headers.forEach((v, k) => {
+      resHeaders[k] = v;
+    });
+    // Shape got expects from a custom transport (see got cache.md).
+    stream.statusCode = res.status;
+    stream.statusMessage = res.statusText;
+    stream.headers = resHeaders;
+    stream.trailers = {};
+    stream.socket = null;
+    stream.aborted = false;
+    stream.complete = true;
+    stream.url = url;
+    stream.httpVersion = "1.1";
+    stream.httpVersionMinor = 1;
+    stream.httpVersionMajor = 1;
+    return stream;
+  };
+  return (client as { extend: (o: unknown) => unknown }).extend({
+    hooks: { beforeRequest: [beforeRequest] },
+  });
+}
+
 export function wrapClient<T>(client: T, pactFetch: PactFetchFn): T {
   if (isKyLike(client)) return wrapKy(client, pactFetch) as T;
+  if (isGotLike(client)) return wrapGot(client, pactFetch) as T;
   if (isAxiosLike(client)) return wrapAxios(client, pactFetch) as T;
   if (typeof client === "function") {
     // A fetch-like function (undici.fetch, global fetch, a custom fetch).

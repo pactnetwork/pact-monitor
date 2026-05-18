@@ -17,9 +17,9 @@
  * Do NOT substitute `@q3labs/pact-monitor`'s `createSignature()` — it is
  * base64 over a pre-hashed message and the proxy would reject it.
  */
-import { createHash, randomBytes } from "node:crypto";
 import nacl from "tweetnacl";
 import bs58 from "bs58";
+import { randomBytes, sha256Hex } from "./crypto.js";
 
 // Upstream auth the proxy injects itself — never forward the caller's copy
 // (matches transport.ts STRIPPED_HEADERS).
@@ -38,10 +38,6 @@ export function buildSignaturePayload(args: {
   bodyHash: string;
 }): string {
   return `v1\n${args.method.toUpperCase()}\n${args.path}\n${args.timestampMs}\n${args.nonce}\n${args.bodyHash}`;
-}
-
-function sha256Hex(bytes: Uint8Array): string {
-  return createHash("sha256").update(bytes).digest("hex");
 }
 
 /** Normalize a fetch body to the exact bytes that will be sent + hashed. */
@@ -86,16 +82,16 @@ export interface AuthHeaderInput {
 }
 
 /** Build the x-pact-* signed header set for a covered request. */
-export function buildAuthHeaders(
+export async function buildAuthHeaders(
   input: AuthHeaderInput,
-): Record<string, string> {
+): Promise<Record<string, string>> {
   const ts = (input.now ?? Date.now)();
   const nonce = bs58.encode(randomBytes(16));
   const u = new URL(input.proxiedUrl);
   const path = u.pathname + u.search;
   const bodyHash =
     input.bodyBytes && input.bodyBytes.length > 0
-      ? sha256Hex(input.bodyBytes)
+      ? await sha256Hex(input.bodyBytes)
       : "";
   const payload = buildSignaturePayload({
     method: input.method,

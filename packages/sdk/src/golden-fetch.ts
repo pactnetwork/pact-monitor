@@ -97,7 +97,7 @@ export async function goldenFetch(
   }
 
   const proxiedUrl = buildProxiedUrl(deps.proxyBaseUrl, slug, url);
-  const authHeaders = buildAuthHeaders({
+  const authHeaders = await buildAuthHeaders({
     method,
     proxiedUrl,
     bodyBytes,

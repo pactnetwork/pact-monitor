@@ -15,6 +15,8 @@
 import { PactError, PactErrorCode } from "./errors.js";
 import type { Network } from "./network.js";
 import type { PactSigner } from "./signer.js";
+import type { PactStorage } from "./storage.js";
+import type { WebhookConfig } from "./webhook.js";
 
 export interface AutoTopUpConfig {
   /** Re-approve when delegated allowance drops below this (USDC base units). */
@@ -58,14 +60,34 @@ export interface PactConfig {
   /** Sent as the `x-pact-project` header (proxy requires it). Default "default". */
   project?: string;
 
-  /** Local durable observation buffer path. Default ~/.pact/sdk-observations.jsonl */
+  /**
+   * Local durable observation buffer path (Node). Default
+   * ~/.pact/sdk-observations.jsonl. Ignored when `storage` is given or in a
+   * browser (no node:fs) where an in-memory store is used instead.
+   */
   storagePath?: string;
+  /**
+   * Explicit storage backend (full override). Supply this for a custom or
+   * browser store; otherwise the SDK picks FsObservationBuffer (Node) or an
+   * in-memory store (browser/serverless) automatically.
+   */
+  storage?: PactStorage;
   /** Indexer reconciliation poll interval (ms). Default 15000. */
   indexerPollIntervalMs?: number;
   /** Install beforeExit/SIGTERM/SIGINT flush hooks. Default true. */
   installSignalHandlers?: boolean;
   /** Latency (ms) above which a 2xx is treated as a local failure hint. Default 5000. */
   latencyThresholdMs?: number;
+
+  /**
+   * Opt-in webhook receiver (latency optimization over the poller). The
+   * poller stays the durable source of truth; both feed ONE idempotent sink.
+   * Multi-instance caveat: a webhook is only deduped against the buffer of
+   * the process that owns it — in a multi-replica/serverless deployment where
+   * the webhook lands on a different process than the poller, run poller-only
+   * (omit `webhook`) or give each replica its own durable storage.
+   */
+  webhook?: WebhookConfig;
 
   /** Injected for tests. */
   fetchImpl?: typeof fetch;
@@ -85,18 +107,33 @@ export interface ResolvedConfig {
   defaultAllowanceUsdc: number;
   autoTopUp?: AutoTopUpConfig;
   project: string;
-  storagePath: string;
+  /** undefined in a browser (no node:fs) — selectStorage uses memory then. */
+  storagePath?: string;
+  storage?: PactStorage;
   indexerPollIntervalMs: number;
   installSignalHandlers: boolean;
   latencyThresholdMs: number;
+  webhook?: WebhookConfig;
   fetchImpl: typeof fetch;
 }
 
 const VALID_NETWORKS = new Set<Network>(["mainnet", "devnet", "localnet"]);
 
-function defaultStoragePath(): string {
+function defaultStoragePath(): string | undefined {
+  // Node-only: a browser has no node:fs, so leave it undefined and let
+  // selectStorage() fall back to an in-memory store.
+  const proc = (
+    globalThis as {
+      process?: {
+        versions?: { node?: string };
+        env?: Record<string, string | undefined>;
+        cwd?: () => string;
+      };
+    }
+  ).process;
+  if (!proc?.versions?.node) return undefined;
   const home =
-    process.env.HOME ?? process.env.USERPROFILE ?? process.cwd();
+    proc.env?.HOME ?? proc.env?.USERPROFILE ?? proc.cwd?.() ?? ".";
   return `${home}/.pact/sdk-observations.jsonl`;
 }
 
@@ -140,6 +177,18 @@ export function validateConfig(config: PactConfig): ResolvedConfig {
     );
   }
 
+  if (
+    config.webhook !== undefined &&
+    (typeof config.webhook.indexerSigningKey !== "string" ||
+      config.webhook.indexerSigningKey.length === 0)
+  ) {
+    throw new PactError(
+      PactErrorCode.CONFIG_INVALID,
+      "createPact: webhook.indexerSigningKey (bs58 ed25519 pubkey) is " +
+        "required when `webhook` is set",
+    );
+  }
+
   const indexerPollIntervalMs = config.indexerPollIntervalMs ?? 15_000;
   if (
     typeof indexerPollIntervalMs !== "number" ||
@@ -166,9 +215,11 @@ export function validateConfig(config: PactConfig): ResolvedConfig {
     autoTopUp: config.autoTopUp,
     project: config.project ?? "default",
     storagePath: config.storagePath ?? defaultStoragePath(),
+    storage: config.storage,
     indexerPollIntervalMs,
     installSignalHandlers: config.installSignalHandlers ?? true,
     latencyThresholdMs: config.latencyThresholdMs ?? 5_000,
+    webhook: config.webhook,
     fetchImpl: config.fetchImpl ?? globalThis.fetch,
   };
 }
