@@ -8,6 +8,7 @@ import {PactRegistry} from "../src/PactRegistry.sol";
 import {PactPool} from "../src/PactPool.sol";
 import {IPactRegistry} from "../src/interfaces/IPactRegistry.sol";
 import {IPactSettler} from "../src/interfaces/IPactSettler.sol";
+import {IPactPool} from "../src/interfaces/IPactPool.sol";
 import {ArcConfig} from "../src/ArcConfig.sol";
 import {MockUSDC} from "./util/MockUSDC.sol";
 import "../src/errors/PactErrors.sol";
@@ -384,6 +385,53 @@ contract PactSettlerTest is Test {
         vm.prank(settlerSigner);
         vm.expectRevert(RecipientCoverageMismatch.selector);
         settler.settleBatch(events);
+    }
+
+    // -----------------------------------------------------------------------
+    // Task 1 (04-04) — Economic happy path tests (SET-05/06/07/08)
+    // Ported from 05-settle-batch.test.ts
+    // -----------------------------------------------------------------------
+
+    /// @notice 05 test 1: single event with default 10% Treasury fan-out.
+    ///         settle_batch.rs:357-522 full economic loop.
+    ///         RED: fails because provisional seam emits actualRefund=0 +
+    ///         no pool credit / no fee fan-out / no endpoint stats.
+    function test_SingleEventDefaultTreasuryFanOut() public {
+        address agent = makeAddr("agent");
+        _register(SLUG);
+        _fundPool(SLUG, 5_000_000);
+        _provisionAgent(agent, 10_000_000, 10_000_000);
+
+        IPactSettler.SettlementEvent[] memory events = new IPactSettler.SettlementEvent[](1);
+        uint64 ts = uint64(block.timestamp) - 1;
+        events[0] = _makeEvent(0x01, agent, SLUG, 10_000, 0, 100, false, 1, 1);
+
+        bytes16 callId = events[0].callId;
+
+        vm.expectEmit(true, true, true, true);
+        emit IPactSettler.CallSettled(
+            callId, SLUG, agent,
+            10_000, 0, 0,
+            IPactSettler.SettlementStatus.Settled,
+            false, 100, ts
+        );
+
+        vm.prank(settlerSigner);
+        settler.settleBatch(events);
+
+        // Agent paid full premium.
+        assertEq(usdc.balanceOf(agent), 10_000_000 - 10_000, "agent balance");
+        // Pool USDC = 5_000_000 + 10_000 (gross credit) - 1_000 (Treasury 10%) = 5_009_000
+        assertEq(usdc.balanceOf(address(pool)), 5_000_000 + 9_000, "pool usdc");
+        // Treasury received 10% of premium.
+        assertEq(usdc.balanceOf(treasuryVault), 1_000, "treasury");
+        // Pool accounting.
+        IPactPool.PoolState memory ps = pool.balanceOf(SLUG);
+        assertEq(ps.currentBalance, 5_000_000 + 9_000, "pool.currentBalance");
+        // Endpoint stats.
+        IPactRegistry.EndpointConfig memory ep = reg.getEndpoint(SLUG);
+        assertEq(ep.totalCalls, 1, "totalCalls");
+        assertEq(ep.totalPremiums, 10_000, "totalPremiums");
     }
 
     // -----------------------------------------------------------------------
