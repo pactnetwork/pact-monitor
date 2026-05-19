@@ -24,15 +24,25 @@ export const PROGRAM_ID = new PublicKey(
 );
 
 /**
- * Pact Network V1 program ID on **devnet**.
+ * Pact Network V1 program **deploy address** on devnet.
  *
- * CANONICAL devnet deploy. Verified LIVE on `api.devnet.solana.com` on
- * 2026-05-18 by `scripts/devnet/verify-network.ts`: ProtocolConfig PDA
+ * LIVE for reads only. Verified on `api.devnet.solana.com` 2026-05-18 by
+ * `scripts/devnet/verify-network.ts`: ProtocolConfig PDA
  * `EFzSjDnAeb4yRA2LjXxmFmdyavdsEmsUNNDkxytvPdHU` exists, is program-owned,
  * decodes with `paused=0` and `usdcMint=4zMMC9…` (= `USDC_MINT_DEVNET`);
  * SettlementAuthority signer `47Fg5JqMsCeuRyDsFtD7Ra7YTdzVmTr2mZ1R2dUkZyfS`.
- * Mainnet (`PROGRAM_ID` / `5bCJcdWdK…`) is a SEPARATE, independent deploy —
- * the mainnet redeploy did NOT decommission this devnet program.
+ *
+ * NOT canonical / NOT settlement-proven. The deployed binary's `declare_id!`
+ * is the MAINNET id `5bCJ…` (see
+ * `packages/program/programs-pinocchio/pact-network-v1-pinocchio/src/lib.rs`),
+ * so PDAs Solana derives from `crate::ID` do not match this deploy address
+ * and `settle_batch` reverts `ProgramError::InvalidSeeds` on devnet — no
+ * refund can settle. Init/register accounts decode (which is why the reads
+ * above pass) but the settlement path is unreachable. Do NOT wire this as an
+ * SDK default (`network.ts` keeps devnet `programId: null`); it is for
+ * explicit opt-in / tooling only until devnet is redeployed from a binary
+ * whose `declare_id!` == its deploy address. Mainnet (`PROGRAM_ID` /
+ * `5bCJcdWdK…`) is a SEPARATE deploy and is unaffected.
  */
 export const PROGRAM_ID_DEVNET = new PublicKey(
   "5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5"

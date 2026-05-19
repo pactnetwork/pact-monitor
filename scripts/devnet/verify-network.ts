@@ -4,12 +4,18 @@
  *
  * Three subcommands (the first positional arg; default = `verify`):
  *
- *   verify         (default) — B1/B2 liveness. Derives ProtocolConfig +
+ *   verify         (default) — B1/B2 *liveness only*. Derives ProtocolConfig +
  *                  SettlementAuthority PDAs for the candidate program ID,
  *                  fetches + decodes them, asserts not-paused + devnet USDC
- *                  mint; probes the indexer host. Exit 0 PASS / 1 B1 FAIL /
- *                  2 arg-RPC. (Unchanged behavior — local-soft-e2e.sh relies
- *                  on this being the default.)
+ *                  mint; probes the indexer host. Exit 0 = accounts decode /
+ *                  1 B1 dead / 2 arg-RPC. (Unchanged behavior — local-soft-
+ *                  e2e.sh relies on this being the default.)
+ *                  IMPORTANT: a decode/liveness pass does NOT mean B1 is
+ *                  resolved and does NOT prove `settle_batch` can execute.
+ *                  The devnet binary's `declare_id!` is the mainnet id, so
+ *                  settle_batch reverts InvalidSeeds on devnet regardless of
+ *                  this exit code. "B1 resolved" requires the strict
+ *                  CallRecord proof (`assert-refund`), not this mode.
  *
  *   probe          Step-0 strict-E2E inventory + authority gate. Everything
  *                  `verify` does, PLUS: decode Treasury, and per `--slug`
@@ -743,8 +749,17 @@ async function runVerify(conn: Connection, args: CliArgs): Promise<number> {
         `  SettlementAuthority.signer = ${b1.settlementSigner}  (the delegate agents Approve)`,
       );
     console.log(
-      `  => B1 ${b1.pass ? "PASS — program is live on this RPC" : "FAIL"}`,
+      `  => B1 ${b1.pass ? "LIVENESS PASS — accounts decode on this RPC" : "FAIL"}`,
     );
+    if (b1.pass) {
+      console.log(
+        `     NOTE: liveness only. This does NOT prove settle_batch can run.\n` +
+          `     The devnet binary's declare_id! is the mainnet id, so\n` +
+          `     settle_batch reverts InvalidSeeds on devnet. B1 is NOT\n` +
+          `     resolved until the strict CallRecord proof (assert-refund)\n` +
+          `     passes against a declare_id-matching redeploy.`,
+      );
+    }
     if (!b1.pass) console.log(`     reason: ${b1.reason}`);
     console.log("");
     console.log(`B2 — indexer host  (${args.indexer})`);
@@ -757,8 +772,11 @@ async function runVerify(conn: Connection, args: CliArgs): Promise<number> {
 
   if (!b1.pass) {
     console.error(
-      "B1 UNRESOLVED — ops must supply a live devnet program ID. " +
-        "Do NOT wire PROGRAM_ID_DEVNET / network.ts until B1 PASSes.",
+      "B1 FAIL — no live devnet program at this ID. Note: even a liveness " +
+        "PASS does not resolve B1; B1 is resolved only when the strict " +
+        "CallRecord proof (assert-refund) passes against a redeploy whose " +
+        "declare_id! == its deploy address. Do NOT ship PROGRAM_ID_DEVNET " +
+        "as the network.ts devnet default until then.",
     );
     return 1;
   }

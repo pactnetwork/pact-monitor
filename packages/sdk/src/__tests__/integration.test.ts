@@ -106,9 +106,11 @@ describe("integration (wired, mocked transports)", () => {
 
   // ---------------------------------------------------------------------
   // Live devnet E2E. Disabled unless PACT_SDK_E2E=1. Requires:
-  //   - PACT_DEVNET_PROGRAM_ID  : devnet program id. Optional now that B1 is
-  //       resolved (network:"devnet" carries 5jBQ…, verified live 2026-05-18);
-  //       still honored as an explicit override for hermetic runs.
+  //   - PACT_DEVNET_PROGRAM_ID  : devnet program id. REQUIRED for the on-chain
+  //       ops below (setup/policy): network:"devnet" has NO default program id
+  //       because the devnet deploy's declare_id! mismatches its address so
+  //       settle_batch reverts InvalidSeeds (B1 NOT resolved). The local E2E
+  //       harnesses pass 5jBQ… explicitly to opt in.
   //   - PACT_DEVNET_SECRET_KEY  : base58 64-byte agent secret key
   //   - PACT_DEVNET_INDEXER_URL : reachable indexer host. PRESENT => strict
   //       mode (await the poller `refund` event). ABSENT => B2 SOFT-FAIL /

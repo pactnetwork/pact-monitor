@@ -3,13 +3,19 @@
  *
  * `programId` derives the SettlementAuthority delegate PDA, so a wrong value
  * silently sends the agent's SPL approve to the wrong delegate and
- * premiums/refunds never settle. Both public networks now carry a verified
- * canonical ID:
- * - mainnet  = `PROGRAM_ID` (`5bCJcdWdK…`)
- * - devnet   = `PROGRAM_ID_DEVNET` (`5jBQb7fL…`) — verified LIVE on
- *   `api.devnet.solana.com` 2026-05-18 via `scripts/devnet/verify-network.ts`
- *   (former plan blocker B1, resolved on-chain; the old `constants.ts` ORPHAN
- *   label was a misnomer). Still overridable via `createPact({ programId })`.
+ * premiums/refunds never settle.
+ * - mainnet  = `PROGRAM_ID` (`5bCJcdWdK…`) — canonical.
+ * - devnet   = `null` (no static default). The devnet deploy `5jBQb7fL…`
+ *   (`PROGRAM_ID_DEVNET`) is LIVE for reads/account-decode, BUT its binary's
+ *   `declare_id!` is the MAINNET id `5bCJ…` (see
+ *   `packages/program/programs-pinocchio/pact-network-v1-pinocchio/src/lib.rs`),
+ *   so internally-derived PDAs do not match the deploy address and
+ *   `settle_batch` reverts `InvalidSeeds` on devnet — refunds cannot settle.
+ *   Until devnet is redeployed from a binary whose `declare_id!` == its
+ *   deploy address, we do NOT ship it as a default. Operators who accept the
+ *   limitation pass `createPact({ programId: PROGRAM_ID_DEVNET.toBase58() })`
+ *   explicitly. (B1 is NOT resolved: account liveness alone does not prove
+ *   `settle_batch` can execute — the strict CallRecord proof is the gate.)
  * - localnet = `null`: local builds sed-replace the program ID per-env
  *   (smoke-tier2 harness), so the operator must pass `programId`.
  *
@@ -23,7 +29,6 @@
  */
 import {
   PROGRAM_ID,
-  PROGRAM_ID_DEVNET,
   USDC_MINT_MAINNET,
   USDC_MINT_DEVNET,
 } from "@pact-network/protocol-v1-client";
@@ -48,8 +53,10 @@ export const NETWORK_CONFIGS: Record<Network, NetworkConfig> = {
     defaultRpcUrl: "https://api.mainnet-beta.solana.com",
   },
   devnet: {
-    // B1 resolved: verified live on devnet 2026-05-18 (verify-network.ts).
-    programId: PROGRAM_ID_DEVNET.toBase58(),
+    // No static default: the devnet deploy is live for reads but its binary's
+    // declare_id! is the mainnet id, so settle_batch reverts InvalidSeeds
+    // (B1 NOT resolved). Pass programId explicitly to opt in. See header.
+    programId: null,
     usdcMint: USDC_MINT_DEVNET.toBase58(),
     proxyBaseUrl: "https://market.pactnetwork.io",
     indexerBaseUrl: "https://indexer.pactnetwork.io",

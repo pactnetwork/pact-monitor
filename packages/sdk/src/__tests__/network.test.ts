@@ -11,13 +11,13 @@ describe("network config", () => {
     );
   });
 
-  it("devnet carries the verified canonical program ID (B1 resolved)", () => {
-    // B1 resolved 2026-05-18: 5jBQ… proven live on devnet via
-    // scripts/devnet/verify-network.ts. The old constants.ts ORPHAN label
-    // was a misnomer; network:"devnet" now carries it by default.
-    expect(NETWORK_CONFIGS.devnet.programId).toBe(
-      "5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5",
-    );
+  it("devnet leaves programId null (B1 NOT resolved — settle_batch unproven)", () => {
+    // The devnet deploy 5jBQ… is live for reads, but the program binary's
+    // declare_id! is the mainnet id 5bCJ…, so settle_batch reverts
+    // InvalidSeeds on devnet. Account liveness alone does not prove B1; we
+    // do NOT ship a devnet default until a declare_id-matching redeploy.
+    // Opt in via createPact({ programId: PROGRAM_ID_DEVNET.toBase58() }).
+    expect(NETWORK_CONFIGS.devnet.programId).toBeNull();
     expect(NETWORK_CONFIGS.devnet.usdcMint).toBe(
       "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
     );

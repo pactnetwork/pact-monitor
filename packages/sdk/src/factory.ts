@@ -96,9 +96,10 @@ function requireProgramId(net: ResolvedNetwork): PublicKey {
     throw new PactError(
       PactErrorCode.CONFIG_INVALID,
       `On-chain ops need a program ID, but none is configured for ` +
-        `"${net.network}" (localnet builds sed-replace the program ID ` +
-        `per-env, so it has no static default; mainnet and devnet ship a ` +
-        `verified canonical ID). Pass createPact({ programId: "<program id>" }). ` +
+        `"${net.network}" (only mainnet ships a canonical default; localnet ` +
+        `is sed-replaced per-env; devnet has no default because its deploy's ` +
+        `declare_id! mismatches its address so settle_batch reverts — see ` +
+        `network.ts). Pass createPact({ programId: "<program id>" }). ` +
         `Covered proxy calls do NOT require this.`,
     );
   }
