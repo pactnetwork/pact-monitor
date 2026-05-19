@@ -17,14 +17,19 @@ Phase numbers equal work-package numbers (Phase N == WP-EVM-0N).
 - [x] **Phase 4: WP-EVM-04 PactSettler Happy Path** - settleBatch happy path + ported settle-batch happy tests (completed 2026-05-18)
 - [x] **Phase 5: WP-EVM-05 PactSettler Hardening** - clamps, kill switches, batch-limit edges + ported pause/exposure tests (completed 2026-05-19)
 - [x] **Phase 6: WP-EVM-06 TS Client + Suite + Parity Matrix** - protocol-evm-v1-client, fuzz/gas suite, parity matrix doc + formal spec corrections (completed 2026-05-19)
-- [ ] **Phase 7: WP-EVM-07 Deploy** - deploy script + Arc testnet deploy + arcscan verify (deferred, SEPARATE cycle — NOT part of the parity effort)
+- [x] **Phase 7: WP-EVM-07 Deploy** - deploy script + Arc testnet deploy + arcscan verify (completed 2026-05-19)
 
-> **MILESTONE STATUS: ARC EVM PARITY PORT COMPLETE (WP-EVM-02..06), 2026-05-19.**
+> **MILESTONE STATUS: ARC EVM TRACK COMPLETE (WP-EVM-02..07), 2026-05-19.**
 > Behavioral parity to Solana `pact-network-v1-pinocchio` verified by the ported
 > LiteSVM oracle + fuzz (forge 109/109 + client 41/41); every divergence
 > recorded in `docs/superpowers/specs/2026-05-18-arc-parity-matrix.md`; design
-> spec formally corrected. Only WP-EVM-07 (Arc testnet deploy/verify) remains —
-> a separate cycle, captain/Rick-initiated, out of the parity scope.
+> spec formally corrected. WP-EVM-07 COMPLETE: the locked WP-05/06 contracts
+> (zero contract change) are deployed + arcscan-verified on Arc Testnet
+> (chain 5042002): PactRegistry 0x056BAC33546b5b51B8CF6f332379651f715B889C,
+> PactPool 0xa6135d9C6BFA0F256B9DeBa10d76C7698329aFdE, PactSettler
+> 0xe461CE50ef53BFC10945B101FB94b11Ec5eB591f. The Solana pact-network-v1
+> program is now ported to EVM at behavioral parity AND live on Arc Testnet
+> with verified source.
 
 ## Phase Details
 
@@ -98,5 +103,17 @@ Phase numbers equal work-package numbers (Phase N == WP-EVM-0N).
 **Depends on**: Phase 5, Phase 6
 **Requirements**: DEPLOY-01
 **Success Criteria** (what must be TRUE):
-  1. Deployed to Arc testnet and verified on arcscan. (Deferred — separate cycle, NOT part of the parity effort.)
-**Plans**: TBD
+  1. Deployed to Arc Testnet (chain 5042002) and verified on arcscan. DONE 2026-05-19.
+**Status**: COMPLETE (captain GATE A + GATE B APPROVED; zero contract change;
+check:abi PASS both passes; 5/5 read-only smoke). Deployed addresses:
+  - PactRegistry: `0x056BAC33546b5b51B8CF6f332379651f715B889C`
+  - PactPool: `0xa6135d9C6BFA0F256B9DeBa10d76C7698329aFdE`
+  - PactSettler: `0xe461CE50ef53BFC10945B101FB94b11Ec5eB591f`
+arcscan verified (all 3) via `--verifier blockscout` (arcscan is Blockscout-
+based; the `etherscan` verifier path is unusable as Arc 5042002 is not in
+forge's built-in chain registry). C1/C2 as-deployed: authority = treasury =
+deployer EOA `0x777d569Bd3b0A2De007097A3D7E1687C5E5EB859`, empty default fee
+template (defaultCount_=0), maxTotalFeeBps 3000. Commits 46d2ab9
+(script/Deploy.s.sol) + 838c573 (addresses.ts + co-located test).
+**Plans**: 07-CREW-BRIEF.md / 07-REPORT-gateA.md / 07-REPORT-gateB.md
+(captain GATE A + GATE B verdicts in 07-CAPTAIN-GATE-*-VERDICT.md)

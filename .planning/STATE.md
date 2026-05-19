@@ -3,11 +3,11 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: completed
-last_updated: "2026-05-19T01:00:00.000Z"
+last_updated: "2026-05-19T11:52:00.000Z"
 last_activity: 2026-05-19
 progress:
   total_phases: 7
-  completed_phases: 2
+  completed_phases: 7
   total_plans: 10
   completed_plans: 10
   percent: 100
@@ -20,23 +20,37 @@ progress:
 **Core value:** Behavioral-parity port of the Solana `pact-network-v1-pinocchio`
 on-chain program to Circle Arc (EVM L1), driven by the 10 LiteSVM test files as
 the parity oracle. This is a PORT, not a redesign.
-**Current focus:** ARC EVM PARITY PORT COMPLETE (WP-EVM-02..06). Only
-WP-EVM-07 (Arc testnet deploy/verify) remains — a separate cycle.
+**Current focus:** ARC EVM TRACK COMPLETE (WP-EVM-02..07). The Solana
+pact-network-v1 program is ported to EVM at behavioral parity AND live on
+Arc Testnet with verified source. Track closed; no further crew.
 
 ## Current Position
 
-Phase: 6 — COMPLETE
-Plan: WP-EVM-06 authored-at-turn (T0-T11), GATE A + GATE B captain-APPROVED
-Status: MILESTONE COMPLETE — Arc EVM parity port done 2026-05-19
+Phase: 7 — COMPLETE
+Plan: WP-EVM-07 authored-at-turn, GATE A + GATE B captain-APPROVED
+Status: ARC EVM TRACK COMPLETE — deploy + arcscan verify done 2026-05-19
 Last activity: 2026-05-19
-WP-EVM-06 delivered `@pact-network/protocol-evm-v1-client` (viem, mirrors
-protocol-v1-client), the consolidated fuzz + gas-snapshot suite, the live
-USDC-decimals assertion, the per-variant parity matrix
-(`docs/superpowers/specs/2026-05-18-arc-parity-matrix.md`), and the formal
-design-spec corrections for all §(d) 1-8. forge 109/109 + client 41/41.
+WP-EVM-07 deployed the LOCKED WP-05/06 contracts (ZERO contract change) to
+Arc Testnet (chain 5042002) and verified all 3 on arcscan:
+  - PactRegistry: `0x056BAC33546b5b51B8CF6f332379651f715B889C`
+  - PactPool: `0xa6135d9C6BFA0F256B9DeBa10d76C7698329aFdE`
+  - PactSettler: `0xe461CE50ef53BFC10945B101FB94b11Ec5eB591f`
+check:abi PASS both passes (deployed bytecode ABI == committed client ABI);
+5/5 read-only smoke green; C1/C2 as-deployed (authority = treasury =
+deployer EOA, empty default fee template, maxTotalFeeBps 3000). arcscan
+verified via `--verifier blockscout` (Arc 5042002 not in forge's etherscan
+chain registry). Commits 46d2ab9 + 838c573.
 
-Progress: WP-01 ✓ · WP-02 ✓ · WP-03 ✓ · WP-04 ✓ · WP-05 ✓ · WP-06 ✓ COMPLETE
-(GATE A+B approved) · WP-07 pending (SEPARATE deploy cycle, out of parity scope)
+Progress: WP-01 ✓ · WP-02 ✓ · WP-03 ✓ · WP-04 ✓ · WP-05 ✓ · WP-06 ✓ ·
+WP-07 ✓ COMPLETE (GATE A+B approved) — ARC EVM TRACK CLOSED
+
+Carried non-blocking items (documented, NOT WP-07-fixed):
+- C2 mainnet-hardening: split treasuryVault off the deployer EOA (real
+  Safe/multisig) before any mainnet deploy — fresh deploy, no migration,
+  treasuryVault has no setter.
+- Pre-existing TS18048 x17 in `protocol-evm-v1-client/__tests__/encode.test.ts`
+  (a WP-06 artifact, confirmed empty git diff vs 07a79be; vitest 41/41 green).
+  A future hygiene cycle, deliberately not touched (file-scoped discipline).
 
 ## Decisions (WP-EVM-05 plan 05-06)
 
