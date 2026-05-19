@@ -263,3 +263,45 @@ staged. NO commit has been made by this crew yet.
 
 STATUS: GATE B EVIDENCE COMPLETE. ALL 7 STEPS PASS. ZERO FINDINGS.
 Awaiting 07b-CAPTAIN-GATE-B-VERDICT.md. No push / no PR comment until then.
+
+---
+
+## DONE-STATE — Gate B APPROVED (closeout)
+
+GATE B VERDICT: **APPROVED** (07b-CAPTAIN-GATE-B-VERDICT.md). The captain
+independently re-verified on-chain — ERC-20 Transfer logs, CallSettled
+events, final endpoint+pool state, and a dedup re-sim — and confirmed the
+economic settlement flow is bit-faithful to settle_batch.rs with ZERO
+discrepancies.
+
+WP-EVM-07b PASSES. The Arc Testnet deployment is now proven end-to-end:
+deploy + arcscan-verify (WP-07) + logic/guard differential-parity
+(07-LIVE-VERIFICATION) + real-USDC economic settlement (this WP).
+
+### The 2 settle transaction hashes (chain 5042002)
+
+- PASS:   0x5de62ff55be0bf55004eff5a8008fa7aec6c1c98e34c9738dac0021fa20c4461 (status 0x1, block 42968139)
+- BREACH: 0x6014f63d9f2e4e34e0f3d6c3a785a9ff93446dc8d36ec1c1d21689efdd57b67f (status 0x1, block 42968231)
+- Dedup negative: replay of PASS callId reverts DuplicateCallId (0x4999df69)
+
+### Final on-chain state (verified)
+
+- getEndpoint: paused=false, totalCalls=2, totalBreaches=1,
+  totalPremiums=20000, totalRefunds=8000, currentPeriodRefunds=8000
+- pool.balanceOf: currentBalance=59000, totalDeposits=50000,
+  totalPremiums=20000, totalRefunds=8000
+  (math closes: 50000 + 20000 - 2*(1000+500) - 8000 = 59000)
+
+### C1 KEY CLEANUP — COMPLETED
+
+The throwaway test wallets' private keys (E2E_SETTLER_PRIVATE_KEY,
+E2E_AGENT_PRIVATE_KEY) were DELETED from the gitignored
+packages/program-evm/protocol-evm-v1/.env after the captain's on-chain
+re-verification (which used only read calls — keys no longer needed). Proven:
+- grep for the E2E private-key var names in .env returns 0
+- E2E_SETTLER_ADDRESS / E2E_AGENT_ADDRESS retained (non-sensitive)
+- .env still gitignored (git check-ignore PASS), absent from git status
+- nothing sensitive staged; no key ever appeared in any commit/report/output
+The throwaway wallets hold only residual Arc Testnet USDC; no recovery needed.
+
+WP-EVM-07b CLOSED. No further crew.

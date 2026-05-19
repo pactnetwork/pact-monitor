@@ -750,3 +750,56 @@ FeeValidation/PactRegistry) · 03 (PactPool) · 04 (PactSettler happy path) ·
 corrections) · 07 (Arc Testnet deploy + arcscan verify). The Solana
 `pact-network-v1-pinocchio` program is ported to EVM at behavioral parity AND
 live on Arc Testnet with verified source. No further crew is spawned.
+
+---
+
+## WP-EVM-07b ECONOMIC E2E PROVEN (2026-05-19)
+
+WP-EVM-07b is COMPLETE: captain GATE A + GATE B APPROVED (independently
+re-verified on-chain — ERC-20 Transfer logs, CallSettled events, final
+endpoint+pool state, dedup re-sim; zero parity discrepancies). The Arc
+Testnet deployment's economic settlement flow is now PROVEN with real USDC,
+bit-faithful to `settle_batch.rs`. This is a SEPARATE captain/Rick-initiated
+validation cycle on top of WP-07 (deploy/verify) and 07-LIVE-VERIFICATION
+(logic/guard differential parity) — NOT a contract change. Contracts remain
+LOCKED (`git diff 07a79be..HEAD -- packages/program-evm/protocol-evm-v1/src/`
+empty). Everything above remains settled law and is NOT reopened.
+
+### (a) What was proven (real broadcasts, Arc Testnet chain 5042002)
+
+7-step real-USDC e2e against the deployed contracts (PactRegistry
+0x056BAC33546b5b51B8CF6f332379651f715B889C, PactPool
+0xa6135d9C6BFA0F256B9DeBa10d76C7698329aFdE, PactSettler
+0xe461CE50ef53BFC10945B101FB94b11Ec5eB591f, USDC
+0x3600000000000000000000000000000000000000): grant SETTLER_ROLE,
+registerEndpoint (Treasury 1000bps + Affiliate 500bps explicit recipients),
+USDC approve + topUp (authority-gated, D3), agent USDC approve, settleBatch
+PASS, settleBatch BREACH, duplicate-callId negative. Premium-in / floor-div
+fee split (1000/500) / pool-as-residual (8500) / SLA-breach refund (8000) /
+DuplicateCallId dedup — all bit-identical to `settle_batch.rs`.
+
+- PASS settle tx:   `0x5de62ff55be0bf55004eff5a8008fa7aec6c1c98e34c9738dac0021fa20c4461` (block 42968139)
+- BREACH settle tx: `0x6014f63d9f2e4e34e0f3d6c3a785a9ff93446dc8d36ec1c1d21689efdd57b67f` (block 42968231)
+- Dedup negative: replay of PASS callId reverts `DuplicateCallId` (0x4999df69)
+- Final state: getEndpoint totalCalls=2, totalBreaches=1, totalPremiums=20000,
+  totalRefunds=8000; pool currentBalance=59000, totalDeposits=50000,
+  totalPremiums=20000, totalRefunds=8000 (math closes exactly).
+
+### (b) Throwaway test wallets CLEANED
+
+Two throwaway EOAs (SETTLER_EOA, AGENT_EOA) were generated for the test.
+Their private keys lived ONLY in the gitignored
+`packages/program-evm/protocol-evm-v1/.env`, were never echoed or committed,
+and were DELETED post-Gate-B (C1) once the captain's on-chain re-verification
+(read-only) was complete. The non-sensitive E2E_*_ADDRESS lines remain in
+`.env` as run documentation. No key appears in any commit, report, or
+transcript. The wallets hold only residual Arc Testnet USDC; no recovery
+needed.
+
+### (c) Canonical records
+
+`.planning/phases/07-wp-evm-07-arc-deploy/07b-CREW-BRIEF.md`,
+`07b-REPORT-gateA.md`, `07b-CAPTAIN-GATE-A-VERDICT.md`,
+`07b-REPORT-gateB.md` (full raw before/after balances + per-step parity
+PASS), `07b-CAPTAIN-GATE-B-VERDICT.md`. The Arc EVM track is now proven
+end-to-end with real USDC; track remains closed.
