@@ -1,18 +1,14 @@
+// ConsumerService spec — exercises the NestJS facade against the
+// PubSubQueueConsumer (mainnet default). Behavior is byte-identical to the
+// pre-refactor ConsumerService spec; the only mechanical change is that
+// the service now delegates to an injected QueueConsumer instead of owning
+// the Pub/Sub Subscription directly.
+
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { ConfigService } from "@nestjs/config";
-import { ConsumerService } from "./consumer.service";
+import { ConsumerService, QUEUE_CONSUMER } from "./consumer.service";
+import { PubSubQueueConsumer } from "./pubsub-queue-consumer";
 import { PubSub } from "@google-cloud/pubsub";
 import { EventEmitter } from "events";
-
-function makeConfig(): ConfigService {
-  return {
-    getOrThrow: vi.fn().mockImplementation((key: string) => {
-      if (key === "PUBSUB_PROJECT") return "test-project";
-      if (key === "PUBSUB_SUBSCRIPTION") return "test-sub";
-      return "";
-    }),
-  } as unknown as ConfigService;
-}
 
 function makeMockMessage(data: Record<string, unknown>) {
   return {
@@ -23,20 +19,27 @@ function makeMockMessage(data: Record<string, unknown>) {
   };
 }
 
-describe("ConsumerService", () => {
+describe("ConsumerService (PubSub backend)", () => {
   let service: ConsumerService;
   let subEmitter: EventEmitter;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     subEmitter = new EventEmitter();
     const mockSub = {
       on: (e: string, cb: (...a: unknown[]) => void) => subEmitter.on(e, cb),
       removeAllListeners: vi.fn(),
       close: vi.fn(),
     };
-    const mockPubSub = { subscription: vi.fn().mockReturnValue(mockSub) } as unknown as PubSub;
-    service = new ConsumerService(makeConfig(), mockPubSub);
-    service.onModuleInit();
+    const mockPubSub = {
+      subscription: vi.fn().mockReturnValue(mockSub),
+    } as unknown as PubSub;
+
+    const consumer = new PubSubQueueConsumer(mockPubSub, {
+      projectId: "test-project",
+      subscriptionName: "test-sub",
+    });
+    service = new ConsumerService(consumer);
+    await service.onModuleInit();
   });
 
   it("calls enqueue callback for each received message", () => {
@@ -57,7 +60,7 @@ describe("ConsumerService", () => {
     expect(service.queueLength).toBe(0);
   });
 
-  it("ack calls ack on the raw message", () => {
+  it("ack delegates to the backend message's ack closure", () => {
     const msg = makeMockMessage({ x: 1 });
     subEmitter.emit("message", msg);
     const [queued] = service.drain();
@@ -65,11 +68,15 @@ describe("ConsumerService", () => {
     expect(msg.ack).toHaveBeenCalledOnce();
   });
 
-  it("nack calls nack on the raw message", () => {
+  it("nack delegates to the backend message's nack closure", () => {
     const msg = makeMockMessage({ x: 1 });
     subEmitter.emit("message", msg);
     const [queued] = service.drain();
     service.nack([queued]);
     expect(msg.nack).toHaveBeenCalledOnce();
+  });
+
+  it("QUEUE_CONSUMER token is exported for DI use", () => {
+    expect(typeof QUEUE_CONSUMER).toBe("symbol");
   });
 });

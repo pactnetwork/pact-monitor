@@ -3,7 +3,8 @@ import type { BalanceCheck, EventSink } from "@pact-network/wrap";
 import { EndpointRegistry } from "./endpoints.js";
 import { Allowlist } from "./allowlist.js";
 import { createBalanceCheck } from "./balance.js";
-import { createPubSubSink } from "./events.js";
+import { createEventSink } from "./events.js";
+import { createSystemFlagReader, type SystemFlagReader } from "./system-flag.js";
 import { env } from "../env.js";
 
 export interface AppContext {
@@ -13,6 +14,7 @@ export interface AppContext {
   balanceCheck: BalanceCheck;
   sink: EventSink;
   pg: Pool;
+  betaGateFlag: SystemFlagReader;
 }
 
 let _ctx: AppContext | null = null;
@@ -42,7 +44,17 @@ export async function initContext(): Promise<AppContext> {
     usdcMint: env.USDC_MINT,
   });
 
-  const sink = createPubSubSink(env.PUBSUB_PROJECT, env.PUBSUB_TOPIC);
+  const sink = createEventSink({
+    backend: env.QUEUE_BACKEND,
+    pubsubProject: env.PUBSUB_PROJECT,
+    pubsubTopic: env.PUBSUB_TOPIC,
+    redisUrl: env.REDIS_URL,
+    redisStream: env.REDIS_STREAM,
+  });
+
+  // 30s TTL by default. Env fallback uses `PACT_BETA_GATE_ENABLED` when
+  // the Postgres lookup fails (see PRD "Feature flag" / Risks accepted).
+  const betaGateFlag = createSystemFlagReader(pg);
 
   // Warm caches — don't throw on startup if DB unavailable yet.
   await Promise.allSettled([
@@ -58,6 +70,7 @@ export async function initContext(): Promise<AppContext> {
     balanceCheck,
     sink,
     pg,
+    betaGateFlag,
   };
   return _ctx;
 }

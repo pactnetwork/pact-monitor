@@ -175,7 +175,11 @@ describe("Pipeline e2e", () => {
       data: Buffer.from("any-mock-data"),
     });
 
-    consumer = new ConsumerService(config, mockPubSub);
+    const pubsubConsumer = new (await import("../consumer/pubsub-queue-consumer")).PubSubQueueConsumer(
+      mockPubSub,
+      { projectId: "proj", subscriptionName: "sub" },
+    );
+    consumer = new ConsumerService(pubsubConsumer);
     batcher = new BatcherService();
     submitter = new SubmitterService(
       config,

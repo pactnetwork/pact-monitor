@@ -11,6 +11,6 @@
     "isolatedModules": true,
     "types": ["node"]
   },
-  "include": ["**/*.ts"],
+  "include": ["**/*.ts", "../mainnet/lib/keys.ts"],
   "exclude": ["node_modules", ".devnet-state.json"]
 }

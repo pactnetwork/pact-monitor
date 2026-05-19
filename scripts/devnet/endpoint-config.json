@@ -1,0 +1,14 @@
+{
+  "$schema": "endpoint-config",
+  "_comment": "Endpoint configs for V1 devnet init. Just helius for the first cut — devnet stack ships with one slug. Amounts in USDC base units (6 decimals): 1_000 = $0.001. exposureCapPerHourLamports = max payout from this pool per rolling hour. Same numbers as the mainnet helius row at the time of writing (2026-05-15); diverge if devnet-specific testing warrants different values.",
+  "endpoints": [
+    {
+      "slug": "helius",
+      "flatPremiumLamports": "1000",
+      "percentBps": 0,
+      "slaLatencyMs": 1500,
+      "imputedCostLamports": "5000",
+      "exposureCapPerHourLamports": "10000000"
+    }
+  ]
+}
