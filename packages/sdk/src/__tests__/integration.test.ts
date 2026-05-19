@@ -130,10 +130,19 @@ describe("integration (wired, mocked transports)", () => {
       const indexerBaseUrl = process.env.PACT_DEVNET_INDEXER_URL;
       const strict = !!indexerBaseUrl; // B2 PASS => strict; absent => soft
 
+      // eslint-disable-next-line no-console
+      console.warn(
+        "[e2e] PACT_DEVNET_PROXY_URL =",
+        process.env.PACT_DEVNET_PROXY_URL ??
+          "(unset -> default public market.pactnetwork.io)",
+      );
       const pact = await createPact({
         network: "devnet",
         signer,
         programId: process.env.PACT_DEVNET_PROGRAM_ID,
+        // Local soft-mode E2E points this at a locally-run market-proxy.
+        // Unset => the devnet default (public) host.
+        proxyBaseUrl: process.env.PACT_DEVNET_PROXY_URL,
         indexerBaseUrl,
         storagePath: join(dir, "live.jsonl"),
         installSignalHandlers: false,
@@ -152,8 +161,13 @@ describe("integration (wired, mocked transports)", () => {
         "https://dummy.pactnetwork.io/quote/AAPL?fail=1",
       );
       expect(res.status).toBeGreaterThanOrEqual(500);
-      // The proxy must have processed it (covered, not degraded).
+      // The proxy must have processed it (covered, not degraded). A bare
+      // degraded fetch of the public origin has none of: X-Pact-Call-Id,
+      // X-Pact-Outcome, or a buffered pending call. These three guard
+      // against a silent false pass (golden-rule degrade).
       expect(res.headers.get("X-Pact-Call-Id")).toBeTruthy();
+      expect(res.headers.get("X-Pact-Outcome")).toBe("server_error");
+      expect(pact.stats().pendingCalls).toBe(1);
       const outcome = await Promise.race([
         failed,
         new Promise<string>((_, rej) =>
