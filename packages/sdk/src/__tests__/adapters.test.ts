@@ -18,12 +18,30 @@ function recordingFetch(): {
 }
 
 describe("wrapClient", () => {
-  it("wraps a fetch-like function", async () => {
+  it("wraps a fetch-like function (string + Request inputs)", async () => {
     const { pactFetch, calls } = recordingFetch();
-    const wrapped = wrapClient(globalThis.fetch, pactFetch) as PactFetchFn;
+    const wrapped = wrapClient(globalThis.fetch, pactFetch) as typeof fetch;
     const res = await wrapped("https://api.helius.xyz/v0/x");
     expect(res.status).toBe(200);
     expect(calls[0].url).toBe("https://api.helius.xyz/v0/x");
+
+    // A Request input must NOT collapse to a GET with init===undefined —
+    // method/headers/body have to survive (PR #210 finding 1).
+    await wrapped(
+      new Request("https://api.helius.xyz/v0/p", {
+        method: "POST",
+        body: "z",
+        headers: { "x-test": "1" },
+      }),
+    );
+    expect(calls[1].url).toBe("https://api.helius.xyz/v0/p");
+    expect(calls[1].init?.method).toBe("POST");
+    expect(
+      new TextDecoder().decode(calls[1].init?.body as Uint8Array),
+    ).toBe("z");
+    expect(
+      (calls[1].init?.headers as Record<string, string>)["x-test"],
+    ).toBe("1");
   });
 
   it("wraps a ky instance via its fetch hook (string + Request inputs)", async () => {
@@ -125,6 +143,75 @@ describe("wrapClient", () => {
     expect(calls[1].url).toBe("https://api.helius.xyz/g");
     expect(calls[1].init?.method).toBe("GET");
     expect(calls[1].init?.body).toBeUndefined();
+  });
+
+  it("axios wrapper preserves HTTP error semantics (validateStatus)", async () => {
+    const calls: { url: string; init?: RequestInit }[] = [];
+    const statusFetch =
+      (status: number): PactFetchFn =>
+      async (url, init) => {
+        calls.push({ url, init });
+        return new Response(JSON.stringify({ e: 1 }), {
+          status,
+          headers: { "content-type": "application/json" },
+        });
+      };
+    const mkAxios = () => {
+      const axios = {
+        interceptors: { request: {}, response: {} },
+        defaults: {} as Record<string, unknown>,
+      };
+      return axios;
+    };
+
+    // Default axios behavior: non-2xx rejects with an AxiosError-shaped err.
+    const a1 = wrapClient(mkAxios(), statusFetch(500)) as {
+      defaults: { adapter: (c: unknown) => Promise<unknown> };
+    };
+    await expect(
+      a1.defaults.adapter({
+        url: "https://api.helius.xyz/x",
+        method: "get",
+        headers: {},
+        validateStatus: (s: number) => s >= 200 && s < 300,
+      }),
+    ).rejects.toMatchObject({
+      isAxiosError: true,
+      name: "AxiosError",
+      code: "ERR_BAD_RESPONSE",
+      status: 500,
+    });
+    const a1b = wrapClient(mkAxios(), statusFetch(404)) as {
+      defaults: { adapter: (c: unknown) => Promise<{ status?: number }> };
+    };
+    await a1b.defaults
+      .adapter({
+        url: "https://api.helius.xyz/x",
+        method: "get",
+        headers: {},
+        validateStatus: (s: number) => s >= 200 && s < 300,
+      })
+      .then(
+        () => {
+          throw new Error("should have rejected");
+        },
+        (e: { code: string; response: { status: number } }) => {
+          expect(e.code).toBe("ERR_BAD_REQUEST");
+          expect(e.response.status).toBe(404);
+        },
+      );
+
+    // validateStatus opt-out (null) => a 500 resolves, as axios allows.
+    const a2 = wrapClient(mkAxios(), statusFetch(500)) as {
+      defaults: { adapter: (c: unknown) => Promise<{ status: number }> };
+    };
+    const ok = await a2.defaults.adapter({
+      url: "https://api.helius.xyz/x",
+      method: "get",
+      headers: {},
+      validateStatus: null,
+    });
+    expect(ok.status).toBe(500);
   });
 
   it("throws a typed error for an unsupported client", () => {

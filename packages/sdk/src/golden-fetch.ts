@@ -97,15 +97,23 @@ export async function goldenFetch(
   }
 
   const proxiedUrl = buildProxiedUrl(deps.proxyBaseUrl, slug, url);
-  const authHeaders = await buildAuthHeaders({
-    method,
-    proxiedUrl,
-    bodyBytes,
-    agentPubkey: deps.agentPubkey,
-    secretKey: deps.secretKey,
-    project: deps.project,
-    now: deps.now,
-  });
+  let authHeaders: Record<string, string>;
+  try {
+    authHeaders = await buildAuthHeaders({
+      method,
+      proxiedUrl,
+      bodyBytes,
+      agentPubkey: deps.agentPubkey,
+      secretKey: deps.secretKey,
+      project: deps.project,
+      now: deps.now,
+    });
+  } catch {
+    // Signing itself failed (e.g. a malformed/short secret key that slipped
+    // past construction-time validation, or a future signer type). Golden
+    // rule: never throw on Pact's behalf — degrade to a bare fetch.
+    return bare(deps, url, init, "unsigned", host, slug, premiumBps);
+  }
   const headers = {
     ...cleanForwardHeaders(headersToRecord(init?.headers)),
     ...authHeaders,

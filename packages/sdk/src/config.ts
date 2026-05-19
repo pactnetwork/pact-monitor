@@ -12,6 +12,8 @@
  * the ed25519 request signature, not a bearer key (verify-signature.ts has no
  * API-key check). It is kept so a future proxy gate is a no-op for callers.
  */
+import bs58 from "bs58";
+
 import { PactError, PactErrorCode } from "./errors.js";
 import type { Network } from "./network.js";
 import type { PactSigner } from "./signer.js";
@@ -163,6 +165,32 @@ export function validateConfig(config: PactConfig): ResolvedConfig {
       PactErrorCode.SIGNER_MISSING,
       "createPact: a signer with a publicKey is required",
     );
+  }
+
+  // A malformed request-signing secret must fail HERE (construction), not
+  // later inside goldenFetch where throwing would violate the golden rule.
+  const rsk = config.requestSigningSecretKey;
+  if (rsk !== undefined) {
+    if (!(rsk instanceof Uint8Array) || rsk.length !== 64) {
+      throw new PactError(
+        PactErrorCode.CONFIG_INVALID,
+        `createPact: requestSigningSecretKey must be a 64-byte ed25519 ` +
+          `secret key (got ${
+            rsk instanceof Uint8Array ? `${rsk.length} bytes` : typeof rsk
+          })`,
+      );
+    }
+    // ed25519 secret = seed(32) || pubkey(32). The trailing 32 bytes must
+    // match the signer's public key, else every covered call would 401.
+    const derived = bs58.encode(rsk.slice(32));
+    const declared = signer.publicKey.toBase58();
+    if (derived !== declared) {
+      throw new PactError(
+        PactErrorCode.CONFIG_INVALID,
+        `createPact: requestSigningSecretKey public key (${derived}) does ` +
+          `not match signer.publicKey (${declared})`,
+      );
+    }
   }
 
   const defaultAllowanceUsdc = config.defaultAllowanceUsdc ?? 1;

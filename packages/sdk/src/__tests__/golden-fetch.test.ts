@@ -109,6 +109,23 @@ describe("goldenFetch — degraded paths", () => {
     expect(calls.every((c) => !c.url.includes("/v1/"))).toBe(true);
   });
 
+  it("degrades to bare (never throws) when signing itself fails", async () => {
+    // A malformed 5-byte secret makes nacl.sign.detached throw inside
+    // buildAuthHeaders. The golden rule forbids throwing on Pact's behalf.
+    const { fetchImpl, calls } = dispatcher({
+      origin: () => new Response("bare", { status: 200 }),
+    });
+    const r = await goldenFetch(
+      deps({ secretKey: new Uint8Array(5) }, fetchImpl),
+      "https://api.helius.xyz/v0/x",
+      undefined,
+    );
+    expect(r.degraded).toBe(true);
+    expect(r.degradedReason).toBe("unsigned");
+    expect(await r.response.text()).toBe("bare");
+    expect(calls.every((c) => !c.url.includes("/v1/"))).toBe(true);
+  });
+
   it("propagates a genuine upstream error unchanged (golden rule)", async () => {
     const boom = new TypeError("getaddrinfo ENOTFOUND");
     const { fetchImpl } = dispatcher({

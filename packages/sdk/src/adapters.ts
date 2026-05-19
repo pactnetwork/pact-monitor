@@ -103,6 +103,8 @@ interface AxiosishConfig {
   data?: unknown;
   params?: Record<string, unknown>;
   responseType?: string;
+  /** Axios merges its default (status 2xx) onto every request config. */
+  validateStatus?: ((status: number) => boolean) | null;
 }
 
 function flattenAxiosHeaders(h: unknown): Record<string, string> {
@@ -170,7 +172,7 @@ function wrapAxios(client: unknown, pactFetch: PactFetchFn): unknown {
               .clone()
               .json()
               .catch(() => res.text());
-    return {
+    const response = {
       data,
       status: res.status,
       statusText: res.statusText,
@@ -178,6 +180,40 @@ function wrapAxios(client: unknown, pactFetch: PactFetchFn): unknown {
       config,
       request: undefined,
     };
+    // Preserve axios HTTP error semantics. Axios rejects non-2xx by default
+    // (config.validateStatus — the axios default is merged onto every
+    // request config). Mirror axios's internal `settle` so a drop-in
+    // wrapped client still rejects on 4xx/5xx and callers' .catch / try
+    // paths are not silently skipped.
+    const validateStatus = config.validateStatus;
+    if (
+      !response.status ||
+      !validateStatus ||
+      validateStatus(response.status)
+    ) {
+      return response;
+    }
+    const err = new Error(
+      `Request failed with status code ${response.status}`,
+    ) as Error & Record<string, unknown>;
+    err.name = "AxiosError";
+    err.isAxiosError = true; // axios.isAxiosError(err) === true
+    err.code = ["ERR_BAD_REQUEST", "ERR_BAD_RESPONSE"][
+      Math.floor(response.status / 100) - 4
+    ];
+    err.config = config;
+    err.request = response.request;
+    err.response = response;
+    err.status = response.status;
+    err.toJSON = function toJSON(this: Record<string, unknown>) {
+      return {
+        message: this.message,
+        name: this.name,
+        code: this.code,
+        status: this.status,
+      };
+    };
+    throw err;
   };
   (client as { defaults: Record<string, unknown> }).defaults.adapter =
     adapter;
@@ -283,14 +319,16 @@ export function wrapClient<T>(client: T, pactFetch: PactFetchFn): T {
   if (isAxiosLike(client)) return wrapAxios(client, pactFetch) as T;
   if (typeof client === "function") {
     // A fetch-like function (undici.fetch, global fetch, a custom fetch).
-    const wrapped = (input: RequestInfo | URL, init?: RequestInit) => {
-      const url =
-        typeof input === "string"
-          ? input
-          : input instanceof URL
-            ? input.toString()
-            : (input as Request).url;
-      return pactFetch(url, init);
+    // Reuse requestUrlAndInit so a Request input keeps its method/headers/
+    // body — `wrapped(new Request(url, { method: 'POST', body, headers }))`
+    // must NOT collapse to a GET with init===undefined (same extraction the
+    // ky adapter uses).
+    const wrapped = async (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ): Promise<Response> => {
+      const { url, init: i } = await requestUrlAndInit(input, init);
+      return pactFetch(url, i);
     };
     return wrapped as T;
   }
