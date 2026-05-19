@@ -663,3 +663,90 @@ methodology + §(e) conventions + WP-04 OUTCOMES (E1-E4 / guard precedence /
 seams) + WP-05 OUTCOMES (P1/P3 final forms, the LOCKED-ACCEPTED `2157b75`
 alias, the 4 filled seams) remain intact and are NOT reopened by WP-07 or any
 future work. The parity port is closed.
+
+---
+
+## WP-EVM-07 DEPLOY COMPLETE (2026-05-19)
+
+WP-EVM-07 is COMPLETE: captain GATE A + GATE B APPROVED (independently
+re-verified on-chain + repo; zero defects). **The Arc EVM track
+(WP-EVM-02..07) is COMPLETE.** Everything above this section remains settled
+law and is NOT reopened. This is the FINAL section; the track is closed.
+
+### (a) Deployed + arcscan-verified on Arc Testnet (chain id 5042002)
+
+| Contract     | Address (EIP-55)                             | arcscan #code |
+|--------------|----------------------------------------------|---------------|
+| PactRegistry | `0x056BAC33546b5b51B8CF6f332379651f715B889C` | https://testnet.arcscan.app/address/0x056BAC33546b5b51B8CF6f332379651f715B889C#code |
+| PactPool     | `0xa6135d9C6BFA0F256B9DeBa10d76C7698329aFdE` | https://testnet.arcscan.app/address/0xa6135d9C6BFA0F256B9DeBa10d76C7698329aFdE#code |
+| PactSettler  | `0xe461CE50ef53BFC10945B101FB94b11Ec5eB591f` | https://testnet.arcscan.app/address/0xe461CE50ef53BFC10945B101FB94b11Ec5eB591f#code |
+
+RPC `https://rpc.testnet.arc.network`; explorer `https://testnet.arcscan.app`;
+USDC `0x3600000000000000000000000000000000000000` (6-decimal, Arc native gas).
+All 3 arcscan-VERIFIED (getsourcecode returns non-empty source + compiler
+`v0.8.30+commit.73712a01`; per-GUID `Pass - Verified`). Deployed addresses
+baked into `packages/protocol-evm-v1-client/src/addresses.ts` `DEPLOYMENTS`
+(EIP-55 via viem `getAddress`; `resolveDeployment` env overlay intact).
+Commits: `46d2ab9` (`script/Deploy.s.sol`), `838c573` (`addresses.ts` + its
+co-located `__tests__/addresses.test.ts`).
+
+### (b) Contracts remain LOCKED — deploy added ZERO contract behavior
+
+`git diff 07a79be..HEAD -- packages/program-evm/protocol-evm-v1/src/` is
+EMPTY (captain-verified). WP-07 touched only `script/Deploy.s.sol` (the
+WP-EVM-01 scaffold itself scoped the real deploy script to WP-07 — NOT a
+contract source) + `addresses.ts` + its test. `check:abi` PASS both passes
+(pre-deploy + post-deploy): the deployed bytecode ABI == the committed client
+ABI; all 5 ABIs (PactRegistry 49 / PactPool 27 / PactSettler 28 / PactEvents
+7 / PactErrors 30) in sync with the locked forge build. All WP-02..06 locked
+rulings remain in force.
+
+### (c) As-deployed parameters (C1/C2 ratified — 07-C2-RATIFICATION.md)
+
+- `authority` = `treasuryVault` = deployer EOA
+  `0x777d569Bd3b0A2De007097A3D7E1687C5E5EB859` (C1: authority IS the deployer,
+  the separate-authority branch was removed; C2 item 2 testnet
+  simplification). Both verified on-chain.
+- Default fee template EMPTY (`defaultCount_ = 0`) — parity-valid
+  (initialize_protocol_config.rs:138-156); every endpoint declares its OWN
+  fee recipients.
+- `maxTotalFeeBps` = 3000 (exact Solana parity, constants.rs:23).
+- SETTLER_ROLE granted post-deploy to PactSettler on BOTH PactRegistry AND
+  PactPool (the two-layer E1xE2 grant; only possible because deployer ==
+  authority == DEFAULT_ADMIN_ROLE holder). Verified live via `hasRole`.
+
+### (d) Reusable Arc tooling finding — blockscout, NOT etherscan, verifier
+
+arcscan is a **Blockscout-based** explorer. `forge` inline `--verify` and
+`forge verify-contract --verifier etherscan` BOTH FAIL on Arc Testnet
+("Missing/ETHERSCAN_API_KEY ..." — Arc chain 5042002 is not in forge's
+built-in etherscan chain registry, so the key cannot be mapped). The inline
+`--verify` failure aborts the run BEFORE any on-chain action (forge validates
+verifier config pre-broadcast) — no orphan deploy, no wasted gas. WORKING
+path for future Arc deploys: deploy WITHOUT `--verify`, then
+`forge verify-contract --verifier blockscout --verifier-url
+https://testnet.arcscan.app/api`. No `foundry.toml` or contract change
+needed — purely a CLI verifier-backend selection.
+
+### (e) Carried non-blocking items (NOT WP-07 defects; future cycles)
+
+1. **C2 mainnet-hardening:** `treasuryVault == deployer EOA` is a deliberate
+   testnet simplification. Before ANY mainnet deploy, split the treasury into
+   a real Safe/multisig distinct from the deployer. This is a fresh deploy
+   (no migration; `treasuryVault` has NO setter — permanent per deployment).
+2. **Pre-existing TS18048 x17 hygiene:** `protocol-evm-v1-client/__tests__/
+   encode.test.ts` reports 17 `'*.args' is possibly 'undefined'` tsc errors.
+   Confirmed PRE-EXISTING (`git diff 07a79be..HEAD -- .../encode.test.ts`
+   EMPTY — a WP-06 artifact, NOT introduced by WP-07). The package `test`
+   script is `vitest run` (41/41 GREEN), not tsc. Deliberately NOT fixed by
+   WP-07 (out of scope; file-scoped-commit discipline) — a future hygiene
+   cycle.
+
+### (f) Track closed
+
+THE ARC EVM TRACK IS COMPLETE: WP-EVM-02 (errors/events/constants/
+FeeValidation/PactRegistry) · 03 (PactPool) · 04 (PactSettler happy path) ·
+05 (PactSettler hardening) · 06 (TS client + fuzz/gas + parity matrix + spec
+corrections) · 07 (Arc Testnet deploy + arcscan verify). The Solana
+`pact-network-v1-pinocchio` program is ported to EVM at behavioral parity AND
+live on Arc Testnet with verified source. No further crew is spawned.
