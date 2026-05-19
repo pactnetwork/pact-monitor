@@ -304,4 +304,15 @@ re-verification (which used only read calls — keys no longer needed). Proven:
 - nothing sensitive staged; no key ever appeared in any commit/report/output
 The throwaway wallets hold only residual Arc Testnet USDC; no recovery needed.
 
+### Closeout artifacts (final)
+
+- Gate B evidence commit: `ea25d7e`
+- Closeout commit (Gate B verdict + DONE-STATE + C1 cleanup): `a0006a8`
+- Pushed: origin/feat/arc-protocol-v1 @ `a0006a8` (range 7b05601..a0006a8)
+- Handoff extended: `docs/superpowers/handoffs/2026-05-18-arc-evm-port-handoff.md`
+  ("WP-EVM-07b ECONOMIC E2E PROVEN" section; in commit a0006a8)
+- PR #204 addendum: https://github.com/pactnetwork/pact-monitor/pull/204#issuecomment-4485185298
+- C1 key cleanup: COMPLETED + proven (no E2E private-key var in .env;
+  .env gitignored; nothing sensitive staged; no key in any commit/report)
+
 WP-EVM-07b CLOSED. No further crew.
