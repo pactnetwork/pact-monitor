@@ -5,10 +5,11 @@
  * derivations.
  *
  * D-B (captain GATE-A APPROVED): WP-EVM-07 (deploy + arcscan verify) is a
- * separate, deferred cycle, so the protocol contract addresses are not known
- * yet — they are `null` placeholders here, overridable via env at integration
- * time and filled permanently at WP-07. The chain id and USDC address ARE
- * known now (from `ArcConfig.sol`) and populated. Parity-neutral.
+ * separate, deferred cycle. WP-EVM-07 is now COMPLETE — the protocol contract
+ * addresses below are the Arc Testnet (chain 5042002) deployed + arcscan-
+ * verified contracts, baked permanently into `DEPLOYMENTS`. They remain
+ * overridable via the `resolveDeployment` env overlay. The chain id and USDC
+ * address are from `ArcConfig.sol`. Parity-neutral.
  */
 import { getAddress, isAddress, type Address } from "viem";
 
@@ -17,16 +18,16 @@ import { ARC_TESTNET_CHAIN_ID, ARC_TESTNET_USDC } from "./constants.js";
 /** Arc Testnet chain id (registry key). */
 export const ARC_TESTNET = ARC_TESTNET_CHAIN_ID;
 
-/** One chain's Pact deployment. Contract addresses are null until WP-07. */
+/** One chain's Pact deployment. Contract addresses filled at WP-07. */
 export interface PactDeployment {
   chainId: number;
   /** USDC token — known from ArcConfig; never env-overridable. */
   usdc: Address;
-  /** PactRegistry address — filled at WP-07 / overridable via env. */
+  /** PactRegistry address — WP-07 deployed / overridable via env. */
   registry: Address | null;
-  /** PactPool address — filled at WP-07 / overridable via env. */
+  /** PactPool address — WP-07 deployed / overridable via env. */
   pool: Address | null;
-  /** PactSettler address — filled at WP-07 / overridable via env. */
+  /** PactSettler address — WP-07 deployed / overridable via env. */
   settler: Address | null;
 }
 
@@ -35,9 +36,12 @@ export const DEPLOYMENTS: Record<number, PactDeployment> = {
   [ARC_TESTNET_CHAIN_ID]: {
     chainId: ARC_TESTNET_CHAIN_ID,
     usdc: ARC_TESTNET_USDC,
-    registry: null,
-    pool: null,
-    settler: null,
+    // WP-EVM-07: deployed + arcscan-verified on Arc Testnet 2026-05-19.
+    // EIP-55 checksummed via viem getAddress. arcscan:
+    // https://testnet.arcscan.app/address/<addr>#code
+    registry: "0x056BAC33546b5b51B8CF6f332379651f715B889C",
+    pool: "0xa6135d9C6BFA0F256B9DeBa10d76C7698329aFdE",
+    settler: "0xe461CE50ef53BFC10945B101FB94b11Ec5eB591f",
   },
 };
 

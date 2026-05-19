@@ -8,17 +8,18 @@ import {
 import { ARC_TESTNET_CHAIN_ID, ARC_TESTNET_USDC } from "../src/constants.js";
 
 // Spec §5: addresses.ts is the EVM analogue of pda.ts — "deployed addresses
-// per chain — no PDAs" (§4 #2). D-B (captain-approved): WP-07 deploy is
-// deferred, so protocol contract addresses are null placeholders; chain id +
-// USDC are known from ArcConfig and populated now.
+// per chain — no PDAs" (§4 #2). WP-EVM-07 COMPLETE: the Arc Testnet protocol
+// contracts are deployed + arcscan-verified (2026-05-19) and baked into
+// DEPLOYMENTS (EIP-55 checksummed); chain id + USDC are from ArcConfig.
 describe("addresses — per-chain deployment registry (D-B)", () => {
-  it("Arc Testnet entry has known constants and null contract placeholders", () => {
+  it("Arc Testnet entry has known constants and WP-07 deployed addresses", () => {
     const d = DEPLOYMENTS[ARC_TESTNET];
     expect(d.chainId).toBe(ARC_TESTNET_CHAIN_ID);
     expect(d.usdc).toBe(ARC_TESTNET_USDC);
-    expect(d.registry).toBeNull();
-    expect(d.pool).toBeNull();
-    expect(d.settler).toBeNull();
+    // WP-EVM-07 Arc Testnet deployed + arcscan-verified contracts.
+    expect(d.registry).toBe("0x056BAC33546b5b51B8CF6f332379651f715B889C");
+    expect(d.pool).toBe("0xa6135d9C6BFA0F256B9DeBa10d76C7698329aFdE");
+    expect(d.settler).toBe("0xe461CE50ef53BFC10945B101FB94b11Ec5eB591f");
   });
 
   it("getDeployment returns the chain entry; throws on unknown chain", () => {
