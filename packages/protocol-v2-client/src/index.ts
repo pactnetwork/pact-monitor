@@ -73,3 +73,31 @@ export {
   formatProtocolError,
   tryExtractProtocolError,
 } from "./errors.js";
+
+export type {
+  Pubkey,
+  ProtocolConfig,
+  CoveragePool,
+  UnderwriterPosition,
+  Policy,
+  Claim,
+} from "./state.js";
+export {
+  PROTOCOL_CONFIG_LEN,
+  COVERAGE_POOL_LEN,
+  UNDERWRITER_POSITION_LEN,
+  POLICY_LEN,
+  CLAIM_LEN,
+  ACCOUNT_DISC_PROTOCOL_CONFIG,
+  ACCOUNT_DISC_COVERAGE_POOL,
+  ACCOUNT_DISC_UNDERWRITER_POSITION,
+  ACCOUNT_DISC_POLICY,
+  ACCOUNT_DISC_CLAIM,
+  TriggerType,
+  ClaimStatus,
+  decodeProtocolConfig,
+  decodeCoveragePool,
+  decodeUnderwriterPosition,
+  decodePolicy,
+  decodeClaim,
+} from "./state.js";
