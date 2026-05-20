@@ -1,0 +1,91 @@
+# WP-MN-04 — Captain Gate A Verdict
+
+- **Date:** 2026-05-20
+- **Captain:** Tu (out-of-office); verdict issued by **captain-proxy**
+- **Verdict:** **APPROVED for Gate A — PAUSED for explicit Tu authorization before T1 begins.**
+
+This is the first WP in the MN track that touches **production-shape infrastructure** (Google Secret Manager, Cloud Run env, an on-chain `SETTLER_ROLE` grant on Arc Testnet). Tu's standing rule — "auto-drive unless it really touches production" — kicks in here. Captain-proxy authored Gate A; T1 execution waits.
+
+---
+
+## Captain-proxy checks
+
+1. **D6 reorg/finality policy doc exists.** `docs/evm/2026-05-20-reorg-policy.md`. Covers per-VM finality semantics, Arc `finalityBlocks=64` decision + rationale (16–32s wait at 250–500ms block time, conservative for first boot), EIP-1559 primary + legacy gasPrice fallback gas strategy, `(network, callId)` idempotency change supersedes `signature`, settler EOA secret model with rotation procedure, manual reorg-rollback CLI. **This is the hard Gate A entry gate from phased plan §7 — satisfied.**
+
+2. **Topology unchanged from WP-MN-03b.** Multi-network-per-service: one settler/indexer/proxy, each `Map<network, ChainAdapter>`. WP-MN-04 just adds `arc-testnet → EvmAdapter` to that map. No new fleet shape. WP-MN-03b plumbing is the load-bearing piece.
+
+3. **EvmAdapter surface enumerated per `ChainAdapter` method.** RESEARCH §3 maps each method to concrete viem + `@pact-network/protocol-evm-v1-client` primitives:
+   - `readEndpointConfigs` → `getContractEvents(EndpointRegistered)` + `multicall(endpoints(slug))`.
+   - `submitSettleBatch` → `encodeSettleBatch` + `sendTransaction` + D6 §5.1 wait-loop verbatim.
+   - `checkAgentEligibility` → ERC-20 `balanceOf` + `allowance` via multicall.
+   - `tailSettlementEvents` (optional, for D6 §5.2 hard-reorg reconcile) → `getContractEvents(CallSettled, fromFinalized)` async iterator.
+
+4. **Indexer dedup change is one specific code site.** `EventsService.ingest` changes `findUnique(network, signature, callId)` to `findFirst(network, callId)`. Schema PK stays — storage vs. dedup keys decoupled. D6 §4 verbatim.
+
+5. **Per-VM secret-loader extension is non-invasive.** Solana back-compat preserved (`SETTLEMENT_AUTHORITY_KEY` legacy env honored). New env per network: `PACT_SETTLER_KEYPAIR_<NETWORK>` (or Secret Manager resource path). Returns discriminated union `{vm:'solana', keypair} | {vm:'evm', account, address}`. AdaptersService consumes per-network.
+
+6. **`chains.json` fill plan locks D6 numbers.** `arc-testnet.finalityBlocks=64`, `blockTimeMs=500`, plus `rpcUrl` and `deploymentBlock` (Tu-provided in T1). `ChainDescriptor` interface extends with three new OPTIONAL fields; Solana entries leave them undefined.
+
+7. **Reorg-rollback module is operator-CLI-only.** Per D6 §5.2: WP-MN-04 ships `ReorgService.runReconcile()` + `reorg:rollback` CLI + read-only `settlement_reorg_audit` Prisma view. NO auto-cron daemon. Audit view is **local-docker-only** per Tu's directive; production migration is a separate ops step.
+
+8. **6-task sub-breakdown well-sized.** T1 chains.json + ChainDescriptor; T2 EvmAdapter + contract conformance; T3 indexer dedup + reorg module; T4 secret-loader per-VM + AdaptersService EVM construction; T5 e2e unit test with mocked viem; T6 provisioning runbook + Gate B (Tu-executable). T1..T5 atomic; T6 is the runbook.
+
+9. **Risk register addresses every plan-level concern.** R1 (D6) RESOLVED before T1. R2 (finality) MITIGATED (conservative 64-block default). R3 (cold start) INHERITED from Solana posture. Plus 3 new RESEARCH-surfaced risks (R4 pagination, R5 EIP-1559 refusal, R6 role grant), each with concrete mitigation.
+
+10. **Carry-forwards from WP-MN-03b resolved.** EvmAdapter real impl replaces stub (T2). `EndpointConfigSnapshot.authority` + `maxTotalFeeBps` populated on EVM (RESEARCH §3.1 — closes WP-MN-02 carry-forward for EVM side). `loadEndpoint` cache duplication remains deferred to cleanup WP.
+
+---
+
+## What captain-proxy WILL execute (with Tu authorization)
+
+T1..T5. All atomic code changes against local docker postgres; no remote pushes during execution; subagent-driven-development cadence with two-stage review per task. Estimated 5 tasks × (implementer + spec-reviewer + code-reviewer) ≈ same texture as WP-MN-03b.
+
+## What captain-proxy WILL NOT execute
+
+T6 (fleet boot runbook). This is Tu's checklist:
+
+1. Generate Arc EOA + fund with testnet gas (Tu owns the private key).
+2. `cast send PactSettler.grantRole(SETTLER_ROLE, <addr>)` from Tu's admin EOA on Arc Testnet.
+3. `gcloud secrets create pact-settler-arc-testnet` + add version.
+4. Cloud Run revision env updates × 3 services.
+5. Roll revisions; verify boot logs.
+6. Run the end-to-end smoke (register endpoint → top up pool → agent call → indexer row → read API).
+
+Captain-proxy CANNOT do these because:
+- Step 1: private-key custody is a Tu decision.
+- Step 2: requires Tu's admin EOA signature.
+- Steps 3–5: GCP and Cloud Run are Tu's deployment surface.
+- Step 6: real testnet spend.
+
+---
+
+## Open questions for Tu before T1 starts
+
+(RESEARCH §13 — none block Gate A APPROVAL; they're T6 prerequisites.)
+
+1. **Arc Testnet RPC URL** — what URL goes in `chains.json`? Default: public URL, committed.
+2. **`PactRegistry` deploy block on Arc Testnet** — Tu provides; used as `fromBlock` for endpoint log scan.
+3. **Arc EOA custody** — Tu generates locally and uploads hex to Secret Manager. Confirm.
+4. **`grantRole` signing** — Tu has the admin EOA private key. Confirm.
+5. **Cloud Run min-instances for Arc fleet** — default = same as Solana (`min=1`). Confirm.
+6. **`PACT_LEGACY_DIRECT_SOLANA` posture during ramp** — default = adapter for both Solana and Arc from day 1 (WP-MN-03b Gate B headline proved byte-identical). Confirm.
+
+If Tu's answers diverge from defaults, RESEARCH §6 / §13 / §8 amend before T1.
+
+---
+
+## Standing instructions
+
+- Implementer is `superpowers:writing-plans` → 6 PLAN sections at `docs/superpowers/plans/2026-05-20-wp-mn-04-evm-fleet.md` → `superpowers:subagent-driven-development` for T1..T5.
+- **NO remote pushes** until Gate B closes.
+- **Tu owns T6** end-to-end; captain-proxy hands off after T5 with Gate-B-ready branch + the T6 runbook ready to follow.
+- Tag `pre-mn-05-rollback` on `feat/multi-network` immediately after WP-MN-04 Gate B + merge.
+- Pause-and-escalate on any RESEARCH-contradicting finding (especially: adapter interface needs a new method, D6 algorithm doesn't compile, RPC node refuses both EIP-1559 and legacy gasPrice).
+
+---
+
+## Verdict
+
+**APPROVED.** Captain-proxy paused awaiting Tu authorization on the 6 open questions and explicit go-ahead for T1 to begin.
+
+**Suggested Tu reply if proceeding with defaults:** "go, defaults on all 6". Then captain-proxy answers any RPC-URL/deploy-block placeholders with values you provide and starts T1.
