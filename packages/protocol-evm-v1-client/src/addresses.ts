@@ -9,7 +9,7 @@
  * addresses below are the Arc Testnet (chain 5042002) deployed + arcscan-
  * verified contracts, baked permanently into `DEPLOYMENTS`. They remain
  * overridable via the `resolveDeployment` env overlay. The chain id and USDC
- * address are from `ArcConfig.sol`. Parity-neutral.
+ * address are from `ProtocolInvariants.sol`. Parity-neutral.
  */
 import { getAddress, isAddress, type Address } from "viem";
 
@@ -21,7 +21,7 @@ export const ARC_TESTNET = ARC_TESTNET_CHAIN_ID;
 /** One chain's Pact deployment. Contract addresses filled at WP-07. */
 export interface PactDeployment {
   chainId: number;
-  /** USDC token — known from ArcConfig; never env-overridable. */
+  /** USDC token — sourced from chains.json via ARC_TESTNET_USDC; never env-overridable. */
   usdc: Address;
   /** PactRegistry address — WP-07 deployed / overridable via env. */
   registry: Address | null;

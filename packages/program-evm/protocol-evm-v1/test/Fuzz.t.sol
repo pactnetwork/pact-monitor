@@ -8,7 +8,7 @@ import {PactPool} from "../src/PactPool.sol";
 import {IPactRegistry} from "../src/interfaces/IPactRegistry.sol";
 import {IPactSettler} from "../src/interfaces/IPactSettler.sol";
 import {IPactPool} from "../src/interfaces/IPactPool.sol";
-import {ArcConfig} from "../src/ArcConfig.sol";
+import {ProtocolInvariants} from "../src/ProtocolInvariants.sol";
 import {MockUSDC} from "./util/MockUSDC.sol";
 import "../src/errors/PactErrors.sol";
 
@@ -106,7 +106,7 @@ contract FuzzTest is Test {
     // residual; nothing is created or lost (spec §3 "no rounding drift").
     // -----------------------------------------------------------------------
     function testFuzz_FeeSplitSingleRecipient(uint64 premiumRaw, uint16 bpsRaw) public {
-        uint64 premium = uint64(bound(premiumRaw, ArcConfig.MIN_PREMIUM, 1e15));
+        uint64 premium = uint64(bound(premiumRaw, ProtocolInvariants.MIN_PREMIUM, 1e15));
         uint16 bps = uint16(bound(bpsRaw, 1, 3000)); // <= default maxTotalFeeBps
 
         IPactRegistry.FeeRecipient[8] memory r;
@@ -153,7 +153,7 @@ contract FuzzTest is Test {
         uint16 tBpsRaw,
         uint16 aBpsRaw
     ) public {
-        uint64 premium = uint64(bound(premiumRaw, ArcConfig.MIN_PREMIUM, 1e15));
+        uint64 premium = uint64(bound(premiumRaw, ProtocolInvariants.MIN_PREMIUM, 1e15));
         uint16 tBps = uint16(bound(tBpsRaw, 1, 1500));
         uint16 aBps = uint16(bound(aBpsRaw, 1, 1500)); // tBps+aBps <= 3000
 
@@ -192,7 +192,7 @@ contract FuzzTest is Test {
     // PROPERTY 3 — batch-size handling: 1..50 settle; >50 reverts BatchTooLarge.
     // -----------------------------------------------------------------------
     function testFuzz_BatchWithinLimitSettles(uint8 nRaw) public {
-        uint256 n = bound(nRaw, 1, ArcConfig.MAX_BATCH_SIZE); // 1..50
+        uint256 n = bound(nRaw, 1, ProtocolInvariants.MAX_BATCH_SIZE); // 1..50
         IPactRegistry.FeeRecipient[8] memory none;
         vm.prank(authority);
         reg.registerEndpoint(SLUG, 500, 0, 5000, 1000, 5_000_000, false, 0, none);
@@ -212,7 +212,7 @@ contract FuzzTest is Test {
     }
 
     function testFuzz_BatchOverLimitReverts(uint16 nRaw) public {
-        uint256 n = bound(nRaw, ArcConfig.MAX_BATCH_SIZE + 1, 300); // 51..300
+        uint256 n = bound(nRaw, ProtocolInvariants.MAX_BATCH_SIZE + 1, 300); // 51..300
         IPactRegistry.FeeRecipient[8] memory none;
         vm.prank(authority);
         reg.registerEndpoint(SLUG, 500, 0, 5000, 1000, 5_000_000, false, 0, none);

@@ -26,23 +26,27 @@ Verified network facts (design PR #201 §4.8.4, checked 2026-05-15):
 | Testnet USDC | `0x3600000000000000000000000000000000000000` (6-decimal ERC-20 interface) |
 | EVM | Prague hard fork (`evm_version = "prague"`) |
 
-These constants are pinned in `src/ArcConfig.sol` and `.env.example`.
+Chain-specific constants (chain id, USDC address) are in `config/chains.json`.
+Protocol-wide invariants are in `src/ProtocolInvariants.sol`. Network env vars
+are in `.env.example`.
 
 ## Layout
 
 ```
 src/
-  ArcConfig.sol          Arc Testnet constants
-  PactRegistry.sol       endpoint registry + protocol kill switch (stub)
-  PactPool.sol           per-slug USDC coverage pools (stub)
-  PactSettler.sol        settleBatch executor (stub)
-  interfaces/            IPactRegistry / IPactPool / IPactSettler (design §3)
+  ProtocolInvariants.sol  Protocol-wide constants (chain-free; see config/chains.json)
+  PactRegistry.sol        endpoint registry + protocol kill switch (stub)
+  PactPool.sol            per-slug USDC coverage pools (stub)
+  PactSettler.sol         settleBatch executor (stub)
+  interfaces/             IPactRegistry / IPactPool / IPactSettler (design §3)
+config/
+  chains.json             chain-specific values: chainId, usdcAddress, usdcDecimals
 test/
-  Deployment.t.sol       trivial compile/deploy sanity + Arc-constant pins
+  Deployment.t.sol        trivial compile/deploy sanity + Arc-constant pins
 script/
-  Deploy.s.sol           deploy placeholder (real deploy = WP-EVM-07)
-foundry.toml             solc 0.8.30, evm_version = prague
-.env.example             Arc Testnet env template (no secrets committed)
+  Deploy.s.sol            deploy placeholder (real deploy = WP-EVM-07)
+foundry.toml              solc 0.8.30, evm_version = prague
+.env.example              Arc Testnet env template (no secrets committed)
 ```
 
 ## Build & test

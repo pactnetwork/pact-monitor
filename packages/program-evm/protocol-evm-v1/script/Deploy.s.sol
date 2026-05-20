@@ -5,7 +5,7 @@ import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {IERC20Metadata} from
     "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
-import {ArcConfig} from "../src/ArcConfig.sol";
+import {ProtocolInvariants} from "../src/ProtocolInvariants.sol";
 import {IPactRegistry} from "../src/interfaces/IPactRegistry.sol";
 import {PactRegistry} from "../src/PactRegistry.sol";
 import {PactPool} from "../src/PactPool.sol";
@@ -18,6 +18,13 @@ import {PactSettler} from "../src/PactSettler.sol";
 ///         anything is constructed.
 /// @dev Deploy script ONLY — no contract source is edited (contracts LOCKED
 ///      WP-02..05; WP-06 added zero behavior). Replaces the WP-EVM-01 stub.
+///
+///      WP-MN-01 generalized chain selection: the script now reads
+///      config/chains.json via vm.parseJsonKeys iteration keyed on
+///      CHAIN_ID env (defaults to block.chainid). The USDC-decimals
+///      guard remains in the exact position WP-EVM-07 placed it; a
+///      new invariant cross-check (chains.json usdcDecimals ==
+///      ProtocolInvariants.EXPECTED_USDC_DECIMALS) precedes it.
 ///
 ///      C1 (captain GATE A verdict): `authority_` IS the deployer EOA, full
 ///      stop. The post-deploy SETTLER_ROLE grants are issued BY the deployer
@@ -36,74 +43,83 @@ import {PactSettler} from "../src/PactSettler.sol";
 ///      the human ratification remains the primary control.
 contract Deploy is Script {
     function run() external {
-        // --- Resolve deploy parameters from env ---
-        // DEPLOYER_PRIVATE_KEY: hex (0x) private key of the Arc Testnet
-        // deployer EOA. This EOA is BOTH the broadcaster AND the protocol
-        // authority (C1). It must hold faucet USDC for gas.
         uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address deployer = vm.addr(deployerKey);
 
-        // TREASURY_VAULT_ADDRESS: immutable post-deploy (C2). A wrong value
-        // means a full redeploy. address(0) is rejected as a backstop —
-        // human ratification (C2) is still required and primary.
         address treasuryVault = vm.envAddress("TREASURY_VAULT_ADDRESS");
         require(treasuryVault != address(0), "TREASURY_VAULT_ZERO");
 
-        address usdc = ArcConfig.ARC_TESTNET_USDC;
-
-        // --- USDC-decimals guard (handoff (c); same require() shape as
-        //     test/UsdcDecimals.t.sol). FIRST action before any construction
-        //     so a wrong-decimals USDC fails the deploy loudly with zero
-        //     contracts deployed. ---
+        // --- Resolve chain entry from config/chains.json ---
+        uint256 chainId = vm.envOr("CHAIN_ID", uint256(block.chainid));
+        string memory chainsJson = vm.readFile("config/chains.json");
+        string[] memory names = vm.parseJsonKeys(chainsJson, ".");
+        string memory chainName;
+        for (uint256 i = 0; i < names.length; i++) {
+            uint256 cid = vm.parseJsonUint(
+                chainsJson,
+                string.concat(".", names[i], ".chainId")
+            );
+            if (cid == chainId) {
+                chainName = names[i];
+                break;
+            }
+        }
         require(
-            IERC20Metadata(usdc).decimals() == ArcConfig.EXPECTED_USDC_DECIMALS,
+            bytes(chainName).length > 0,
+            string.concat("CHAIN_ID ", vm.toString(chainId), " not in chains.json")
+        );
+
+        address usdc = vm.parseJsonAddress(
+            chainsJson,
+            string.concat(".", chainName, ".usdcAddress")
+        );
+        uint256 expectedDecimals = vm.parseJsonUint(
+            chainsJson,
+            string.concat(".", chainName, ".usdcDecimals")
+        );
+
+        // Cross-check: chains.json claims about USDC decimals must match the
+        // protocol-wide invariant (else the deploy is wrong-chain-data).
+        require(
+            expectedDecimals == ProtocolInvariants.EXPECTED_USDC_DECIMALS,
+            "CHAIN_USDC_DECIMALS_MISMATCH_INVARIANT"
+        );
+
+        // --- Live USDC-decimals guard (preserved from pre-WP-MN-01) ---
+        require(
+            IERC20Metadata(usdc).decimals() == ProtocolInvariants.EXPECTED_USDC_DECIMALS,
             "USDC_DECIMALS_MISMATCH"
         );
 
-        console.log("=== WP-EVM-07 Arc Testnet deploy ===");
-        console.log("chain id        :", block.chainid);
+        console.log("=== Pact EVM deploy ===");
+        console.log("chain id        :", chainId);
+        console.log("chain name      :", chainName);
         console.log("deployer/auth   :", deployer);
         console.log("usdc            :", usdc);
         console.log("treasury vault  :", treasuryVault);
-        console.log("maxTotalFeeBps  :", uint256(ArcConfig.DEFAULT_MAX_TOTAL_FEE_BPS));
+        console.log("maxTotalFeeBps  :", uint256(ProtocolInvariants.DEFAULT_MAX_TOTAL_FEE_BPS));
         console.log("default fee tmpl : EMPTY (defaultCount_=0) [C2 ratified]");
 
-        // EMPTY default fee template (C2 #3): defaultRecipients_ all-zero,
-        // defaultCount_ = 0. Parity-valid (initialize_protocol_config.rs:
-        // 138-156 — count == 0 allowed). Every endpoint registered on this
-        // deployment then declares its OWN fee recipients.
         IPactRegistry.FeeRecipient[8] memory emptyDefaults;
         uint8 defaultCount = 0;
 
         vm.startBroadcast(deployerKey);
 
-        // 1. PactRegistry — authority_ := deployer (C1).
         PactRegistry registry = new PactRegistry(
-            deployer,
-            usdc,
-            treasuryVault,
-            ArcConfig.DEFAULT_MAX_TOTAL_FEE_BPS,
-            emptyDefaults,
-            defaultCount
+            deployer, usdc, treasuryVault,
+            ProtocolInvariants.DEFAULT_MAX_TOTAL_FEE_BPS,
+            emptyDefaults, defaultCount
         );
-
-        // 2. PactPool — needs the registry address.
         PactPool pool = new PactPool(usdc, address(registry));
-
-        // 3. PactSettler — needs registry + pool addresses.
         PactSettler settler =
             new PactSettler(usdc, address(registry), address(pool));
 
-        // SETTLER_ROLE grants: deployer holds DEFAULT_ADMIN_ROLE on BOTH
-        // registry and pool (== registry.authority() == deployer, C1), so
-        // these grants succeed. PactSettler must hold SETTLER_ROLE on BOTH.
         bytes32 settlerRole = keccak256("SETTLER_ROLE");
         registry.grantRole(settlerRole, address(settler));
         pool.grantRole(settlerRole, address(settler));
 
         vm.stopBroadcast();
 
-        // --- Deployed addresses (capture for addresses.ts + Gate B) ---
         console.log("--- DEPLOYED ---");
         console.log("PactRegistry    :", address(registry));
         console.log("PactPool        :", address(pool));

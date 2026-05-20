@@ -7,7 +7,7 @@ import {PactPool} from "../src/PactPool.sol";
 import {PactRegistry} from "../src/PactRegistry.sol";
 import {IPactPool} from "../src/interfaces/IPactPool.sol";
 import {IPactRegistry} from "../src/interfaces/IPactRegistry.sol";
-import {ArcConfig} from "../src/ArcConfig.sol";
+import {ProtocolInvariants} from "../src/ProtocolInvariants.sol";
 import {MockUSDC} from "./util/MockUSDC.sol";
 import "../src/errors/PactErrors.sol";
 
@@ -36,7 +36,7 @@ contract PactPoolTest is Test {
         d[0].destination = treasuryVault;
         d[0].bps = 1000;
         reg = new PactRegistry(
-            authority, address(usdc), treasuryVault, ArcConfig.DEFAULT_MAX_TOTAL_FEE_BPS, d, 1
+            authority, address(usdc), treasuryVault, ProtocolInvariants.DEFAULT_MAX_TOTAL_FEE_BPS, d, 1
         );
         pool = new PactPool(address(usdc), address(reg));
         settlerRole = pool.SETTLER_ROLE();

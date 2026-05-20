@@ -2,15 +2,18 @@
  * Constants for `@pact-network/protocol-evm-v1-client`.
  *
  * EVM analogue of `protocol-v1-client/src/constants.ts`. The parity
- * invariants mirror BOTH `ArcConfig.sol` and the Solana
+ * invariants mirror BOTH `ProtocolInvariants.sol` and the Solana
  * `pact-network-v1-pinocchio/src/constants.rs` — they are bit-identical
  * across both (design spec §3). Per spec §5 this module is also the ABI
  * re-export point (`constants.ts` — Arc chain id, ABI re-export).
  *
  * "lamports" naming is intentionally dropped (design spec §4 #8: USDC is the
- * Arc 6-decimal ERC-20); names follow `ArcConfig.sol`, the EVM parity
+ * Arc 6-decimal ERC-20); names follow `ProtocolInvariants.sol`, the EVM parity
  * authority.
  */
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import type { Address } from "viem";
 
 import { PactRegistryAbi } from "./abi/PactRegistry.js";
@@ -19,14 +22,21 @@ import { PactSettlerAbi } from "./abi/PactSettler.js";
 import { PactEventsAbi } from "./abi/PactEvents.js";
 import { PactErrorsAbi } from "./abi/PactErrors.js";
 
-// --- Arc Testnet network constants (source: ArcConfig.sol, design PR #201 §4.8.4) ---
+// --- Arc Testnet network constants (sourced from config/chains.json, design PR #201 §4.8.4) ---
 
-/** Arc Testnet EVM chain id. */
-export const ARC_TESTNET_CHAIN_ID = 5042002;
+const _chainsJson = JSON.parse(
+  readFileSync(
+    join(__dirname, "../../program-evm/protocol-evm-v1/config/chains.json"),
+    "utf-8",
+  ),
+) as Record<string, { chainId: number; usdcAddress: string; usdcDecimals: number }>;
 
-/** Arc Testnet USDC token (Arc's native gas token; Pact uses its 6-dec ERC-20). */
-export const ARC_TESTNET_USDC: Address =
-  "0x3600000000000000000000000000000000000000";
+/** Arc Testnet EVM chain id (sourced from chains.json["arc-testnet"].chainId). */
+export const ARC_TESTNET_CHAIN_ID = _chainsJson["arc-testnet"].chainId;
+
+/** Arc Testnet USDC token (sourced from chains.json["arc-testnet"].usdcAddress). */
+export const ARC_TESTNET_USDC: Address = _chainsJson["arc-testnet"]
+  .usdcAddress as Address;
 
 /**
  * USDC decimals Pact's premium math assumes (Solana 6-decimal parity). The
@@ -35,7 +45,7 @@ export const ARC_TESTNET_USDC: Address =
  */
 export const EXPECTED_USDC_DECIMALS = 6;
 
-// --- Ported from constants.rs / ArcConfig.sol (parity invariants, spec §3) ---
+// --- Ported from constants.rs / ProtocolInvariants.sol (parity invariants, spec §3) ---
 
 /** Maximum events the protocol accepts in one `settleBatch` call. */
 export const MAX_BATCH_SIZE = 50;

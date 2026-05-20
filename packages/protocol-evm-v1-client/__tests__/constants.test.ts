@@ -15,11 +15,11 @@ import {
   PactErrorsAbi,
 } from "../src/constants.js";
 
-// Parity oracle: ArcConfig.sol == constants.rs (design spec §3 invariants).
+// Parity oracle: ProtocolInvariants.sol == constants.rs (design spec §3 invariants).
 // Values are bit-identical across both source authorities; constants.ts must
 // not drift from either.
-describe("constants — parity with ArcConfig.sol / constants.rs", () => {
-  it("Arc Testnet network constants match ArcConfig.sol", () => {
+describe("constants — parity with ProtocolInvariants.sol / constants.rs", () => {
+  it("Arc Testnet network constants match ProtocolInvariants.sol", () => {
     expect(ARC_TESTNET_CHAIN_ID).toBe(5042002);
     expect(ARC_TESTNET_USDC).toBe(
       "0x3600000000000000000000000000000000000000",

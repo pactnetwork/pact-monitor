@@ -17,6 +17,10 @@ remappings = [
   "@openzeppelin/=lib/openzeppelin-contracts/"
 ]
 
+# Allow vm.readFile in tests + scripts to read the chain config file.
+# Read-only: Deploy.s.sol + test/Deployment.t.sol use vm.readFile on chains.json.
+fs_permissions = [{ access = "read", path = "config/" }]
+
 # Arc Testnet RPC. Value comes from .env at deploy time (WP-EVM-07); never
 # committed. Verified endpoint per design §4.8.4.
 [rpc_endpoints]

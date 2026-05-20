@@ -4,7 +4,7 @@ pragma solidity ^0.8.30;
 import {Test} from "forge-std/Test.sol";
 import {PactRegistry} from "../src/PactRegistry.sol";
 import {IPactRegistry} from "../src/interfaces/IPactRegistry.sol";
-import {ArcConfig} from "../src/ArcConfig.sol";
+import {ProtocolInvariants} from "../src/ProtocolInvariants.sol";
 import {MockUSDC} from "./util/MockUSDC.sol";
 import "../src/errors/PactErrors.sol";
 
@@ -57,7 +57,7 @@ contract PactRegistryTest is Test {
     function _deploy() internal returns (PactRegistry reg) {
         (IPactRegistry.FeeRecipient[8] memory d, uint8 c) = _defaultsTreasury1000();
         reg = new PactRegistry(
-            authority, address(usdc), treasuryVault, ArcConfig.DEFAULT_MAX_TOTAL_FEE_BPS, d, c
+            authority, address(usdc), treasuryVault, ProtocolInvariants.DEFAULT_MAX_TOTAL_FEE_BPS, d, c
         );
     }
 

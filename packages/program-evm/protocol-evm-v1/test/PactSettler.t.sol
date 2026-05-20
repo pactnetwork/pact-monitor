@@ -10,7 +10,7 @@ import {IPactRegistry} from "../src/interfaces/IPactRegistry.sol";
 import {IPactSettler} from "../src/interfaces/IPactSettler.sol";
 import {IPactPool} from "../src/interfaces/IPactPool.sol";
 import {PactEvents} from "../src/PactEvents.sol";
-import {ArcConfig} from "../src/ArcConfig.sol";
+import {ProtocolInvariants} from "../src/ProtocolInvariants.sol";
 import {MockUSDC} from "./util/MockUSDC.sol";
 import "../src/errors/PactErrors.sol";
 
@@ -333,7 +333,7 @@ contract PactSettlerTest is Test {
         address agent = makeAddr("agent");
         _provisionAgent(agent, 10_000_000, 10_000_000);
 
-        // premium = 50 < ArcConfig.MIN_PREMIUM (100)
+        // premium = 50 < ProtocolInvariants.MIN_PREMIUM (100)
         IPactSettler.SettlementEvent[] memory events = new IPactSettler.SettlementEvent[](1);
         events[0] = _makeEvent(0x1e, agent, SLUG, 50, 0, 0, false, 1, 1);
 

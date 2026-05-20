@@ -2,7 +2,7 @@
 pragma solidity ^0.8.30;
 
 import {IPactRegistry} from "../interfaces/IPactRegistry.sol";
-import {ArcConfig} from "../ArcConfig.sol";
+import {ProtocolInvariants} from "../ProtocolInvariants.sol";
 import "../errors/PactErrors.sol";
 
 /// @notice Port of Solana fee.rs. Validation order and error mapping are
@@ -29,7 +29,7 @@ library FeeValidation {
         address treasuryVault
     ) internal pure returns (uint32 sumBps) {
         // fee.rs:49-51 — count guard FIRST, before any indexing.
-        if (count > ArcConfig.MAX_FEE_RECIPIENTS) revert FeeRecipientArrayTooLong();
+        if (count > ProtocolInvariants.MAX_FEE_RECIPIENTS) revert FeeRecipientArrayTooLong();
         // fee.rs:52-54 — wire byte-length guard: N/A on EVM (typed array).
 
         // --- parse_and_validate loop (fee.rs:61-82) ---
@@ -41,7 +41,7 @@ library FeeValidation {
             // (FeeRecipientKind::from_u8 None for v > 2).
             if (e.kind > 2) revert InvalidFeeRecipientKind();
             // fee.rs:64-66 — per-entry bps cap.
-            if (e.bps > ArcConfig.ABSOLUTE_FEE_BPS_CAP) revert FeeBpsExceedsCap();
+            if (e.bps > ProtocolInvariants.ABSOLUTE_FEE_BPS_CAP) revert FeeBpsExceedsCap();
             // fee.rs:67-72 — at most one Treasury (in-loop).
             if (e.kind == 0) {
                 if (treasurySeen) revert MultipleTreasuryRecipients();
@@ -61,7 +61,7 @@ library FeeValidation {
         }
 
         // fee.rs:83-85 — sum over absolute cap (10_000) → FeeBpsSumOver10k.
-        if (sumBps > ArcConfig.ABSOLUTE_FEE_BPS_CAP) revert FeeBpsSumOver10k();
+        if (sumBps > ProtocolInvariants.ABSOLUTE_FEE_BPS_CAP) revert FeeBpsSumOver10k();
         // fee.rs:86-88 — sum over operator cap → FeeBpsExceedsCap.
         if (sumBps > maxTotalFeeBps) revert FeeBpsExceedsCap();
 
@@ -127,9 +127,9 @@ library FeeValidation {
         uint16 maxTotalFeeBps
     ) internal pure {
         // rs:80-82 — count guard FIRST.
-        if (count > ArcConfig.MAX_FEE_RECIPIENTS) revert FeeRecipientArrayTooLong();
+        if (count > ProtocolInvariants.MAX_FEE_RECIPIENTS) revert FeeRecipientArrayTooLong();
         // rs:84-86 — config check unique to init_pc (not in fee.rs).
-        if (maxTotalFeeBps > ArcConfig.ABSOLUTE_FEE_BPS_CAP) revert FeeBpsExceedsCap();
+        if (maxTotalFeeBps > ProtocolInvariants.ABSOLUTE_FEE_BPS_CAP) revert FeeBpsExceedsCap();
 
         // rs:92-124 — entry loop. NO substitution.
         bool treasurySeen;
@@ -137,7 +137,7 @@ library FeeValidation {
         for (uint256 i = 0; i < count; i++) {
             IPactRegistry.FeeRecipient memory e = recipients[i];
             if (e.kind > 2) revert InvalidFeeRecipientKind();
-            if (e.bps > ArcConfig.ABSOLUTE_FEE_BPS_CAP) revert FeeBpsExceedsCap();
+            if (e.bps > ProtocolInvariants.ABSOLUTE_FEE_BPS_CAP) revert FeeBpsExceedsCap();
             if (e.kind == 0) {
                 if (treasurySeen) revert MultipleTreasuryRecipients();
                 treasurySeen = true;
@@ -151,7 +151,7 @@ library FeeValidation {
         }
 
         // rs:125-130 — sum checks.
-        if (sumBps > ArcConfig.ABSOLUTE_FEE_BPS_CAP) revert FeeBpsSumOver10k();
+        if (sumBps > ProtocolInvariants.ABSOLUTE_FEE_BPS_CAP) revert FeeBpsSumOver10k();
         if (sumBps > maxTotalFeeBps) revert FeeBpsExceedsCap();
 
         // rs:138-156 — Treasury invariants ONLY when count > 0. count == 0 is

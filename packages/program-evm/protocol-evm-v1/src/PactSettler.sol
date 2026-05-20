@@ -6,7 +6,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IPactSettler} from "./interfaces/IPactSettler.sol";
 import {IPactPool} from "./interfaces/IPactPool.sol";
 import {IPactRegistry} from "./interfaces/IPactRegistry.sol";
-import {ArcConfig} from "./ArcConfig.sol";
+import {ProtocolInvariants} from "./ProtocolInvariants.sol";
 import "./errors/PactErrors.sol";
 
 /// @title PactSettler
@@ -71,7 +71,7 @@ contract PactSettler is IPactSettler, AccessControl {
         // settle_batch.rs:132-135 — BatchTooLarge edge (SET-12). Strictly
         // greater: 50 OK, 51 rejects. AFTER the pause gate, BEFORE the loop
         // (D-LOCK-BATCH).
-        if (events.length > ArcConfig.MAX_BATCH_SIZE) revert BatchTooLarge();
+        if (events.length > ProtocolInvariants.MAX_BATCH_SIZE) revert BatchTooLarge();
         for (uint256 i = 0; i < events.length; i++) {
             SettlementEvent calldata ev = events[i];
 
@@ -79,8 +79,8 @@ contract PactSettler is IPactSettler, AccessControl {
             // These abort the entire batch transaction (Err return in Rust),
             // not per-event continues.
             if (ev.timestamp > uint64(block.timestamp)) revert InvalidTimestamp();
-            if (ev.premium < ArcConfig.MIN_PREMIUM) revert PremiumTooSmall();
-            if (ev.feeRecipientCountHint > ArcConfig.MAX_FEE_RECIPIENTS)
+            if (ev.premium < ProtocolInvariants.MIN_PREMIUM) revert PremiumTooSmall();
+            if (ev.feeRecipientCountHint > ProtocolInvariants.MAX_FEE_RECIPIENTS)
                 revert FeeRecipientArrayTooLong();
 
             // Step 3: dedup check — settle_batch.rs:194-196. The Solana dedup
