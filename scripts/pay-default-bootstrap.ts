@@ -124,7 +124,7 @@ import {
   TOKEN_PROGRAM_ID,
   USDC_MINT_DEVNET,
   USDC_MINT_MAINNET,
-} from "@pact-network/protocol-v1-client";
+} from "@q3labs/pact-protocol-v1-client";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import { homedir } from "node:os";

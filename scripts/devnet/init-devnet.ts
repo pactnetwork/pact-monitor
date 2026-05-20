@@ -64,7 +64,7 @@ import {
   slugBytes,
   TOKEN_PROGRAM_ID,
   USDC_MINT_DEVNET,
-} from "@pact-network/protocol-v1-client";
+} from "@q3labs/pact-protocol-v1-client";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

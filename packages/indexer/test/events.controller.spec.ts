@@ -1,7 +1,7 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { INestApplication } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
-import * as request from "supertest";
+import request from "supertest";
 import { EventsController } from "../src/events/events.controller";
 import { EventsService } from "../src/events/events.service";
 import { PushSecretGuard } from "../src/guards/push-secret.guard";

@@ -4,14 +4,17 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build:deps": "pnpm --filter @pact-network/protocol-v1-client run build",
+    "build:deps": "pnpm --filter @q3labs/pact-protocol-v1-client run build",
+    "verify-network": "pnpm run build:deps && tsx verify-network.ts",
+    "fund-agent": "pnpm run build:deps && tsx fund-agent.ts",
     "init": "pnpm run build:deps && tsx init-devnet.ts",
     "init:dry": "pnpm run build:deps && DRY_RUN=1 tsx init-devnet.ts",
     "typecheck": "pnpm run build:deps && tsc --noEmit"
   },
   "dependencies": {
-    "@pact-network/protocol-v1-client": "workspace:*",
+    "@q3labs/pact-protocol-v1-client": "workspace:*",
     "@solana/web3.js": "^1.95.8",
+    "bs58": "^6.0.0",
     "tsx": "^4.19.2"
   },
   "devDependencies": {

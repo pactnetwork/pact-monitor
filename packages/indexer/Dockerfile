@@ -32,7 +32,7 @@ COPY packages/indexer/ ./packages/indexer/
 # Generate Prisma client + build db + build protocol-v1-client (chain-sync
 # imports from its dist/), then build indexer.
 RUN pnpm --filter @pact-network/db build
-RUN pnpm --filter @pact-network/protocol-v1-client build
+RUN pnpm --filter @q3labs/pact-protocol-v1-client build
 RUN pnpm --filter @pact-network/indexer build
 
 FROM node:22-slim

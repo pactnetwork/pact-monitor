@@ -27,7 +27,7 @@ import { Keypair, PublicKey } from "@solana/web3.js";
 import {
   PROGRAM_ID,
   USDC_MINT_MAINNET,
-} from "@pact-network/protocol-v1-client";
+} from "@q3labs/pact-protocol-v1-client";
 
 export interface SmokeConfig {
   rpcUrl: string;

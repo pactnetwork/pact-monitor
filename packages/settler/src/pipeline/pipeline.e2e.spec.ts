@@ -10,7 +10,7 @@ import { SubmitterService } from "../submitter/submitter.service";
 import { IndexerPusherService } from "../indexer/indexer-pusher.service";
 import { PipelineService } from "./pipeline.service";
 import { SecretLoaderService } from "../config/secret-loader.service";
-import { FeeRecipientKind } from "@pact-network/protocol-v1-client";
+import { FeeRecipientKind } from "@q3labs/pact-protocol-v1-client";
 
 // ---------------------------------------------------------------------------
 // Pipeline-level e2e: wire ConsumerService → BatcherService → SubmitterService
@@ -40,9 +40,9 @@ vi.mock("@solana/web3.js", async (importOriginal) => {
   };
 });
 
-vi.mock("@pact-network/protocol-v1-client", async (importOriginal) => {
+vi.mock("@q3labs/pact-protocol-v1-client", async (importOriginal) => {
   const actual = await importOriginal<
-    typeof import("@pact-network/protocol-v1-client")
+    typeof import("@q3labs/pact-protocol-v1-client")
   >();
   return {
     ...actual,

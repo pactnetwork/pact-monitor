@@ -10,7 +10,7 @@
     "reconcile":  "tsx 02-reconcile.ts"
   },
   "dependencies": {
-    "@pact-network/protocol-v1-client": "workspace:*",
+    "@q3labs/pact-protocol-v1-client": "workspace:*",
     "@solana/web3.js": "^1.95.8",
     "axios": "^1.7.9",
     "tsx": "^4.19.2"
