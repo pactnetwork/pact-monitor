@@ -17,7 +17,7 @@ import { Client as PgClient } from "pg";
 import {
   decodeCoveragePool,
   decodeTreasury,
-} from "@pact-network/protocol-v1-client";
+} from "@q3labs/pact-protocol-v1-client";
 
 import { INDEXER_URL, SMOKE_RPC_URL } from "./lib/paths";
 import { loadState, patchState } from "./lib/state";

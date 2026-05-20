@@ -31,7 +31,7 @@ import {
   getTreasuryPda,
   slugBytes,
   TOKEN_PROGRAM_ID,
-} from "@pact-network/protocol-v1-client";
+} from "@q3labs/pact-protocol-v1-client";
 
 import {
   ENDPOINTS,

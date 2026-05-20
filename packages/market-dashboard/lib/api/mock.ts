@@ -226,7 +226,7 @@ export async function fetchAgent(pubkey: string): Promise<AgentHistory> {
 
   // Server-side mock: do NOT paint every wallet as eligible/active. Real
   // insurable state is read by `useAgentInsurableState` on the client via
-  // `getAgentInsurableState` from `@pact-network/protocol-v1-client`. The SSR
+  // `getAgentInsurableState` from `@q3labs/pact-protocol-v1-client`. The SSR
   // pass returns a "loading" snapshot so the panel renders neutral until the
   // client poll lands the truth. (Painting eligible:true here briefly shows
   // every wallet as active — credibility risk in a live demo.)

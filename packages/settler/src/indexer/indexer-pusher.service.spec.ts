@@ -7,7 +7,7 @@ import {
   RecipientShare,
   SettlementOutcome,
 } from "../submitter/submitter.service";
-import { FeeRecipientKind } from "@pact-network/protocol-v1-client";
+import { FeeRecipientKind } from "@q3labs/pact-protocol-v1-client";
 
 vi.mock("axios");
 

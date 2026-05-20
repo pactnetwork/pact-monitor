@@ -6,7 +6,8 @@ function makeMessage(n: number, premiumLamports = "1000"): SettleMessage {
   return {
     id: String(n),
     data: { n, premiumLamports, callId: `call-${n}`, outcome: "success" },
-    raw: { ack: vi.fn(), nack: vi.fn() } as unknown as import("@google-cloud/pubsub").Message,
+    ack: vi.fn(),
+    nack: vi.fn(),
   };
 }
 
@@ -84,8 +85,8 @@ describe("BatcherService", () => {
     service.push(msg);
 
     expect(service.pendingCount).toBe(0);
-    expect(msg.raw.ack).toHaveBeenCalledTimes(1);
-    expect(msg.raw.nack).not.toHaveBeenCalled();
+    expect(msg.ack).toHaveBeenCalledTimes(1);
+    expect(msg.nack).not.toHaveBeenCalled();
 
     // Confirm no flush is scheduled — advancing time produces no batch.
     await vi.advanceTimersByTimeAsync(5000);

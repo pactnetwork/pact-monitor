@@ -1,13 +1,19 @@
 // @pact-network/wrap — event sinks.
 //
-// Three sink implementations. All `publish` calls MUST swallow errors so
+// Four sink implementations. All `publish` calls MUST swallow errors so
 // the wrapped fetch hot path never blocks on event delivery — settlement
 // is reconciled out-of-band by the settler worker via the same stream.
 //
-// - PubSubEventSink — `@google-cloud/pubsub`. Listed as a peer dep so
-//   consumers without GCP don't pull a 50MB transitive tree.
-// - HttpEventSink   — POST JSON to an arbitrary URL with bearer auth.
-// - MemoryEventSink — in-memory array, primarily for tests.
+// - PubSubEventSink         — `@google-cloud/pubsub`. Listed as a peer dep
+//                             so consumers without GCP don't pull the
+//                             transitive grpc tree.
+// - RedisStreamsEventSink   — XADD to a Redis stream. Consumer (e.g.
+//                             ioredis) is injected as a `RedisStreamPublisher`
+//                             interface so this package stays free of any
+//                             Redis client dep. Used by devnet (Railway)
+//                             where Pub/Sub isn't available.
+// - HttpEventSink           — POST JSON to an arbitrary URL with bearer auth.
+// - MemoryEventSink         — in-memory array, primarily for tests.
 
 import type { SettlementEvent } from "./types";
 
@@ -132,6 +138,69 @@ export class PubSubEventSink implements EventSink {
   async publish(event: SettlementEvent): Promise<void> {
     try {
       await this.topic.publishMessage({ json: event });
+    } catch (err) {
+      this.onError(err);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// RedisStreamsEventSink
+// ---------------------------------------------------------------------------
+//
+// XADD-based event sink. `ioredis` (or any Redis client) is not bundled.
+// We accept a pre-built publisher via DI for the same reasons PubSubEventSink
+// does:
+//   (a) consumers without Redis don't pay the transitive cost,
+//   (b) tests can stub the publisher trivially,
+//   (c) the wrap library stays free of Redis-client plumbing.
+//
+// The shape we depend on is the smallest viable subset of ioredis'
+// `xadd(stream, "*", field, value)` signature, normalised to a single call
+// per event so the publisher implementation can adapt to non-ioredis
+// clients (node-redis, mocked test doubles, etc.) without changing this
+// file.
+
+export interface RedisStreamPublisher {
+  /**
+   * Append `event` (serialised) to `stream`. The publisher is responsible
+   * for picking a Redis client method (`xadd`, `XADD` over RESP, etc.) and
+   * for ID generation (typically `"*"`).
+   *
+   * Must resolve with the assigned stream entry ID on success, or reject
+   * on error. The sink swallows rejections — callers should not throw.
+   */
+  publish(stream: string, event: SettlementEvent): Promise<string>;
+}
+
+export interface RedisStreamsEventSinkOptions {
+  /** Pre-built Redis stream publisher. */
+  publisher: RedisStreamPublisher;
+  /** Stream name to XADD into. Default: `"pact-settle-events"`. */
+  stream?: string;
+  /** Optional logger called with publish failures. Default: console.warn. */
+  onError?: (err: unknown) => void;
+}
+
+export class RedisStreamsEventSink implements EventSink {
+  private readonly publisher: RedisStreamPublisher;
+  private readonly stream: string;
+  private readonly onError: (err: unknown) => void;
+
+  constructor(opts: RedisStreamsEventSinkOptions) {
+    this.publisher = opts.publisher;
+    this.stream = opts.stream ?? "pact-settle-events";
+    this.onError =
+      opts.onError ??
+      ((err) => {
+        // eslint-disable-next-line no-console
+        console.warn("wrap.RedisStreamsEventSink: publish failed", err);
+      });
+  }
+
+  async publish(event: SettlementEvent): Promise<void> {
+    try {
+      await this.publisher.publish(this.stream, event);
     } catch (err) {
       this.onError(err);
     }

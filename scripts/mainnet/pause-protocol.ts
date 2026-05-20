@@ -56,7 +56,7 @@ import {
   buildPauseProtocolIx,
   decodeProtocolConfig,
   getProtocolConfigPda,
-} from "@pact-network/protocol-v1-client";
+} from "@q3labs/pact-protocol-v1-client";
 import { createInterface } from "node:readline";
 import { readKeypair, resolveKeyPath } from "./lib/keys";
 
