@@ -20,6 +20,10 @@ export const statuses = [
   "unsupported_tool",
   "tool_missing",
   "tool_error",
+  // operator-sdk admin outcomes — distinct exit codes so scripted ops
+  // pipelines can chain on `$?` (e.g. `pact register && pact topup`).
+  "already_registered",
+  "indexer_unreachable",
   "cli_internal_error",
 ] as const;
 
@@ -78,6 +82,15 @@ const exitCodeMap: Record<Status, number> = {
   // map entry only governs --json envelope mode, where we let pay's
   // exit code drive process.exit instead of remapping.
   tool_error: 0,
+  // `pact register` invoked on a slug that already has an EndpointConfig PDA.
+  // Imperative-create convention (AWS `create-*`, `kubectl create`) — non-zero
+  // so scripted pipelines stop instead of silently progressing to topup on a
+  // not-actually-registered endpoint.
+  already_registered: 12,
+  // `pact earnings` (or any operator-sdk affiliate read) — the indexer is
+  // unreachable. Distinct from `discovery_unreachable` (which means the
+  // gateway's well-known doc is down — a different recovery path).
+  indexer_unreachable: 22,
   cli_internal_error: 99,
 };
 

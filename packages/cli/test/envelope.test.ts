@@ -20,6 +20,8 @@ describe("envelope", () => {
       "unsupported_tool",
       "tool_missing",
       "tool_error",
+      "already_registered",
+      "indexer_unreachable",
       "cli_internal_error",
     ]);
   });
@@ -41,6 +43,8 @@ describe("envelope", () => {
     expect(exitCodeFor("unsupported_tool")).toBe(50);
     expect(exitCodeFor("tool_missing")).toBe(51);
     expect(exitCodeFor("tool_error")).toBe(0);
+    expect(exitCodeFor("already_registered")).toBe(12);
+    expect(exitCodeFor("indexer_unreachable")).toBe(22);
     expect(exitCodeFor("cli_internal_error")).toBe(99);
   });
 

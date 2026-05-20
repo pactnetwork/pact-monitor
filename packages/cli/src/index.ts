@@ -9,6 +9,7 @@ import {
   parsePositiveFloat,
   parsePositiveInt,
   parseUrlStrict,
+  parsePubkeyStrict,
   validateClusterStrict,
 } from "./lib/validators.ts";
 import { runCommand } from "./cmd/run.ts";
@@ -21,6 +22,13 @@ import { pollSettlement, applySettlementToMeta } from "./lib/settlement.ts";
 import { initCommand } from "./cmd/init.ts";
 import { payCommand, coverageMeta } from "./cmd/pay.ts";
 import { payCoverageStatusCommand } from "./cmd/pay-coverage.ts";
+import { registerCommand } from "./cmd/register.ts";
+import { pauseEndpointCommand } from "./cmd/pause-endpoint.ts";
+import { endpointConfigCommand } from "./cmd/endpoint-config.ts";
+import { recipientsCommand } from "./cmd/recipients.ts";
+import { topupCommand } from "./cmd/topup.ts";
+import { earningsCommand } from "./cmd/earnings.ts";
+import type { Cluster } from "./lib/solana.ts";
 // Bundle skill assets into the compiled binary via Bun text imports.
 // readFileSync(import.meta.url) does not work with `bun build --compile`
 // because raw .md files are not embedded into the bunfs virtual filesystem.
@@ -299,6 +307,176 @@ program
   .action(async () => {
     const env = await pauseCommand({
       rpcUrl: program.opts().rpc,
+    });
+    emit(env, Boolean(program.opts().json), Boolean(program.opts().quiet));
+  });
+
+// --- operator-sdk admin commands (C3) -------------------------------------
+// All require PACT_PRIVATE_KEY (= ProtocolConfig.authority) except `topup`
+// (requires PACT_POOL_AUTHORITY_KEY = CoveragePool.authority). `earnings`
+// is read-only and unauth'd.
+
+program
+  .command("register")
+  .description(
+    "Admin: register a new endpoint (creates EndpointConfig + CoveragePool; requires PACT_PRIVATE_KEY)",
+  )
+  .requiredOption("--slug <s>", "endpoint slug (≤16 UTF-8 bytes)")
+  .requiredOption(
+    "--flat-premium <lamports>",
+    "flat premium per call in USDC base units (u64)",
+    parsePositiveInt,
+  )
+  .requiredOption(
+    "--percent-bps <n>",
+    "percent premium in basis points (0..10000)",
+    parsePositiveInt,
+  )
+  .requiredOption(
+    "--sla-ms <n>",
+    "SLA latency threshold in milliseconds",
+    parsePositiveInt,
+  )
+  .requiredOption(
+    "--imputed-cost <lamports>",
+    "imputed call cost in USDC base units (u64)",
+    parsePositiveInt,
+  )
+  .requiredOption(
+    "--exposure-cap <lamports>",
+    "exposure cap per hour in USDC base units (u64)",
+    parsePositiveInt,
+  )
+  .action(async (options) => {
+    const cluster = program.opts().cluster as Cluster;
+    const env = await registerCommand({
+      rpcUrl: program.opts().rpc,
+      cluster,
+      slug: options.slug,
+      flatPremiumLamports: BigInt(options.flatPremium),
+      percentBps: options.percentBps,
+      slaLatencyMs: options.slaMs,
+      imputedCostLamports: BigInt(options.imputedCost),
+      exposureCapPerHourLamports: BigInt(options.exposureCap),
+    });
+    emit(env, Boolean(program.opts().json), Boolean(program.opts().quiet));
+  });
+
+program
+  .command("pause-endpoint <slug>")
+  .description(
+    "Admin: pause/unpause a single endpoint (default --paused=true; requires PACT_PRIVATE_KEY)",
+  )
+  .option("--unpause", "set paused=false instead of true", false)
+  .action(async (slug: string, options) => {
+    const cluster = program.opts().cluster as Cluster;
+    const env = await pauseEndpointCommand({
+      rpcUrl: program.opts().rpc,
+      cluster,
+      slug,
+      paused: !options.unpause,
+    });
+    emit(env, Boolean(program.opts().json), Boolean(program.opts().quiet));
+  });
+
+program
+  .command("endpoint-config <slug>")
+  .description(
+    "Admin: update endpoint pricing/SLA fields (partial; at least one required; PACT_PRIVATE_KEY)",
+  )
+  .option("--flat-premium <lamports>", "u64", parsePositiveInt)
+  .option("--percent-bps <n>", "u16 0..10000", parsePositiveInt)
+  .option("--sla-ms <n>", "u32", parsePositiveInt)
+  .option("--imputed-cost <lamports>", "u64", parsePositiveInt)
+  .option("--exposure-cap <lamports>", "u64", parsePositiveInt)
+  .action(async (slug: string, options) => {
+    const cluster = program.opts().cluster as Cluster;
+    const env = await endpointConfigCommand({
+      rpcUrl: program.opts().rpc,
+      cluster,
+      slug,
+      flatPremiumLamports:
+        options.flatPremium !== undefined ? BigInt(options.flatPremium) : undefined,
+      percentBps: options.percentBps,
+      slaLatencyMs: options.slaMs,
+      imputedCostLamports:
+        options.imputedCost !== undefined ? BigInt(options.imputedCost) : undefined,
+      exposureCapPerHourLamports:
+        options.exposureCap !== undefined ? BigInt(options.exposureCap) : undefined,
+    });
+    emit(env, Boolean(program.opts().json), Boolean(program.opts().quiet));
+  });
+
+program
+  .command("recipients <slug>")
+  .description(
+    "Admin: replace fee_recipients[] for an endpoint from a JSON file (PACT_PRIVATE_KEY)",
+  )
+  .requiredOption(
+    "--file <path>",
+    "JSON: array of {kind: 'Treasury'|'AffiliateAta', destination: <base58>, bps: 0..10000}",
+  )
+  .action(async (slug: string, options) => {
+    const cluster = program.opts().cluster as Cluster;
+    const env = await recipientsCommand({
+      rpcUrl: program.opts().rpc,
+      cluster,
+      slug,
+      file: options.file,
+    });
+    emit(env, Boolean(program.opts().json), Boolean(program.opts().quiet));
+  });
+
+program
+  .command("topup <slug> <amount>")
+  .description(
+    "Top up a coverage pool with USDC (requires PACT_POOL_AUTHORITY_KEY = CoveragePool.authority)",
+  )
+  .action(async (slug: string, amountStr: string) => {
+    const amount = Number.parseFloat(amountStr);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      emit(
+        {
+          status: "client_error",
+          body: {
+            error: "amount_invalid",
+            message: `expected a positive USDC amount, got '${amountStr}'`,
+          },
+        },
+        Boolean(program.opts().json),
+        Boolean(program.opts().quiet),
+      );
+      return;
+    }
+    const cluster = program.opts().cluster as Cluster;
+    const env = await topupCommand({
+      rpcUrl: program.opts().rpc,
+      cluster,
+      slug,
+      amountUsdc: amount,
+    });
+    emit(env, Boolean(program.opts().json), Boolean(program.opts().quiet));
+  });
+
+program
+  .command("earnings")
+  .description("Read affiliate earnings + history from the indexer (no signer required)")
+  .argument("<pubkey>", "fee-recipient pubkey (base58)", parsePubkeyStrict)
+  .option("--history", "also fetch paginated recent settlements", false)
+  .option("--limit <n>", "history page size (1..200)", parsePositiveInt)
+  .option("--cursor <c>", "opaque cursor from a prior call")
+  .option(
+    "--indexer <url>",
+    "override indexer base URL (or PACT_INDEXER_URL env)",
+    parseUrlStrict,
+  )
+  .action(async (pubkey: string, options) => {
+    const env = await earningsCommand({
+      pubkey,
+      history: Boolean(options.history),
+      limit: options.limit,
+      cursor: options.cursor,
+      indexerBaseUrl: options.indexer,
     });
     emit(env, Boolean(program.opts().json), Boolean(program.opts().quiet));
   });

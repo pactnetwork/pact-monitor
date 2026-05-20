@@ -72,6 +72,9 @@ importers:
       '@q3labs/pact-monitor':
         specifier: workspace:*
         version: link:../monitor
+      '@q3labs/pact-operator-sdk':
+        specifier: workspace:*
+        version: link:../operator-sdk
       '@q3labs/pact-protocol-v1-client':
         specifier: workspace:*
         version: link:../protocol-v1-client

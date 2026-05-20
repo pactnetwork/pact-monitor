@@ -179,6 +179,95 @@ the warning never blocks the call.
 
 Usage requires `PACT_PRIVATE_KEY` to hold the authority's secret key (a base58-encoded secret key, a `solana-keygen` JSON byte-array keypair file, or a path to such a file) — the command refuses to fall back to the project wallet or to generate a new keypair. End-users do not run this; it exists for the protocol operator's incident-response runbook.
 
+## Admin: operator commands (V1)
+
+Six commands wrap [`@q3labs/pact-operator-sdk`](../operator-sdk) to drive endpoint
+onboarding/config/topup/fee-split and affiliate-earnings reads on the V1
+Pinocchio program. **All on-chain commands run on `--cluster devnet` by
+default** (no env gate); `--cluster mainnet` still requires
+`PACT_MAINNET_ENABLED=1`.
+
+### Authority cheat-sheet
+
+| Command | Required signer (= on-chain authority field) | Env var |
+| --- | --- | --- |
+| `pact register` | `ProtocolConfig.authority` | `PACT_PRIVATE_KEY` |
+| `pact pause-endpoint` | `ProtocolConfig.authority` | `PACT_PRIVATE_KEY` |
+| `pact endpoint-config` | `ProtocolConfig.authority` | `PACT_PRIVATE_KEY` |
+| `pact recipients` | `ProtocolConfig.authority` | `PACT_PRIVATE_KEY` |
+| `pact topup` | `CoveragePool.authority` (per-pool) | `PACT_POOL_AUTHORITY_KEY` — no `PACT_PRIVATE_KEY` fallback |
+| `pact earnings` | none (read-only) | — |
+
+There is **no withdraw**. V1 auto-distributes fees on every `settle_batch` via
+the on-chain fee fan-out — affiliates earn passively into their ATA.
+
+### Status / exit-code map (for shell chains)
+
+| `OperatorError` code | Envelope status | Exit |
+| --- | --- | --- |
+| `AUTHORITY_MISMATCH`, `POOL_AUTHORITY_MISMATCH` | `signature_rejected` | 30 |
+| `ENDPOINT_ALREADY_REGISTERED` | `already_registered` (new) | 12 |
+| `SIMULATION_FAILED`, `BLOCK_HEIGHT_EXCEEDED`, `RPC_ERROR` | `server_error` | 0 |
+| `AFFILIATE_READ_FAILED` | `indexer_unreachable` (new) | 22 |
+| config / file / parse errors | `client_error` | 0 |
+
+`--wait` is a **no-op for operator commands** — `smart-submit` already polls
+to confirmation synchronously before returning the envelope.
+
+### Commands
+
+```bash
+# Register a new endpoint (creates EndpointConfig + CoveragePool + pool vault).
+# The pool-vault keypair is generated internally and is throwaway — the
+# resulting pubkey is in body.pool_vault_pubkey.
+pact register \
+  --slug acme-api \
+  --flat-premium 1000 \
+  --percent-bps 0 \
+  --sla-ms 2000 \
+  --imputed-cost 10000 \
+  --exposure-cap 1000000
+
+# Pause / unpause a single endpoint.
+pact pause-endpoint acme-api          # default --paused=true
+pact pause-endpoint acme-api --unpause
+
+# Update one or more pricing/SLA fields (partial — at least one required).
+pact endpoint-config acme-api --flat-premium 500 --sla-ms 1500
+
+# Replace the entire fee_recipients[] array from a JSON file.
+pact recipients acme-api --file ./recipients.json
+# recipients.json shape (≤ 8 entries, sum bps ≤ 10000):
+# [
+#   {"kind":"Treasury",     "destination":"<base58>", "bps": 500},
+#   {"kind":"AffiliateAta", "destination":"<base58-ata>", "bps": 250}
+# ]
+
+# Top up a pool's USDC vault. Distinct authority — uses PACT_POOL_AUTHORITY_KEY.
+PACT_POOL_AUTHORITY_KEY=<base58|json|path> pact topup acme-api 5     # 5 USDC
+
+# Read affiliate earnings (no signer required).
+pact earnings <recipient-pubkey>                        # lifetime aggregate only
+pact earnings <recipient-pubkey> --history --limit 50   # + paginated settlements
+pact earnings <recipient-pubkey> --indexer https://indexer.pactnetwork.io
+```
+
+### Recovery on `BLOCK_HEIGHT_EXCEEDED` (register)
+
+If `pact register` returns `server_error` with `BLOCK_HEIGHT_EXCEEDED`, the
+tx may or may not have landed on-chain (the confirmation poll gave up before
+landing was visible). Solana txs are atomic — both ixes (`createAccount` +
+`register_endpoint`) succeeded together or neither did. Check:
+
+```bash
+pact endpoint-config acme-api --flat-premium 1000   # any field; just probes
+```
+
+If this returns `ok`, the registration landed — the throwaway pool-vault
+keypair has done its job and can be discarded. If it returns
+`server_error: account not found`, the tx never landed — re-run `pact
+register` (it generates a fresh keypair each invocation).
+
 ## Waiting for on-chain settlement (`--wait`)
 
 Settlement is **asynchronous**. A `pact <url>` call returns as soon as the
@@ -248,8 +337,10 @@ Project name is resolved from `--project`, `$PACT_PROJECT`, git repo, or cwd bas
 - `PACT_PRIVATE_KEY` — supplies the signing key directly. For the gateway path (`pact <url>`, `pact balance`, `pact revoke`, etc.) it bypasses the disk wallet at `~/.config/pact/<project>/wallet.json`. For the `pact pay` / `pact approve` flow (which normally uses pay.sh's active account) it's the **headless fallback** — when set, pact-cli skips the `pay account export` shell-out and uses this key instead, so CI runners and containers without a Keychain still work. Accepts a base58-encoded 64-byte secret key (Phantom-style export), a JSON byte-array keypair `[n, …]` of length 64 (the `solana-keygen` / Solana CLI keypair file format), **or a path to a file** containing either of those (e.g. `PACT_PRIVATE_KEY=~/keys/agent.json` or `PACT_PRIVATE_KEY=$(cat agent.json)`). See also the `--keypair <path>` flag.
 - `PACT_GATEWAY_URL` — override gateway (default `https://api.pactnetwork.io`)
 - `PACT_RPC_URL` — override Solana RPC (default `https://api.mainnet-beta.solana.com`)
-- `PACT_CLUSTER` — only `mainnet` is accepted; any other value is rejected at startup with a `client_error` envelope. v0.1.0 is mainnet-only — local devnet testing requires sed-replacing `constants.rs` and rebuilding the program per Rick's runbook.
-- `PACT_MAINNET_ENABLED=1` — required closed-beta gate. Any on-chain command (`balance`, `approve`, `revoke`, `<url>`) returns `client_error` until set, so a first-invocation accident cannot route real USDC through the production program.
+- `PACT_CLUSTER` — `mainnet` (default, gated on `PACT_MAINNET_ENABLED=1`) or `devnet` (unblocked; operator commands run against `PROGRAM_ID_DEVNET` / `USDC_MINT_DEVNET`). Any other value is rejected with a `client_error`.
+- `PACT_MAINNET_ENABLED=1` — required closed-beta gate for mainnet. Devnet is unblocked. Any on-chain command (`balance`, `approve`, `revoke`, `<url>`, all operator commands) targeting mainnet returns `client_error` until set, so a first-invocation accident cannot route real USDC through the production program.
+- `PACT_POOL_AUTHORITY_KEY` — required for `pact topup` (= the `CoveragePool.authority` of the slug being topped up). Distinct from `PACT_PRIVATE_KEY` (= protocol authority) — there is intentionally NO fallback so a single-key operator setup can't silently submit with the wrong signer and burn an RPC call.
+- `PACT_INDEXER_URL` — override the indexer base URL used by `pact earnings` (default `https://indexer.pactnetwork.io`). Per-invocation override via `--indexer <url>`.
 - `PACT_FACILITATOR_URL` — override the `pact pay` coverage facilitator base URL (default `https://facilitator.pactnetwork.io`)
 - `PACT_AUTO_DEPOSIT_DISABLED=1` — disable auto-approve
 

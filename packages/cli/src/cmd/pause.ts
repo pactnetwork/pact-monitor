@@ -9,31 +9,10 @@ import {
   getProtocolConfigPda,
 } from "@q3labs/pact-protocol-v1-client";
 import { resolveClusterConfig } from "../lib/solana.ts";
-import { parseSecretKeyInput } from "../lib/wallet.ts";
+import { loadAuthorityKeypair } from "../lib/authority.ts";
 import type { Envelope } from "../lib/envelope.ts";
 
 type SubmitPauseResult = { tx_signature: string; confirmation_pending: boolean };
-
-// Admin command — protocol kill switch. The signer must equal
-// ProtocolConfig.authority on-chain; loadAuthorityKeypair refuses to fall back
-// to disk wallets / generation since this is meant to be invoked from the
-// upgrade-authority box only.
-function loadAuthorityKeypair(): Keypair | { error: string } {
-  const raw = process.env.PACT_PRIVATE_KEY;
-  if (!raw) {
-    return {
-      error:
-        "pact pause requires PACT_PRIVATE_KEY env var holding the protocol authority secret key (base58)",
-    };
-  }
-  let secret: Uint8Array;
-  try {
-    secret = parseSecretKeyInput(raw);
-  } catch (err) {
-    return { error: (err as Error).message };
-  }
-  return Keypair.fromSecretKey(secret);
-}
 
 export async function pauseCommand(opts: {
   rpcUrl: string;
@@ -48,7 +27,7 @@ export async function pauseCommand(opts: {
     return { status: "client_error", body: { error: cfg.error } };
   }
 
-  const authResult = loadAuthorityKeypair();
+  const authResult = loadAuthorityKeypair({ commandLabel: "pact pause" });
   if ("error" in authResult) {
     return { status: "client_error", body: { error: authResult.error } };
   }

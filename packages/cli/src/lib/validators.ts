@@ -1,11 +1,14 @@
 import { InvalidArgumentError } from "commander";
+import { PublicKey } from "@solana/web3.js";
 
-// v0.1.0 is mainnet-only. Mainnet is gated behind PACT_MAINNET_ENABLED=1 so
-// a default build cannot accidentally route real USDC through the production
-// program — kept as a defensive speed-bump for first-invocation safety. Any
-// other cluster value short-circuits to a `client_error` envelope before any
-// RPC or signing side effect.
-export function validateClusterStrict(value: string): "mainnet" {
+// Cluster validator. Mainnet stays gated behind PACT_MAINNET_ENABLED=1 so
+// a default build can't accidentally route real USDC through the production
+// program. Devnet is unblocked for operator-sdk ops (register / config /
+// pause / topup / earnings) — those instructions work on the devnet deploy
+// `5jBQb7fL…`. `settle_batch` reverts InvalidSeeds on devnet due to a
+// `declare_id!` mismatch in the binary, so settlement-dependent flows are
+// independently blocked at the SDK layer.
+export function validateClusterStrict(value: string): "mainnet" | "devnet" {
   if (value === "mainnet") {
     if (process.env.PACT_MAINNET_ENABLED !== "1") {
       throw new InvalidArgumentError(
@@ -14,8 +17,11 @@ export function validateClusterStrict(value: string): "mainnet" {
     }
     return "mainnet";
   }
+  if (value === "devnet") {
+    return "devnet";
+  }
   throw new InvalidArgumentError(
-    `--cluster ${value} not supported; v0.1.0 is mainnet-only (local devnet testing requires rebuilding the program per Rick's runbook)`,
+    `--cluster ${value} not supported; choose 'mainnet' (gated) or 'devnet'`,
   );
 }
 
@@ -64,4 +70,30 @@ export function parseUrlStrict(value: string): string {
     );
   }
   return value;
+}
+
+// Commander coercer: validate a Solana base58 PublicKey at parse time. A bad
+// pubkey inside an action handler would otherwise throw and exit 99
+// `cli_internal_error`; routing it through Commander's coercer makes it a
+// clean `client_error` with a short message (Solana-cli style).
+export function parsePubkeyStrict(value: string): string {
+  try {
+    new PublicKey(value);
+  } catch {
+    throw new InvalidArgumentError(
+      `expected a Solana base58 pubkey (32-byte), got '${value}'`,
+    );
+  }
+  return value;
+}
+
+// Commander coercer: accept "true" / "false" / "1" / "0" booleans. Used for
+// optional flags that can be unset (Commander's bare --flag is a different
+// shape; this is for explicit "--paused true" form when a default exists).
+export function parseBoolStrict(value: string): boolean {
+  if (value === "true" || value === "1") return true;
+  if (value === "false" || value === "0") return false;
+  throw new InvalidArgumentError(
+    `expected 'true' or 'false', got '${value}'`,
+  );
 }

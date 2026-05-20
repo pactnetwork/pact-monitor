@@ -1,31 +1,50 @@
 import { Connection, PublicKey } from "@solana/web3.js";
 import {
   PROGRAM_ID,
+  PROGRAM_ID_DEVNET,
+  USDC_MINT_DEVNET,
   USDC_MINT_MAINNET,
 } from "@q3labs/pact-protocol-v1-client";
 
-// v0.1.0 is mainnet-only — the SDK is the single source of truth for the
-// program ID (baked to 5bCJcdWdK… by develop's PR #71) and the USDC mint.
-// Local devnet testing requires sed-replacing constants.rs and rebuilding the
-// program per Rick's runbook; the binary does not support it.
+// Mainnet identifiers — kept for backward compat with existing call sites
+// (balance.ts, approve.ts, run.ts, pay.ts, pause.ts).
 export const USDC_MAINNET_MINT = USDC_MINT_MAINNET;
 export const PACT_NETWORK_V1_PROGRAM_ID = PROGRAM_ID;
+
+export type Cluster = "mainnet" | "devnet";
 
 export type ClusterConfig = { programId: PublicKey; mint: PublicKey };
 export type ClusterConfigResult = ClusterConfig | { error: string };
 
-// Enforce the PACT_MAINNET_ENABLED speed-bump at point-of-use. Commander's
-// `--cluster` validator only fires when the user passes the option explicitly;
-// the default value bypasses validation, so the gate is re-checked here so a
-// bare `pact balance` / `pact run` cannot silently route to mainnet.
-export function resolveClusterConfig(): ClusterConfigResult {
-  if (process.env.PACT_MAINNET_ENABLED !== "1") {
-    return {
-      error:
-        "v0.1.0 is mainnet-only and requires PACT_MAINNET_ENABLED=1 (closed beta gate)",
-    };
+/**
+ * Resolve program id + USDC mint for the given cluster.
+ *
+ * - `mainnet` (default for backward compat): requires PACT_MAINNET_ENABLED=1.
+ *   Returns canonical mainnet `PROGRAM_ID` + `USDC_MINT_MAINNET`. The env gate
+ *   is a defensive speed-bump so a bare invocation can't silently route real
+ *   USDC.
+ * - `devnet`: returns `PROGRAM_ID_DEVNET` (`5jBQb7fL…`) + `USDC_MINT_DEVNET`
+ *   (`4zMMC9…`). NO env gate — devnet is a developer playground. Note: the
+ *   devnet binary's `declare_id!` is the mainnet id, so `settle_batch` reverts
+ *   InvalidSeeds on devnet — operator ops (register/pause/update/topup)
+ *   work fine; settlement-dependent flows do not.
+ */
+export function resolveClusterConfig(
+  cluster: Cluster = "mainnet",
+): ClusterConfigResult {
+  if (cluster === "mainnet") {
+    if (process.env.PACT_MAINNET_ENABLED !== "1") {
+      return {
+        error:
+          "v0.1.0 mainnet is gated — set PACT_MAINNET_ENABLED=1 (closed beta) or pass --cluster devnet",
+      };
+    }
+    return { programId: PROGRAM_ID, mint: USDC_MINT_MAINNET };
   }
-  return { programId: PROGRAM_ID, mint: USDC_MINT_MAINNET };
+  if (cluster === "devnet") {
+    return { programId: PROGRAM_ID_DEVNET, mint: USDC_MINT_DEVNET };
+  }
+  return { error: `unknown cluster: ${cluster}` };
 }
 
 export async function getUsdcAtaBalanceLamports(opts: {
