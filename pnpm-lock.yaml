@@ -642,6 +642,9 @@ importers:
       '@pact-network/protocol-v1-client':
         specifier: workspace:*
         version: link:../protocol-v1-client
+      '@pact-network/shared':
+        specifier: workspace:*
+        version: link:../shared
       '@pact-network/wrap':
         specifier: workspace:*
         version: link:../wrap

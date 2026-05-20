@@ -7,6 +7,7 @@ import { StatsModule } from "./stats/stats.module";
 import { ApiModule } from "./api/api.module";
 import { OpsModule } from "./ops/ops.module";
 import { SyncModule } from "./sync/sync.module";
+import { AdaptersModule } from "./adapters/adapters.module";
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { SyncModule } from "./sync/sync.module";
     ApiModule,
     OpsModule,
     SyncModule,
+    AdaptersModule,
   ],
 })
 export class AppModule {}
