@@ -17,7 +17,10 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@pact-network/protocol-v1-client": "workspace:*"
+    "@pact-network/protocol-v1-client": "workspace:*",
+    "@pact-network/wrap": "workspace:*",
+    "@solana/spl-token": "^0.4.14",
+    "@solana/web3.js": "^1.95.8"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",
