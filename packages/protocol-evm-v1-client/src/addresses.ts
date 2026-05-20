@@ -21,7 +21,7 @@ export const ARC_TESTNET = ARC_TESTNET_CHAIN_ID;
 /** One chain's Pact deployment. Contract addresses filled at WP-07. */
 export interface PactDeployment {
   chainId: number;
-  /** USDC token — known from ProtocolInvariants + chains.json; never env-overridable. */
+  /** USDC token — sourced from chains.json via ARC_TESTNET_USDC; never env-overridable. */
   usdc: Address;
   /** PactRegistry address — WP-07 deployed / overridable via env. */
   registry: Address | null;

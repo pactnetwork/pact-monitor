@@ -49,7 +49,20 @@ contract Deploy is Script {
         address treasuryVault = vm.envAddress("TREASURY_VAULT_ADDRESS");
         require(treasuryVault != address(0), "TREASURY_VAULT_ZERO");
 
-        address usdc = ProtocolInvariants.ARC_TESTNET_USDC;
+        // --- Resolve chain entry from config/chains.json ---
+        uint256 chainId = vm.envOr("CHAIN_ID", uint256(block.chainid));
+        string memory chainsJson = vm.readFile("config/chains.json");
+        // Narrow lookup at T2; Task 3 generalizes to vm.parseJsonKeys iteration.
+        string memory chainName;
+        if (chainId == 5042002) {
+            chainName = "arc-testnet";
+        } else {
+            revert(string.concat("unknown CHAIN_ID: ", vm.toString(chainId)));
+        }
+        address usdc = vm.parseJsonAddress(
+            chainsJson,
+            string.concat(".", chainName, ".usdcAddress")
+        );
 
         // --- USDC-decimals guard (handoff (c); same require() shape as
         //     test/UsdcDecimals.t.sol). FIRST action before any construction

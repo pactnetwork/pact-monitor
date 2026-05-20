@@ -1,0 +1,11 @@
+{
+  "arc-testnet": {
+    "chainId": 5042002,
+    "name": "arc-testnet",
+    "usdcAddress": "0x3600000000000000000000000000000000000000",
+    "usdcDecimals": 6,
+    "rpcUrl": null,
+    "blockTimeMs": null,
+    "finalityBlocks": null
+  }
+}
