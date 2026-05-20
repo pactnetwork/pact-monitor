@@ -3,3 +3,4 @@ export * from "./pda";
 export * from "./usdc";
 export * from "./slugs";
 export * from "./version";
+export * from "./chain-adapter";
