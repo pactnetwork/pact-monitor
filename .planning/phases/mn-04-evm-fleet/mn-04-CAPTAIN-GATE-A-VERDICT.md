@@ -60,18 +60,18 @@ Captain-proxy CANNOT do these because:
 
 ---
 
-## Open questions for Tu before T1 starts
+## Open questions — ALL LOCKED 2026-05-20
 
-(RESEARCH §13 — none block Gate A APPROVAL; they're T6 prerequisites.)
+| # | Tu answer |
+|---|---|
+| 1 | RPC URL — default (`ARC_TESTNET_RPC_URL` from `.env`, public, committed) |
+| 2 | Deploy block — **42953139** (from broadcast log) |
+| 3 | Settler EOA — reuse `DEPLOYER_PRIVATE_KEY` from `.env`, addr `0x777d569bd3b0a2de007097a3d7e1687c5e5eb859`. Arc Testnet only. |
+| 4 | Same key as #3 — one self-grant `grantRole(SETTLER_ROLE, 0x777d56...)` tx in T6 step 1 |
+| 5 | Cloud Run min-instances = `1` (default, match Solana) |
+| 6 | `PACT_LEGACY_DIRECT_SOLANA=false` on all 3 services day 1 — Option A, adapter on both networks |
 
-1. **Arc Testnet RPC URL** — what URL goes in `chains.json`? Default: public URL, committed.
-2. **`PactRegistry` deploy block on Arc Testnet** — Tu provides; used as `fromBlock` for endpoint log scan.
-3. **Arc EOA custody** — Tu generates locally and uploads hex to Secret Manager. Confirm.
-4. **`grantRole` signing** — Tu has the admin EOA private key. Confirm.
-5. **Cloud Run min-instances for Arc fleet** — default = same as Solana (`min=1`). Confirm.
-6. **`PACT_LEGACY_DIRECT_SOLANA` posture during ramp** — default = adapter for both Solana and Arc from day 1 (WP-MN-03b Gate B headline proved byte-identical). Confirm.
-
-If Tu's answers diverge from defaults, RESEARCH §6 / §13 / §8 amend before T1.
+RESEARCH §6 / §8 / §13 amended to lock these. **No remaining blockers. T1 may begin.**
 
 ---
 

@@ -288,7 +288,7 @@ Rotation procedure: per D6 §6. The Solana model already supports this loader sh
 
 Adapter consumes: `AdaptersService.bootstrap` calls `loadFor(network)`; for `vm: 'evm'` it constructs `EvmAdapter({ ..., signer: { walletClient: createWalletClient({ account, transport: http(rpcUrl) }) } })`.
 
-## 6 · `chains.json` fill
+## 6 · `chains.json` fill — VALUES LOCKED
 
 File: `packages/program-evm/protocol-evm-v1/config/chains.json`.
 
@@ -299,18 +299,18 @@ File: `packages/program-evm/protocol-evm-v1/config/chains.json`.
     "name": "arc-testnet",
     "usdcAddress": "0x3600000000000000000000000000000000000000",
     "usdcDecimals": 6,
-    "rpcUrl": "https://testnet.arc.network/v1",
+    "rpcUrl": "<value of ARC_TESTNET_RPC_URL from packages/program-evm/protocol-evm-v1/.env — public; committed verbatim>",
     "blockTimeMs": 500,
     "finalityBlocks": 64,
-    "deploymentBlock": "TBD-FROM-WP-EVM-07"
+    "deploymentBlock": 42953139
   }
 }
 ```
 
-- `rpcUrl`: Tu provides the canonical Arc Testnet RPC URL. (Tu's prerequisite — captain-proxy does not guess; placeholder above; T6 runbook records the actual value.)
+- `rpcUrl`: **Tu-confirmed default — copy the value of `ARC_TESTNET_RPC_URL` from `packages/program-evm/protocol-evm-v1/.env` (public URL, safe to commit).** T1 implementer pulls + commits.
 - `blockTimeMs: 500` — D6 §2.
 - `finalityBlocks: 64` — D6 §2.
-- `deploymentBlock`: bigint of the block in which `PactRegistry` was deployed on Arc Testnet. Captured during WP-EVM-07; not currently committed. WP-MN-04 T1 looks up via `getTransactionReceipt` of the deploy tx and pins it here. Used by `EvmAdapter.readEndpointConfigs()` as `fromBlock`.
+- `deploymentBlock: 42953139` — **PactRegistry deploy block on Arc Testnet chain 5042002**, extracted from `packages/program-evm/protocol-evm-v1/broadcast/Deploy.s.sol/5042002/run-latest.json` (deploy tx `0x8fc3ae...42fb`, hex `0x28f69b3` = decimal 42953139). Used by `EvmAdapter.readEndpointConfigs()` as `fromBlock` for `EndpointRegistered` log scan. PactPool (42953143) and PactSettler (42953150) are 4 and 11 blocks later; Registry's block is the earliest and is the correct cursor (endpoints can't exist before the registry).
 
 `@pact-network/shared/chains.ts` propagation: today only reads `chainId`, `name`, `usdcAddress`, `usdcDecimals`. Extends to also surface `rpcUrl`, `blockTimeMs`, `finalityBlocks`, `deploymentBlock` on `ChainDescriptor`. Three new optional fields on the interface; Solana entries leave them `undefined`.
 
@@ -341,19 +341,46 @@ This is a Prisma `view` (read-only). No production-DB write. Local docker `pnpm 
 
 T6 task. Tu-executable checklist (NOT captain-proxy auto-driven):
 
-**Pre-flight (Tu-executable; no GCP Secret Manager permissions needed):**
-1. Generate Arc EOA: `cast wallet new` → save private key + address.
-2. Fund Arc EOA with testnet gas USDC (testnet faucet).
-3. Tu signs `PactSettler.grantRole(SETTLER_ROLE, <address>)` on Arc Testnet from the Tu admin EOA.
+**Pre-flight (Tu-executable; no new EOA generation needed — REUSE THE DEPLOYER EOA):**
 
-**Cloud Run env update (3 services — Phase 1, raw-hex env):**
-4. Settler revision: append env
+Tu's Q3+Q4 lock: the deployer EOA from `packages/program-evm/protocol-evm-v1/.env`
+(`DEPLOYER_PRIVATE_KEY`, address `0x777d569bd3b0a2de007097a3d7e1687c5e5eb859`)
+**doubles as the Arc Testnet settler EOA**. Arc Testnet only; mainnet will rotate to a
+separate settler EOA per D6 §6 (out of WP-MN-04 scope).
+
+Because `Deploy.s.sol` granted `SETTLER_ROLE` on `PactSettler` only to the
+PactSettler contract address (so it can call `PactRegistry`/`PactPool` restricted
+fns), no EOA holds `SETTLER_ROLE` on `PactSettler` itself today. One self-grant tx
+is needed from the deployer (who holds `DEFAULT_ADMIN_ROLE` on PactSettler via
+`registry.authority()`):
+
+1. **One-time self-grant** — Tu runs from a shell with `DEPLOYER_PRIVATE_KEY` in scope:
+   ```bash
+   cd packages/program-evm/protocol-evm-v1
+   source .env
+   cast send 0xe461CE50ef53BFC10945B101FB94b11Ec5eB591f \
+     "grantRole(bytes32,address)" \
+     $(cast keccak "SETTLER_ROLE") \
+     0x777d569bd3b0a2de007097a3d7e1687c5e5eb859 \
+     --rpc-url "$ARC_TESTNET_RPC_URL" \
+     --private-key "$DEPLOYER_PRIVATE_KEY"
+   ```
+   Verify with `cast call 0xe461CE... "hasRole(bytes32,address)" $(cast keccak "SETTLER_ROLE") 0x777d56...` → `0x...01`.
+2. Confirm Arc EOA gas-token balance: `cast balance 0x777d569bd3b0a2de007097a3d7e1687c5e5eb859 --rpc-url "$ARC_TESTNET_RPC_URL"` is non-zero. If not, fund via Arc Testnet faucet (`ARC_TESTNET_FAUCET_URL` in `.env`).
+
+**Cloud Run env update (3 services — Phase 1, raw-hex env, `PACT_LEGACY_DIRECT_SOLANA=false`):**
+
+3. Settler revision: append env
    - `PACT_ENABLED_NETWORKS=solana-devnet,arc-testnet`
-   - `PACT_SETTLER_KEYPAIR_ARC_TESTNET=0x<the hex private key from step 1>` — raw value, NOT a Secret Manager path
-5. Indexer revision: append env
+   - `PACT_SETTLER_KEYPAIR_ARC_TESTNET=<value of DEPLOYER_PRIVATE_KEY from .env>` — raw 0x-hex, NOT a Secret Manager path (Phase 2 is Rick's follow-up per D6 §6)
+   - `PACT_LEGACY_DIRECT_SOLANA=false` (Tu Q6 — adapter path on both networks day 1; WP-MN-03b proved byte-identical)
+4. Indexer revision: append env
    - `PACT_ENABLED_NETWORKS=solana-devnet,arc-testnet`
-6. Market-proxy revision: append env
+   - `PACT_LEGACY_DIRECT_SOLANA=false`
+5. Market-proxy revision: append env
    - `PACT_ENABLED_NETWORKS=solana-devnet,arc-testnet`
+   - `PACT_LEGACY_DIRECT_SOLANA=false`
+6. **Cloud Run min-instances**: leave at `min=1` for the Arc-enabled revisions (Tu Q5 default — keeps EVM signer warm, matches Solana posture).
 7. Roll all three revisions; verify boot logs print "[adapter map] solana-devnet=SolanaAdapter arc-testnet=EvmAdapter" or equivalent.
 
 **Verification:**
@@ -421,18 +448,18 @@ Per phased plan §7:
 6. Captain Gate B APPROVED.
 7. Handoff updated; cleanup-WP follow-up tracked.
 
-## 13 · Open questions for Tu before T1 starts
+## 13 · Open questions — ALL LOCKED 2026-05-20
 
-These are NOT blocking Gate A APPROVAL; they're prerequisites Tu owns for T6 execution:
+| # | Question | Tu answer | Lock site |
+|---|---|---|---|
+| 1 | Arc Testnet RPC URL | Default — use `ARC_TESTNET_RPC_URL` from `.env` (public, commit verbatim) | §6 chains.json |
+| 2 | PactRegistry deploy block | **42953139** (from `broadcast/Deploy.s.sol/5042002/run-latest.json`) | §6 chains.json |
+| 3 | Arc EOA custody | **Reuse `DEPLOYER_PRIVATE_KEY` from `.env`** as the settler EOA. Address `0x777d569bd3b0a2de007097a3d7e1687c5e5eb859`. Arc Testnet only; mainnet rotates per D6 §6. | §5 secret loader, §8 runbook |
+| 4 | `grantRole` signing | Same key as #3 (deployer holds `DEFAULT_ADMIN_ROLE` on PactSettler via `registry.authority()`). One self-grant tx in T6 step 1. | §8 runbook step 1 |
+| 5 | Cloud Run min-instances | Default — `min=1`, match Solana posture | §8 runbook step 6 |
+| 6 | `PACT_LEGACY_DIRECT_SOLANA` | **`=false` on all 3 services from day 1** (Option A) — adapter path on both networks. WP-MN-03b proved byte-identical perEventShares. Flag deletion is the cleanup WP after 1 week stable. | §8 runbook steps 3-5 |
 
-1. **Arc Testnet RPC URL** — what URL to commit to `chains.json`? Public or behind auth? If behind auth, treat as secret. (Captain-proxy default: public URL, committed.)
-2. **Deployment block of `PactRegistry` on Arc Testnet** — Tu queries `getTransactionReceipt(<deploy tx>)` and provides the block number. Used as `fromBlock` for `getContractEvents` and `tailSettlementEvents` initial cursor.
-3. **Arc EOA generation custody** — Tu generates locally and uploads to Secret Manager? Or KMS? (Captain-proxy default: Tu generates + stores hex private key in Secret Manager.)
-4. **`grantRole(SETTLER_ROLE, addr)` tx** — Tu signs from the admin EOA on Arc Testnet pre-T6. Confirm Tu has the admin EOA private key handy.
-5. **Cloud Run min-instances for Arc fleet** — same as Solana (`min=1`) or different? (Captain-proxy default: same as Solana.)
-6. **`PACT_LEGACY_DIRECT_SOLANA` flag during ramp** — keep `=true` for Solana initially, `=false` (adapter) for Arc, then flip Solana off after observation? Or both adapter from day 1? (Captain-proxy default: both adapter from day 1; adapter path is byte-identical per WP-MN-03b Gate B headline.)
-
-If Tu's answers diverge from defaults, RESEARCH amends before T1.
+No remaining blockers. T1 may start on captain-proxy authorization.
 
 ## 14 · References
 
