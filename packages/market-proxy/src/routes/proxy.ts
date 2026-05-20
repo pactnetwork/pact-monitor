@@ -15,17 +15,17 @@
 
 import type { Context } from "hono";
 import { wrapFetch, type EndpointConfig } from "@pact-network/wrap";
-import { getChain } from "@pact-network/shared";
 import { getContext } from "../lib/context.js";
 import { handlerRegistry } from "../lib/registry.js";
 import { computeDemoBreachDelayMs } from "../lib/force-breach.js";
 import { classifierRegistry } from "../lib/classifiers.js";
 import { createBufferedFetch } from "../lib/buffered-fetch.js";
 import { buildSanitisedResponse } from "../lib/response-headers.js";
+import { adapterToBalanceCheck } from "../lib/balance.js";
 
 export async function proxyRoute(c: Context): Promise<Response> {
   const slug = c.req.param("slug") ?? "";
-  const { registry, demoAllowlist, balanceCheck, sink } = getContext();
+  const { registry, demoAllowlist, balanceCheck: legacyBalanceCheck, sink, adapters, legacyDirectSolana } = getContext();
 
   const endpoint = await registry.get(slug);
   if (!endpoint) {
@@ -39,6 +39,21 @@ export async function proxyRoute(c: Context): Promise<Response> {
   if (!handler) {
     return c.json({ error: "no handler for endpoint" }, 501);
   }
+
+  // Resolve the network for this endpoint. The DB row carries a `network`
+  // column (added in WP-MN-03a). EndpointRegistry defaults to "solana-devnet"
+  // for rows from before the migration so this is always a valid network string.
+  const endpointNetwork = endpoint.network;
+
+  // Select balance check: legacy direct (from createBalanceCheck) or
+  // adapter-backed (from ChainAdapter.checkAgentEligibility).
+  const adapterForNetwork = adapters.get(endpointNetwork);
+  const balanceCheck =
+    legacyDirectSolana && endpointNetwork.startsWith("solana-")
+      ? legacyBalanceCheck
+      : adapterForNetwork
+        ? adapterToBalanceCheck(adapterForNetwork)
+        : legacyBalanceCheck; // fallback if adapter not found for network
 
   // Agent identity: the CLI transmits the agent pubkey in the `x-pact-agent`
   // header alongside its signed payload (see packages/cli/src/lib/transport.ts).
@@ -134,7 +149,7 @@ export async function proxyRoute(c: Context): Promise<Response> {
     endpointConfig,
     fetchImpl: buffered.fetchImpl,
     pool: slug,
-    network: getChain("solana-devnet").network,
+    network: endpointNetwork,
   });
 
   // Alan review M2: wrap's response carries upstream headers (with

@@ -2,6 +2,10 @@ import type { Pool } from "pg";
 
 export interface EndpointRow {
   slug: string;
+  /** Network identifier (e.g. "solana-devnet", "arc-testnet"). Added in
+   * WP-MN-03a. Rows created before the migration default to "solana-devnet"
+   * at the DB level (see Prisma migration). */
+  network: string;
   flatPremiumLamports: bigint;
   percentBps: number;
   slaLatencyMs: number;
@@ -45,6 +49,7 @@ export class EndpointRegistry {
     // crashes the request handler with a generic 500.
     const { rows } = await this.pg.query(
       `SELECT slug,
+              network,
               "flatPremiumLamports",
               "percentBps",
               "slaLatencyMs",
@@ -59,6 +64,7 @@ export class EndpointRegistry {
     for (const r of rows) {
       this.cache.set(r.slug, {
         slug: r.slug,
+        network: r.network ?? "solana-devnet",
         flatPremiumLamports: BigInt(r.flatPremiumLamports),
         percentBps: Number(r.percentBps),
         slaLatencyMs: Number(r.slaLatencyMs),

@@ -7,6 +7,7 @@ import {
   SubmitterService,
 } from "./submitter.service";
 import { SecretLoaderService } from "../config/secret-loader.service";
+import { AdaptersService } from "../adapters/adapters.service";
 import { SettleBatch } from "../batcher/batcher.service";
 import { SettleMessage } from "../consumer/consumer.service";
 import {
@@ -255,9 +256,15 @@ describe("SubmitterService", () => {
     }));
 
     devKeypair = Keypair.generate();
+    // Use legacyDirectSolana=true so existing tests exercise the pre-WP-MN-03b
+    // direct path unchanged. Adapter-path tests land at T5.
+    const stubAdapters = {
+      legacyDirectSolana: true,
+    } as unknown as AdaptersService;
     service = new SubmitterService(
       makeConfig(),
       { keypair: devKeypair } as unknown as SecretLoaderService,
+      stubAdapters,
     );
 
     // Derive PDAs the way the service derives them so the stub map keys match.

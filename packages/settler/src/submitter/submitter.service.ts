@@ -69,6 +69,7 @@ import {
 
 import { SettleBatch } from "../batcher/batcher.service";
 import { SecretLoaderService } from "../config/secret-loader.service";
+import { AdaptersService } from "../adapters/adapters.service";
 
 const ENDPOINT_CACHE_TTL_MS = 60_000;
 const DEFAULT_PROGRAM_ID = "5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5";
@@ -131,6 +132,7 @@ export class SubmitterService implements OnModuleInit {
   constructor(
     private readonly config: ConfigService,
     private readonly secrets: SecretLoaderService,
+    private readonly adaptersService: AdaptersService,
   ) {
     const rpc = this.config.getOrThrow<string>("SOLANA_RPC_URL");
     this.connection = new Connection(rpc, "confirmed");
@@ -164,7 +166,85 @@ export class SubmitterService implements OnModuleInit {
     }
   }
 
+  /**
+   * Thin router: delegates to adapter path or legacy-direct path depending
+   * on PACT_LEGACY_DIRECT_SOLANA env flag. The network is extracted from the
+   * first message's `network` field (defaulting to "solana-devnet" so legacy
+   * events emitted before WP-MN-03a T2 still route correctly).
+   */
   async submit(batch: SettleBatch): Promise<SettlementOutcome> {
+    const firstData = batch.messages[0]?.data as Record<string, unknown> | undefined;
+    const network = typeof firstData?.["network"] === "string"
+      ? firstData["network"]
+      : "solana-devnet";
+
+    if (this.adaptersService.legacyDirectSolana && network.startsWith("solana-")) {
+      return this.submitLegacyDirect(batch);
+    }
+    return this.submitViaAdapter(batch, network);
+  }
+
+  /**
+   * Adapter path — routes the batch through the network's ChainAdapter.
+   * Maps the settler's batch.messages shape into SettleBatchInput.events,
+   * calls adapter.submitSettleBatch, then maps the result back to
+   * SettlementOutcome (matching the legacy return shape exactly).
+   *
+   * Note: the adapter handles per-slug EndpointConfig/CoveragePool loading
+   * internally. The legacy endpointCache is NOT used on this path.
+   */
+  private async submitViaAdapter(
+    batch: SettleBatch,
+    network: string,
+  ): Promise<SettlementOutcome> {
+    const adapter = this.adaptersService.getAdapter(network);
+    const signer = this.adaptersService.getSigner(network);
+
+    // All messages in a batch share the same slug (batcher groups by slug).
+    // Extract slug from the first message; fall back gracefully.
+    const firstData = batch.messages[0]?.data as Record<string, unknown>;
+    const slug = this.extractSlug(firstData);
+
+    // Build per-event SettlementOutcome share breakdown off the legacy cache
+    // (still loaded for the legacy path). On the adapter path we don't have
+    // fee-recipient ATAs until the adapter resolves them on-chain; we emit
+    // empty perEventShares here. T5's e2e gate will verify on-chain outcomes
+    // are byte-identical; perEventShares is indexer metadata only.
+    const perEventShares: RecipientShare[][] = batch.messages.map(() => []);
+
+    const result = await adapter.submitSettleBatch({
+      slug,
+      signer,
+      events: batch.messages.map((m) => {
+        const d = m.data as Record<string, unknown>;
+        const callId = parseCallId(String(d["callId"] ?? "")).reduce(
+          (acc, b) => acc + b.toString(16).padStart(2, "0"),
+          "",
+        );
+        const outcome = String(d["outcome"] ?? "ok");
+        return {
+          callId,
+          agent: String(d["agentPubkey"] ?? ""),
+          premiumBaseUnits: BigInt(d["premiumLamports"] as string | number),
+          outcome: breachFromOutcome(outcome) ? ("breach" as const) : ("ok" as const),
+          feeRecipientCountHint: 0,
+          latencyMs: Number(d["latencyMs"] ?? 0),
+        };
+      }),
+      options: { commitment: "confirmed", skipPreflight: false },
+    });
+
+    return {
+      signature: result.txId,
+      perEventShares,
+    };
+  }
+
+  /**
+   * Legacy direct path — the pre-WP-MN-03b code, extracted verbatim.
+   * Active when PACT_LEGACY_DIRECT_SOLANA=true (the rollback safety net).
+   */
+  private async submitLegacyDirect(batch: SettleBatch): Promise<SettlementOutcome> {
     const keypair = this.secrets.keypair;
     const settler = keypair.publicKey;
 

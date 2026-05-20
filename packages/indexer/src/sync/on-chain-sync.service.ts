@@ -17,6 +17,8 @@ import {
   PublicKey,
 } from "@solana/web3.js";
 import { PrismaService } from "../prisma/prisma.service";
+import { AdaptersService } from "../adapters/adapters.service";
+import type { EndpointConfigSnapshot } from "@pact-network/shared";
 
 const DEFAULT_RPC_URL = "https://api.mainnet-beta.solana.com";
 const DEFAULT_PROGRAM_ID = PROGRAM_ID.toBase58();
@@ -72,6 +74,7 @@ export class OnChainSyncService implements OnModuleInit {
   constructor(
     private readonly config: ConfigService,
     private readonly prisma: PrismaService,
+    private readonly adaptersService: AdaptersService,
   ) {
     const rpcUrl =
       this.config.get<string>("SOLANA_RPC_URL") ?? DEFAULT_RPC_URL;
@@ -98,12 +101,99 @@ export class OnChainSyncService implements OnModuleInit {
   }
 
   /**
-   * Scheduled tick — every 5 minutes. The `isRunning` guard inside
-   * `syncEndpointsFromChain` ensures two ticks never race even if a tick
-   * runs longer than the interval.
+   * Scheduled tick — every 5 minutes. Routes to legacy-direct or adapter
+   * path per PACT_LEGACY_DIRECT_SOLANA flag.
+   *
+   * - Legacy path: calls the pre-WP-MN-03b `syncEndpointsFromChain()` which
+   *   uses `this.connection.getProgramAccounts` directly for solana-devnet.
+   * - Adapter path: iterates all enabled networks from `adaptersService` and
+   *   calls `adapter.readEndpointConfigs()` per network.
    */
   @Cron(CronExpression.EVERY_5_MINUTES)
-  async scheduledTick(): Promise<void> {
+  async refreshAllNetworks(): Promise<void> {
+    for (const network of this.adaptersService.listEnabledNetworks()) {
+      if (this.adaptersService.legacyDirectSolana && network.startsWith("solana-")) {
+        await this.refreshLegacyDirect();
+      } else {
+        await this.refreshViaAdapter(network);
+      }
+    }
+  }
+
+  /**
+   * Adapter path — calls adapter.readEndpointConfigs() and upserts each
+   * snapshot via the generic upsert path.
+   */
+  private async refreshViaAdapter(network: string): Promise<void> {
+    const adapter = this.adaptersService.getAdapter(network);
+    let snapshots: ReadonlyArray<EndpointConfigSnapshot>;
+    try {
+      snapshots = await adapter.readEndpointConfigs();
+    } catch (e) {
+      this.logger.warn(
+        `[chain-sync] adapter.readEndpointConfigs failed for ${network}: ${e}`,
+      );
+      return;
+    }
+    let upserted = 0;
+    for (const s of snapshots) {
+      const raw = s.raw as EndpointConfig;
+      await this.upsertEndpointFromAdapter(network, s, raw);
+      upserted += 1;
+    }
+    this.logger.log(
+      `[chain-sync] adapter path: upserted ${upserted} endpoints for ${network}`,
+    );
+  }
+
+  /**
+   * Upsert a single endpoint from the adapter snapshot + the raw decoded
+   * EndpointConfig. Mirrors upsertOne() but takes the network as a parameter
+   * (rather than the hardcoded "solana-devnet" sentinel).
+   */
+  private async upsertEndpointFromAdapter(
+    network: string,
+    snapshot: EndpointConfigSnapshot,
+    decoded: EndpointConfig,
+  ): Promise<void> {
+    const slug = snapshot.slug;
+    if (!slug || slug.length === 0) return;
+    const now = new Date();
+    const upstreamBase = DEFAULT_UPSTREAM_BASE[slug] ?? "";
+    await this.prisma.endpoint.upsert({
+      where: { network_slug: { network, slug } },
+      create: {
+        network,
+        slug,
+        flatPremiumLamports: BigInt(decoded.flatPremiumLamports),
+        percentBps: decoded.percentBps,
+        slaLatencyMs: decoded.slaLatencyMs,
+        imputedCostLamports: BigInt(decoded.imputedCostLamports),
+        exposureCapPerHourLamports: BigInt(decoded.exposureCapPerHourLamports),
+        paused: decoded.paused,
+        upstreamBase,
+        displayName: slug,
+        registeredAt: now,
+        lastUpdated: now,
+      },
+      update: {
+        flatPremiumLamports: BigInt(decoded.flatPremiumLamports),
+        percentBps: decoded.percentBps,
+        slaLatencyMs: decoded.slaLatencyMs,
+        imputedCostLamports: BigInt(decoded.imputedCostLamports),
+        exposureCapPerHourLamports: BigInt(decoded.exposureCapPerHourLamports),
+        paused: decoded.paused,
+        lastUpdated: now,
+      },
+    });
+  }
+
+  /**
+   * Legacy direct path — calls the pre-WP-MN-03b syncEndpointsFromChain()
+   * which uses this.connection.getProgramAccounts directly. Active when
+   * PACT_LEGACY_DIRECT_SOLANA=true.
+   */
+  private async refreshLegacyDirect(): Promise<void> {
     await this.syncEndpointsFromChain();
   }
 

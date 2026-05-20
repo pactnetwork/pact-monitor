@@ -7,6 +7,7 @@ import {
   slugBytesToString,
 } from "../src/sync/on-chain-sync.service";
 import { PrismaService } from "../src/prisma/prisma.service";
+import { AdaptersService } from "../src/adapters/adapters.service";
 
 /**
  * Build a 544-byte EndpointConfig buffer matching the layout in
@@ -105,6 +106,16 @@ describe("OnChainSyncService", () => {
         {
           provide: PrismaService,
           useValue: { endpoint: { upsert: prismaUpsert } },
+        },
+        // WP-MN-03b T4: stub AdaptersService with legacyDirectSolana=true so
+        // existing tests exercise the pre-WP-MN-03b direct path unchanged.
+        {
+          provide: AdaptersService,
+          useValue: {
+            legacyDirectSolana: true,
+            listEnabledNetworks: () => ["solana-devnet"],
+            getAdapter: () => { throw new Error("stub: adapter path not expected in legacy-direct tests"); },
+          },
         },
       ],
     }).compile();
