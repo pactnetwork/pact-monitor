@@ -318,6 +318,37 @@ describe("wrapFetch", () => {
     );
   });
 
+  describe("network stamping (WP-MN-03a)", () => {
+    it("explicit network value is stamped onto the published event", async () => {
+      const sink = new MemoryEventSink();
+      const probe = timedFetch(200, 100);
+      const clock = clockFromFetch(probe);
+      await wrapFetch(
+        baseOpts({
+          sink,
+          fetchImpl: probe.fetchImpl,
+          now: clock.now,
+          network: "arc-testnet",
+        }),
+      );
+      await new Promise((res) => setImmediate(res));
+      expect(sink.events).toHaveLength(1);
+      expect(sink.events[0].network).toBe("arc-testnet");
+    });
+
+    it("absent network defaults to 'solana-devnet' on the published event", async () => {
+      const sink = new MemoryEventSink();
+      const probe = timedFetch(200, 100);
+      const clock = clockFromFetch(probe);
+      await wrapFetch(
+        baseOpts({ sink, fetchImpl: probe.fetchImpl, now: clock.now }),
+      );
+      await new Promise((res) => setImmediate(res));
+      expect(sink.events).toHaveLength(1);
+      expect(sink.events[0].network).toBe("solana-devnet");
+    });
+  });
+
   it("settlement event timestamp is ISO-8601 and corresponds to t_end", async () => {
     const sink = new MemoryEventSink();
     const probe = timedFetch(200, 100);
