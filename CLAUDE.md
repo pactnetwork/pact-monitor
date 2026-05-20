@@ -27,10 +27,15 @@ For the canonical architecture and build plan, see:
 packages/
   # Network rails — generic, can be consumed by any interface
   protocol-v1-client/  — @q3labs/pact-protocol-v1-client: TS client for the v1 program (PDA helpers, instruction builders, account decoders, error map)
+  protocol-v2-client/  — @q3labs/pact-protocol-v2-client: TS client for the v2 program (11 ix builders, 5 account decoders, PDAs, error map)
   wrap/                — @pact-network/wrap: generic fetch-call wrap library (wrapFetch, BalanceCheck, Classifier, EventSink, X-Pact-* headers)
+  wrap-v2/             — @pact-network/wrap-v2: V2 fetch-call wrap (per-call premium math, breach tail + evidenceHash for submit_claim)
   settler/             — @pact-network/settler: Pub/Sub → settle_batch submitter (NestJS)
+  settler-v2/          — @pact-network/settler-v2: V2 oracle-cranker; two pipelines (premium multi-ix-per-tx batched + claim single-ix); V2PremiumAttempt-backed idempotency
   indexer/             — @pact-network/indexer: per-call indexer + read API + ops controller (NestJS)
+  indexer-v2/          — @pact-network/indexer-v2: V2 ingest (/events from settler-v2) + Helius webhook (account-state watcher) + read API + ops controller (real Transaction.serialize, not V1 B6 envelope)
   db/                  — @pact-network/db: Prisma schema for indexer (per-endpoint PoolState, Settlement, SettlementRecipientShare, RecipientEarnings)
+  db-v2/               — @pact-network/db-v2: V2 Prisma schema (9 models; authoritative-source split between cranker /events and Helius webhook watcher)
   shared/              — @pact-network/shared: shared types, PDA seed constants, version
 
   # Pact Market — one curated interface on top of the rails
