@@ -13,9 +13,15 @@
   "scripts": {
     "build": "tsc",
     "clean": "rm -rf dist",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@pact-network/protocol-v1-client": "workspace:*"
   },
   "devDependencies": {
-    "typescript": "^5.7.3"
+    "@types/node": "^22.10.5",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.4"
   }
 }
