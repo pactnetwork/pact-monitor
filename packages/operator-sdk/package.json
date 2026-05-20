@@ -1,0 +1,54 @@
+{
+  "name": "@q3labs/pact-operator-sdk",
+  "version": "0.1.0",
+  "description": "Operator + affiliate SDK for Pact Network V1: typed instruction builders + smart-submit helpers for protocol-authority endpoint onboarding/config/topup/fee-split ops, plus read-only affiliate earnings observability.",
+  "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "_build:deps": "pnpm --filter @q3labs/pact-protocol-v1-client build",
+    "prebuild": "pnpm run _build:deps",
+    "build": "tsc -p tsconfig.build.json",
+    "clean": "rm -rf dist",
+    "pretypecheck": "pnpm run _build:deps",
+    "typecheck": "tsc --noEmit",
+    "pretest": "pnpm run _build:deps",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "coverage": "vitest run --coverage"
+  },
+  "keywords": [
+    "pact-network",
+    "solana",
+    "operator",
+    "admin",
+    "v1"
+  ],
+  "peerDependencies": {
+    "@q3labs/pact-protocol-v1-client": "workspace:*",
+    "@solana/web3.js": "^1.95.8"
+  },
+  "devDependencies": {
+    "@q3labs/pact-protocol-v1-client": "workspace:*",
+    "@solana/web3.js": "^1.95.8",
+    "@types/node": "^22.10.5",
+    "@vitest/coverage-v8": "^3.0.4",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.4"
+  }
+}
