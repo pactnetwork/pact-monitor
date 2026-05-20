@@ -5,6 +5,7 @@ import {
 } from "@pact-network/protocol-v1-client";
 import type { BalanceCheck } from "@pact-network/wrap";
 import { SolanaAdapter, getChain } from "../src";
+import type { SettleBatchInput } from "../src/chain-adapter";
 
 describe("SolanaAdapter — byte-identical parity vs direct client", () => {
   it("readEndpointConfigs calls getProgramAccounts with the right filter", async () => {
@@ -103,5 +104,21 @@ describe("SolanaAdapter — byte-identical parity vs direct client", () => {
         events: [],
       }),
     ).rejects.toThrow(/requires signer: Keypair/);
+  });
+
+  it("SettleBatchInput.events accepts latencyMs and it appears on the constructed input", () => {
+    const input: SettleBatchInput = {
+      slug: "test",
+      signer: {} as never,
+      events: [{
+        callId: "abc",
+        agent: "8YLKoCu7NwqHNS8GzuvA2ibsvLrsg22YMfMDafxh1B15",
+        premiumBaseUnits: 100n,
+        outcome: "ok",
+        feeRecipientCountHint: 0,
+        latencyMs: 42,
+      }],
+    };
+    expect(input.events[0].latencyMs).toBe(42);
   });
 });

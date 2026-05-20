@@ -233,10 +233,7 @@ export class SolanaAdapter implements ChainAdapter {
         slug: slugBuf,
         premiumLamports: e.premiumBaseUnits,
         refundLamports: e.outcome === "breach" ? e.premiumBaseUnits : 0n,
-        // latencyMs not surfaced in SettleBatchInput; WP-MN-03b can add the
-        // field if the indexer needs real latency. CallRecord stores this
-        // verbatim but it is not used for breach logic.
-        latencyMs: 0,
+        latencyMs: e.latencyMs,
         breach: e.outcome === "breach",
         timestamp: BigInt(Math.floor(Date.now() / 1000)),
         feeRecipientAtas: feeRecipientAtasShared,
