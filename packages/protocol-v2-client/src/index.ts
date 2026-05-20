@@ -109,6 +109,19 @@ export {
   buildUpdateRatesIx,
   buildSubmitClaimIx,
 } from "./instructions.js";
+
+export type {
+  PoolStateSnapshot,
+  AgentPolicyState,
+  UnderwriterPositionState,
+  UnderwriterPositionStateWithCooldown,
+} from "./helpers.js";
+export {
+  deriveAssociatedTokenAccount,
+  getPoolState,
+  getAgentPolicyState,
+  getUnderwriterPositionState,
+} from "./helpers.js";
 export {
   PROTOCOL_CONFIG_LEN,
   COVERAGE_POOL_LEN,
