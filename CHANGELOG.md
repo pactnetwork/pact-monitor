@@ -6,7 +6,9 @@ The repo is a workspace, so entries are grouped by package where it helps. Works
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- `packages/sdk/skills/pact-sdk/SKILL.md` — agent-skill teaching coding agents (Claude Code, Cursor, etc.) how to integrate `@q3labs/pact-sdk` into a project: install command, canonical fetch-replacement diff, signer cases, one-time `setup()` rules, B1 devnet/localnet caveat, and the golden-rule do-not-list. Mirrors the structure of `packages/cli/skills/pact-pay/SKILL.md`.
 
 ## 2026-05-20 — SDK 0.1.0 release
 
