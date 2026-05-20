@@ -7,3 +7,5 @@ export * from "./chain-adapter";
 export * from "./chains";
 export { SolanaAdapter } from "./adapters/solana";
 export type { SolanaAdapterOptions } from "./adapters/solana";
+export { EvmAdapterStub } from "./adapters/evm";
+export type { EvmAdapterStubOptions } from "./adapters/evm";
