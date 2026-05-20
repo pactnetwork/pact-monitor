@@ -3,8 +3,10 @@ import {
   Get,
   NotFoundException,
   Param,
+  Query,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { validateNetworkParam } from "../lib/network-filter";
 
 /**
  * Public read API for Endpoint rows.
@@ -30,8 +32,13 @@ export class EndpointsController {
   constructor(private readonly prisma: PrismaService) {}
 
   @Get()
-  async listEndpoints() {
+  async listEndpoints(
+    @Query("network") rawNetwork?: string,
+  ) {
+    const network = validateNetworkParam(rawNetwork);
+    const where = network ? { network } : {};
     const rows = await this.prisma.endpoint.findMany({
+      where,
       orderBy: { registeredAt: "asc" },
       include: { poolState: true },
     });
@@ -39,11 +46,16 @@ export class EndpointsController {
   }
 
   @Get(":slug")
-  async getEndpoint(@Param("slug") slug: string) {
-    // WP-MN-03a: Endpoint PK is now (network, slug). Defaulting to
-    // solana-devnet until WP-MN-03b adds ?network= query param support.
+  async getEndpoint(
+    @Param("slug") slug: string,
+    @Query("network") rawNetwork?: string,
+  ) {
+    // WP-MN-03a: Endpoint PK is now (network, slug). Callers may pass
+    // ?network= to target a specific network; defaults to solana-devnet for
+    // backwards compat with existing clients.
+    const network = validateNetworkParam(rawNetwork) ?? "solana-devnet";
     const endpoint = await this.prisma.endpoint.findUnique({
-      where: { network_slug: { network: "solana-devnet", slug } },
+      where: { network_slug: { network, slug } },
       include: { poolState: true },
     });
     if (!endpoint) throw new NotFoundException(`Endpoint not found: ${slug}`);

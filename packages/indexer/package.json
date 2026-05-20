@@ -20,6 +20,7 @@
     "@nestjs/platform-express": "^10.4.0",
     "@nestjs/schedule": "^4.1.2",
     "@pact-network/db": "workspace:*",
+    "@pact-network/shared": "workspace:*",
     "@pact-network/protocol-v1-client": "workspace:*",
     "@solana/web3.js": "^1.95.8",
     "bs58": "^6.0.0",
@@ -64,7 +65,8 @@
     "testEnvironment": "node",
     "moduleNameMapper": {
       "^@pact-network/db$": "<rootDir>/../db/src/index.ts",
-      "^@pact-network/protocol-v1-client$": "<rootDir>/../protocol-v1-client/dist/index.js"
+      "^@pact-network/protocol-v1-client$": "<rootDir>/../protocol-v1-client/dist/index.js",
+      "^@pact-network/shared$": "<rootDir>/../shared/dist/index.js"
     }
   },
   "engines": {
