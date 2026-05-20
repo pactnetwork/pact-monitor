@@ -78,6 +78,7 @@ export class IndexerPusherService {
         source: d["source"] as string | undefined,
         payee: d["payee"] as string | undefined,
         resource: d["resource"] as string | undefined,
+        network: (d["network"] as string | undefined) ?? "solana-devnet",
         ts: d["ts"] as string | undefined,
         settledAt,
         signature,

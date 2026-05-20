@@ -6,6 +6,7 @@ import {
   Query,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { validateNetworkParam } from "../lib/network-filter";
 
 /**
  * Wire-shape mirror of a Prisma `Call` row, with BigInt fields emitted as
@@ -86,13 +87,19 @@ export class CallsController {
    * ordered by `ts` DESC. Limit is clamped to [1, 200] with a default of 50.
    */
   @Get()
-  async listRecent(@Query("limit") limitStr?: string): Promise<CallWire[]> {
+  async listRecent(
+    @Query("limit") limitStr?: string,
+    @Query("network") rawNetwork?: string,
+  ): Promise<CallWire[]> {
     const parsed = Number(limitStr);
     const limit = Math.min(
       Math.max(Number.isFinite(parsed) && parsed > 0 ? parsed : 50, 1),
       200,
     );
+    const network = validateNetworkParam(rawNetwork);
+    const where = network ? { network } : {};
     const rows = await this.prisma.call.findMany({
+      where,
       orderBy: { ts: "desc" },
       take: limit,
     });
@@ -100,8 +107,17 @@ export class CallsController {
   }
 
   @Get(":id")
-  async getCall(@Param("id") callId: string) {
-    const call = await this.prisma.call.findUnique({ where: { callId } });
+  async getCall(
+    @Param("id") callId: string,
+    @Query("network") rawNetwork?: string,
+  ) {
+    // WP-MN-03a: Call PK is now (network, callId). Callers can pass ?network=
+    // to target a specific network; defaults to solana-devnet for backwards
+    // compat with existing dashboard clients that do not send the param.
+    const network = validateNetworkParam(rawNetwork) ?? "solana-devnet";
+    const call = await this.prisma.call.findUnique({
+      where: { network_callId: { network, callId } },
+    });
     if (!call) throw new NotFoundException(`Call not found: ${callId}`);
 
     // Settlement-level recipient shares — keyed by signature, not callId.

@@ -11,7 +11,8 @@ datasource db {
 // and per-recipient settlement breakdown.
 
 model Endpoint {
-  slug                       String   @id @db.VarChar(16)
+  slug                       String   @db.VarChar(16)
+  network                    String   @default("solana-devnet") @db.VarChar(24)
   flatPremiumLamports        BigInt
   percentBps                 Int
   slaLatencyMs               Int
@@ -25,6 +26,8 @@ model Endpoint {
   lastUpdated                DateTime
   calls                      Call[]
   poolState                  PoolState?
+
+  @@id([network, slug])
 }
 
 model Agent {
@@ -40,7 +43,8 @@ model Agent {
 }
 
 model Call {
-  callId          String   @id @db.VarChar(36)
+  callId          String   @db.VarChar(36)
+  network         String   @default("solana-devnet") @db.VarChar(24)
   agentPubkey     String   @db.VarChar(44)
   endpointSlug    String   @db.VarChar(16)
   premiumLamports BigInt
@@ -59,55 +63,66 @@ model Call {
   signature       String   @db.VarChar(88)
 
   agent    Agent    @relation(fields: [agentPubkey], references: [pubkey])
-  endpoint Endpoint @relation(fields: [endpointSlug], references: [slug])
+  endpoint Endpoint @relation(fields: [network, endpointSlug], references: [network, slug])
 
-  @@index([agentPubkey, ts(sort: Desc)])
-  @@index([endpointSlug, ts(sort: Desc)])
+  @@id([network, callId])
+  @@index([network, agentPubkey, ts(sort: Desc)])
+  @@index([network, endpointSlug, ts(sort: Desc)])
   @@index([ts(sort: Desc)])
-  @@index([breach, ts(sort: Desc)])
+  @@index([network, breach, ts(sort: Desc)])
 }
 
 model Settlement {
-  signature             String                     @id @db.VarChar(88)
+  signature             String                     @db.VarChar(88)
+  network               String                     @default("solana-devnet") @db.VarChar(24)
   batchSize             Int
   totalPremiumsLamports BigInt
   totalRefundsLamports  BigInt
   ts                    DateTime
   shares                SettlementRecipientShare[]
+
+  @@id([network, signature])
 }
 
 // Per-recipient breakdown of a settlement batch's fee outflows.
 // recipientKind ∈ FeeRecipientKind: 0=Treasury, 1=AffiliateAta, 2=AffiliatePda.
 model SettlementRecipientShare {
   id              String     @id @default(cuid())
+  network         String     @default("solana-devnet") @db.VarChar(24)
   settlementSig   String     @db.VarChar(88)
   recipientKind   Int
   recipientPubkey String     @db.VarChar(44)
   amountLamports  BigInt
-  settlement      Settlement @relation(fields: [settlementSig], references: [signature])
+  settlement      Settlement @relation(fields: [network, settlementSig], references: [network, signature])
 
-  @@index([recipientPubkey])
-  @@index([settlementSig])
+  @@index([network, recipientPubkey])
+  @@index([network, settlementSig])
 }
 
 // Per-endpoint pool state — replaces the old singleton PoolState.
 model PoolState {
-  endpointSlug           String   @id @db.VarChar(16)
+  endpointSlug           String   @db.VarChar(16)
+  network                String   @default("solana-devnet") @db.VarChar(24)
   currentBalanceLamports BigInt
   totalDepositsLamports  BigInt
   totalPremiumsLamports  BigInt   // gross in, before fees
   totalFeesPaidLamports  BigInt   // sum of fee outflows
   totalRefundsLamports   BigInt
   lastUpdated            DateTime
-  endpoint               Endpoint @relation(fields: [endpointSlug], references: [slug])
+  endpoint               Endpoint @relation(fields: [network, endpointSlug], references: [network, slug])
+
+  @@id([network, endpointSlug])
 }
 
 // Lifetime earnings per fee recipient — used for integrator leaderboards.
 model RecipientEarnings {
-  recipientPubkey        String   @id @db.VarChar(44)
+  recipientPubkey        String   @db.VarChar(44)
+  network                String   @default("solana-devnet") @db.VarChar(24)
   recipientKind          Int
   lifetimeEarnedLamports BigInt
   lastUpdated            DateTime
+
+  @@id([network, recipientPubkey])
 }
 
 model DemoAllowlist {

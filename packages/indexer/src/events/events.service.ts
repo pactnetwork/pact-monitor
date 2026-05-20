@@ -123,6 +123,12 @@ export class EventsService {
         });
       }
 
+      // WP-MN-03a: network is stamped per-call; the batch-level network is the
+      // fallback for FK targets (Endpoint, PoolState) which are keyed on
+      // (network, slug). Use the batch's resolved network for all FK-prep
+      // upserts — individual call rows carry their own per-call network.
+      const batchNetwork = dto.network ?? "solana-devnet";
+
       for (const slug of sortedEndpointSlugs) {
         // Lazy-create with paused=true + zeroed business fields. Admin must
         // overwrite these via on-chain endpoint registration ingestion before
@@ -130,8 +136,9 @@ export class EventsService {
         // record PoolState deltas below so the observed call activity isn't
         // lost when registration eventually lands.
         await tx.endpoint.upsert({
-          where: { slug },
+          where: { network_slug: { network: batchNetwork, slug } },
           create: {
+            network: batchNetwork,
             slug,
             flatPremiumLamports: 0n,
             percentBps: 0,
@@ -165,11 +172,12 @@ export class EventsService {
         return { accepted: 0 };
       }
 
-      // Settlement record — idempotent by signature. Only created when the
-      // batch contains at least one new call.
+      // Settlement record — idempotent by (network, signature). Only created
+      // when the batch contains at least one new call.
       await tx.settlement.upsert({
-        where: { signature: dto.signature },
+        where: { network_signature: { network: batchNetwork, signature: dto.signature } },
         create: {
+          network: batchNetwork,
           signature: dto.signature,
           batchSize: dto.batchSize,
           totalPremiumsLamports: BigInt(dto.totalPremiumsLamports),
@@ -265,6 +273,7 @@ export class EventsService {
       if (existingShares === 0 && aggregatedShares.length > 0) {
         await tx.settlementRecipientShare.createMany({
           data: aggregatedShares.map((s) => ({
+            network: batchNetwork,
             settlementSig: dto.signature,
             recipientKind: s.kind,
             recipientPubkey: s.pubkey,
@@ -278,8 +287,9 @@ export class EventsService {
         );
         for (const s of sortedRecipients) {
           await tx.recipientEarnings.upsert({
-            where: { recipientPubkey: s.pubkey },
+            where: { network_recipientPubkey: { network: batchNetwork, recipientPubkey: s.pubkey } },
             create: {
+              network: batchNetwork,
               recipientPubkey: s.pubkey,
               recipientKind: s.kind,
               lifetimeEarnedLamports: s.amount,
@@ -301,8 +311,9 @@ export class EventsService {
 
         const balanceDelta = delta.premium - delta.refund - delta.feesPaid;
         await tx.poolState.upsert({
-          where: { endpointSlug: slug },
+          where: { network_endpointSlug: { network: batchNetwork, endpointSlug: slug } },
           create: {
+            network: batchNetwork,
             endpointSlug: slug,
             currentBalanceLamports: balanceDelta,
             totalDepositsLamports: 0n,
@@ -337,10 +348,12 @@ export class EventsService {
     call: WrapCallEventDto,
   ): Promise<boolean> {
     const { breach, breachReason } = outcomeToBreach(call.outcome);
+    const callNetwork = call.network ?? "solana-devnet";
     try {
       await tx.call.create({
         data: {
           callId: call.callId,
+          network: callNetwork,
           agentPubkey: call.agentPubkey,
           endpointSlug: call.endpointSlug,
           premiumLamports: BigInt(call.premiumLamports),

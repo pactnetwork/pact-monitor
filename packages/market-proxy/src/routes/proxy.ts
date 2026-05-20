@@ -15,6 +15,7 @@
 
 import type { Context } from "hono";
 import { wrapFetch, type EndpointConfig } from "@pact-network/wrap";
+import { getChain } from "@pact-network/shared";
 import { getContext } from "../lib/context.js";
 import { handlerRegistry } from "../lib/registry.js";
 import { computeDemoBreachDelayMs } from "../lib/force-breach.js";
@@ -133,6 +134,7 @@ export async function proxyRoute(c: Context): Promise<Response> {
     endpointConfig,
     fetchImpl: buffered.fetchImpl,
     pool: slug,
+    network: getChain("solana-devnet").network,
   });
 
   // Alan review M2: wrap's response carries upstream headers (with

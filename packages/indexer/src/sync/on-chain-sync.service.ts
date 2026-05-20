@@ -205,9 +205,13 @@ export class OnChainSyncService implements OnModuleInit {
     // for upstreams that need them (e.g. Helius) are injected by the
     // proxy via env vars, NOT stored in the DB.
     const upstreamBase = DEFAULT_UPSTREAM_BASE[slug] ?? "";
+    // WP-MN-03a: on-chain sync only knows Solana for now; WP-MN-03b will
+    // swap the hardcoded string for adapter-driven network selection.
+    const syncNetwork = "solana-devnet";
     await this.prisma.endpoint.upsert({
-      where: { slug },
+      where: { network_slug: { network: syncNetwork, slug } },
       create: {
+        network: syncNetwork,
         slug,
         flatPremiumLamports: BigInt(decoded.flatPremiumLamports),
         percentBps: decoded.percentBps,

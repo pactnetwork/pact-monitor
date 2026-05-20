@@ -225,6 +225,9 @@ importers:
       '@pact-network/protocol-v1-client':
         specifier: workspace:*
         version: link:../protocol-v1-client
+      '@pact-network/shared':
+        specifier: workspace:*
+        version: link:../shared
       '@solana/web3.js':
         specifier: ^1.95.8
         version: 1.98.4(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)
@@ -414,6 +417,9 @@ importers:
       '@hono/node-server':
         specifier: ^1.13.7
         version: 1.19.14(hono@4.12.16)
+      '@pact-network/shared':
+        specifier: workspace:*
+        version: link:../shared
       '@pact-network/wrap':
         specifier: workspace:*
         version: link:../wrap

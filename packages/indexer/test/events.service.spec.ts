@@ -111,10 +111,14 @@ function makePrismaMock(opts: PrismaMockOptions = {}): any {
       }),
     },
     endpoint: {
-      findUnique: jest.fn(async (args: any) => ({ slug: args.where.slug })),
+      findUnique: jest.fn(async (args: any) => {
+        const slug = args.where.network_slug?.slug ?? args.where.slug;
+        return { slug };
+      }),
       upsert: jest.fn(async (args: any) => {
         captured.push({ table: "endpoint", op: "upsert", args });
-        return { slug: args.where.slug };
+        const slug = args.where.network_slug?.slug ?? args.where.slug;
+        return { slug };
       }),
     },
     poolState: {
@@ -275,7 +279,7 @@ describe("EventsService", () => {
     );
     expect(poolUpserts).toHaveLength(2);
     const slugs = poolUpserts
-      .map((u: CapturedCall) => u.args.where.endpointSlug)
+      .map((u: CapturedCall) => u.args.where.network_endpointSlug.endpointSlug)
       .sort();
     expect(slugs).toEqual(["birdeye", "helius"]);
   });
@@ -750,7 +754,7 @@ describe("EventsService", () => {
       (c: CapturedCall) => c.table === "poolState",
     );
     const bySlug = new Map<string, any>(
-      poolUpserts.map((p: CapturedCall) => [p.args.where.endpointSlug, p]),
+      poolUpserts.map((p: CapturedCall) => [p.args.where.network_endpointSlug.endpointSlug, p]),
     );
     expect(bySlug.get("helius")!.args.create.totalFeesPaidLamports).toBe(160n);
     expect(bySlug.get("birdeye")!.args.create.totalFeesPaidLamports).toBe(80n);
@@ -931,7 +935,7 @@ describe("EventsService", () => {
     );
     expect(endpointUpserts).toHaveLength(2); // deduped
     const endpointOrder = endpointUpserts.map(
-      (u: CapturedCall) => u.args.where.slug,
+      (u: CapturedCall) => u.args.where.network_slug.slug,
     );
     expect(endpointOrder).toEqual([...endpointOrder].sort()); // lex-sorted
 
@@ -949,7 +953,7 @@ describe("EventsService", () => {
       (c: CapturedCall) => c.table === "poolState",
     );
     const poolOrder = poolUpserts.map(
-      (u: CapturedCall) => u.args.where.endpointSlug,
+      (u: CapturedCall) => u.args.where.network_endpointSlug.endpointSlug,
     );
     expect(poolOrder).toEqual([...poolOrder].sort());
   });
