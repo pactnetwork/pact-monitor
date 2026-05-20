@@ -13,6 +13,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./affiliate": {
+      "types": "./dist/affiliate.d.ts",
+      "default": "./dist/affiliate.js"
     }
   },
   "files": [

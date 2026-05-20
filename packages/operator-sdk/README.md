@@ -111,10 +111,44 @@ await multisig.rpc.vaultTransactionCreate({
 
 ## Affiliate reads
 
-Coming in the next release (PR-2): read-only earnings observability for any
-`AffiliateAta` fee-recipient. Two new indexer routes
-(`GET /api/recipients/:pubkey` lifetime; `GET /api/recipients/:pubkey/settlements`
-cursor-paginated) and a `createAffiliate(pubkey)` factory.
+Read-only earnings observability for any `AffiliateAta` / `Treasury`
+fee-recipient. Public, no-auth (data is derivable from on-chain settlement
+events; rate-limited at the gateway, not bearer-gated — Drift / Helius /
+Solscan convention).
+
+```ts
+import { createAffiliate } from "@q3labs/pact-operator-sdk/affiliate";
+
+const aff = createAffiliate(new PublicKey("Affil..."), {
+  indexerBaseUrl: "https://indexer.pactnetwork.io",
+});
+
+// Lifetime. Returns a zero envelope (200, not 404) for a pubkey with no
+// earnings yet — a legitimate state. recipientKind is null in that case.
+const { lifetimeEarnedLamports, recipientKind } = await aff.lifetimeEarnings();
+
+// Cursor-paginated history. Cursor is opaque base64url; pass nextCursor
+// from the previous response to advance. nextCursor === null means last
+// page. Limit clamped server-side to [1, 200], default 50.
+let cursor: string | undefined;
+do {
+  const page = await aff.recentSettlements({ limit: 50, cursor });
+  for (const item of page.items) {
+    // item: { id, settledAt, txSignature, amountLamports, recipientKind }
+  }
+  cursor = page.nextCursor ?? undefined;
+} while (cursor);
+```
+
+The factory takes a `PublicKey` (NOT a `Keypair`) — read-only by
+construction. No signing, no on-chain submit.
+
+Cursor is on `SettlementRecipientShare.id` (cuid, monotonic by creation
+time, PK, uniquely indexed) — NOT on transaction signature. Signatures are
+random hashes and lexicographic order has no relationship to settlement
+time; cursoring on signature would produce non-deterministic pages.
+Reference: Helius `getTransactionsForAddress` uses `"slot:position"` for
+the same reason.
 
 ## Smart-submit details
 
