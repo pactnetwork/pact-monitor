@@ -38,6 +38,9 @@ Method: `grep -rn "ArcConfig" packages/ --include="*.sol" --include="*.ts" --inc
 | File | Line(s) | Reference |
 |---|---|---|
 | `packages/program-evm/protocol-evm-v1/src/ArcConfig.sol` | 1–32 | The library definition itself. Renamed to `ProtocolInvariants.sol`. |
+| `packages/program-evm/protocol-evm-v1/src/PactRegistry.sol` | 7, 114 | Imports `ArcConfig`; uses `MAX_FEE_RECIPIENTS` at line 114. **Protocol-wide invariant** — import-path rename only. |
+| `packages/program-evm/protocol-evm-v1/src/PactSettler.sol` | 9, 74, 82, 83 | Imports `ArcConfig`; uses `MAX_BATCH_SIZE`, `MIN_PREMIUM`, `MAX_FEE_RECIPIENTS`. **Protocol-wide invariants** — import-path rename only. |
+| `packages/program-evm/protocol-evm-v1/src/libraries/FeeValidation.sol` | 5, 32, 44, 64, 130, 132, 140, 154 | Imports `ArcConfig`; uses `MAX_FEE_RECIPIENTS` (×2), `ABSOLUTE_FEE_BPS_CAP` (×6). **Protocol-wide invariants** — import-path rename only. Path is `../ArcConfig.sol` (one level up from `libraries/`); after rename: `../ProtocolInvariants.sol`. |
 
 ### 2.2 Solidity test (must update imports + read chain values from new source)
 
@@ -47,6 +50,8 @@ Method: `grep -rn "ArcConfig" packages/ --include="*.sol" --include="*.ts" --inc
 | `test/Deployment.t.sol` | 7, 25, 35, 37, 39, 48, 50, 52, 57, 64, 66, 69 | Imports `ArcConfig`; reads `ARC_TESTNET_USDC` and `ARC_TESTNET_CHAIN_ID`. **Chain-specific** — these must read from `chains.json` (see §5.1 decision). Protocol-wide `EXPECTED_USDC_DECIMALS` stays in `ProtocolInvariants`. |
 | `test/UsdcDecimals.t.sol` | 7, 20, 27, 34, 35, 43 | Imports `ArcConfig`; uses `EXPECTED_USDC_DECIMALS`. Stays in `ProtocolInvariants`. |
 | `test/PactPool.t.sol` | 10, 39 | Imports `ArcConfig`; uses `DEFAULT_MAX_TOTAL_FEE_BPS`. Stays in `ProtocolInvariants`. |
+| `test/PactRegistry.t.sol` | 7, 60 | Imports `ArcConfig`; uses `DEFAULT_MAX_TOTAL_FEE_BPS`. Stays in `ProtocolInvariants`. |
+| `test/PactSettler.t.sol` | 13, 336 | Imports `ArcConfig`; uses `MIN_PREMIUM` (line 336 is comment-only reference). Stays in `ProtocolInvariants`. |
 | `test/Fuzz.t.sol` | 11, 109, 156, 195, 215 | Imports `ArcConfig`; uses `MIN_PREMIUM` (×2) and `MAX_BATCH_SIZE` (×2). Stays in `ProtocolInvariants`. |
 
 ### 2.3 Deploy script (must read chain-id from env)
@@ -71,13 +76,18 @@ Method: `grep -rn "ArcConfig" packages/ --include="*.sol" --include="*.ts" --inc
 | `packages/protocol-evm-v1-client/__tests__/addresses.test.ts` | 8, 13, 16–18, 26, 32, 41–42, 47 | Uses `ARC_TESTNET`, `ARC_TESTNET_CHAIN_ID`, `ARC_TESTNET_USDC`. These exports stay (backward compat) but resolve via the registry; tests stay green. |
 | `packages/protocol-evm-v1-client/__tests__/helpers.test.ts` | 117 | String literal `"ARC_TESTNET_CHAIN_ID"` (likely an `exports` shape test). Update if rename happens; otherwise unchanged. |
 
-**Total references: 40 lines across 12 files.** No reference lives outside `packages/program-evm/protocol-evm-v1/` and `packages/protocol-evm-v1-client/`. No service code (`settler`, `indexer`, `market-proxy`, `wrap`, `sdk`) references `ArcConfig`.
+**Total references: 68 lines across 17 files** (corrected post captain-proxy R1 re-grep, 2026-05-20). All inside `packages/program-evm/protocol-evm-v1/` and `packages/protocol-evm-v1-client/`. No service code (`settler`, `indexer`, `market-proxy`, `wrap`, `sdk`) references `ArcConfig`.
 
 ### 2.6 Sanity — what's NOT touched
 
-- `packages/program-evm/protocol-evm-v1/src/{PactRegistry,PactPool,PactSettler,PactEvents}.sol` — no `ArcConfig` import in contract source (verified by grep above). Contracts are parity-LOCKED per the cover memo.
-- `packages/program-evm/protocol-evm-v1/src/{errors,interfaces,libraries}/` — no `ArcConfig` imports.
+- `packages/program-evm/protocol-evm-v1/src/{PactPool,PactEvents}.sol` — no `ArcConfig` import in contract source. PactPool uses `IPactPool.MAX_RECIPIENTS` (a per-interface constant) instead.
+- `packages/program-evm/protocol-evm-v1/src/{errors,interfaces}/` — no `ArcConfig` imports.
+- **PactRegistry.sol, PactSettler.sol, libraries/FeeValidation.sol DO import `ArcConfig`** (see §2.1) — every reference is to a protocol-wide invariant (MAX_BATCH_SIZE / MIN_PREMIUM / MAX_FEE_RECIPIENTS / ABSOLUTE_FEE_BPS_CAP), so the contract-source touch is import-path-only. **No chain-specific value leaks into the contract layer.**
 - All service packages (`settler/`, `indexer/`, `market-proxy/`, `wrap/`, `sdk/`) — none import `ArcConfig` or the EVM constants. They will pick up the multi-chain awareness in WP-MN-03a/b/04.
+
+### 2.7 Contract-source touch — risk implication
+
+The WP-MN-01 deliverable now explicitly includes edits to three contract-source files (`PactRegistry.sol`, `PactSettler.sol`, `FeeValidation.sol`) — but only the `import` statement and the type qualifier (`ArcConfig.X` → `ProtocolInvariants.X`). No expression, value, or control-flow logic changes. Bytecode reproducibility: identical (per R5 — library inlining), and the existing Foundry suite is the proof: every `forge test` already exercises these contracts; if any character of the call-site changed in meaning, those tests would catch it. Captain (proxy) accepts contract-source edits in WP-MN-01 because the rename is parity-LOCKED-bytecode-preserving.
 
 ---
 
