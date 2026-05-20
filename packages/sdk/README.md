@@ -151,6 +151,14 @@ never loses an observation — the next `createPact()` resumes reconciliation.
   `v1\n{METHOD}\n{path}\n{ts}\n{nonce}\n{sha256hex(body)|""}`, with
   `x-pact-project` mandatory. There is **no API key**; `apiKey` is reserved.
 
+## For coding agents
+
+If you're a coding agent (Claude Code, Cursor, etc.) being asked to integrate
+Pact into an agent project, follow
+[`packages/sdk/skills/pact-sdk/SKILL.md`](./skills/pact-sdk/SKILL.md). It tells
+you exactly what to install, what code to change, and what not to do — same
+voice and shape as the `pact-pay` CLI skill.
+
 ## Build & test
 
 ```bash
