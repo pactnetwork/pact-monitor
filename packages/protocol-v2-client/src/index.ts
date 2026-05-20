@@ -82,6 +82,33 @@ export type {
   Policy,
   Claim,
 } from "./state.js";
+
+export type {
+  InitializeProtocolParams,
+  UpdateConfigParams,
+  UpdateOracleParams,
+  CreatePoolParams,
+  DepositParams,
+  EnableInsuranceParams,
+  DisablePolicyParams,
+  SettlePremiumParams,
+  WithdrawParams,
+  UpdateRatesParams,
+  SubmitClaimParams,
+} from "./instructions.js";
+export {
+  buildInitializeProtocolIx,
+  buildUpdateConfigIx,
+  buildUpdateOracleIx,
+  buildCreatePoolIx,
+  buildDepositIx,
+  buildEnableInsuranceIx,
+  buildDisablePolicyIx,
+  buildSettlePremiumIx,
+  buildWithdrawIx,
+  buildUpdateRatesIx,
+  buildSubmitClaimIx,
+} from "./instructions.js";
 export {
   PROTOCOL_CONFIG_LEN,
   COVERAGE_POOL_LEN,
