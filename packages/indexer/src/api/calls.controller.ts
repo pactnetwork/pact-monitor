@@ -101,7 +101,13 @@ export class CallsController {
 
   @Get(":id")
   async getCall(@Param("id") callId: string) {
-    const call = await this.prisma.call.findUnique({ where: { callId } });
+    // WP-MN-03a: Call PK is now (network, callId). The read API looks up by
+    // callId only (no network filter from the URL yet — WP-MN-03b adds that).
+    // For now fall back to solana-devnet; this is safe because the public
+    // dashboard only shows solana calls and T5 adds the ?network= query param.
+    const call = await this.prisma.call.findUnique({
+      where: { network_callId: { network: "solana-devnet", callId } },
+    });
     if (!call) throw new NotFoundException(`Call not found: ${callId}`);
 
     // Settlement-level recipient shares — keyed by signature, not callId.

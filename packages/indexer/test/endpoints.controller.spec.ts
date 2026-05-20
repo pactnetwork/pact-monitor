@@ -45,7 +45,8 @@ const makePrisma = () => ({
           poolState: null,
         }),
       ]),
-    findUnique: jest.fn(async ({ where: { slug } }) => {
+    findUnique: jest.fn(async ({ where }) => {
+      const slug = where.network_slug?.slug ?? where.slug;
       if (slug === "helius") return makeEndpoint();
       if (slug === "fresh")
         return makeEndpoint({ slug: "fresh", poolState: null });

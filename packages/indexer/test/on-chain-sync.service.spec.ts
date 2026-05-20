@@ -138,7 +138,8 @@ describe("OnChainSyncService", () => {
     await svc.syncEndpointsFromChain();
     expect(prismaUpsert).toHaveBeenCalledTimes(1);
     const args = prismaUpsert.mock.calls[0][0];
-    expect(args.where).toEqual({ slug: "helius" });
+    expect(args.where).toEqual({ network_slug: { network: "solana-devnet", slug: "helius" } });
+    expect(args.create.network).toBe("solana-devnet");
     expect(args.create.slug).toBe("helius");
     expect(args.create.flatPremiumLamports).toBe(1000n);
     expect(args.create.percentBps).toBe(250);
@@ -171,7 +172,7 @@ describe("OnChainSyncService", () => {
 
     await svc.syncEndpointsFromChain();
     expect(prismaUpsert).toHaveBeenCalledTimes(5);
-    const seen = prismaUpsert.mock.calls.map((c) => c[0].where.slug);
+    const seen = prismaUpsert.mock.calls.map((c) => c[0].where.network_slug.slug);
     expect(seen.sort()).toEqual([...slugs].sort());
   });
 
@@ -211,8 +212,8 @@ describe("OnChainSyncService", () => {
     ]);
     await svc.syncEndpointsFromChain();
     const upserts = prismaUpsert.mock.calls.map((c) => c[0]);
-    const paused = upserts.find((u) => u.where.slug === "paused-ep");
-    const live = upserts.find((u) => u.where.slug === "live-ep");
+    const paused = upserts.find((u) => u.where.network_slug?.slug === "paused-ep");
+    const live = upserts.find((u) => u.where.network_slug?.slug === "live-ep");
     expect(paused?.create.paused).toBe(true);
     expect(live?.create.paused).toBe(false);
   });

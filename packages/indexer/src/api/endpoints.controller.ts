@@ -40,8 +40,10 @@ export class EndpointsController {
 
   @Get(":slug")
   async getEndpoint(@Param("slug") slug: string) {
+    // WP-MN-03a: Endpoint PK is now (network, slug). Defaulting to
+    // solana-devnet until WP-MN-03b adds ?network= query param support.
     const endpoint = await this.prisma.endpoint.findUnique({
-      where: { slug },
+      where: { network_slug: { network: "solana-devnet", slug } },
       include: { poolState: true },
     });
     if (!endpoint) throw new NotFoundException(`Endpoint not found: ${slug}`);
