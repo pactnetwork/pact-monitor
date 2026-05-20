@@ -15,17 +15,17 @@
 
 import type { Context } from "hono";
 import { wrapFetch, type EndpointConfig } from "@pact-network/wrap";
-import { getChain } from "@pact-network/shared";
 import { getContext } from "../lib/context.js";
 import { handlerRegistry } from "../lib/registry.js";
 import { computeDemoBreachDelayMs } from "../lib/force-breach.js";
 import { classifierRegistry } from "../lib/classifiers.js";
 import { createBufferedFetch } from "../lib/buffered-fetch.js";
 import { buildSanitisedResponse } from "../lib/response-headers.js";
+import { adapterToBalanceCheck } from "../lib/balance.js";
 
 export async function proxyRoute(c: Context): Promise<Response> {
   const slug = c.req.param("slug") ?? "";
-  const { registry, demoAllowlist, balanceCheck, sink } = getContext();
+  const { registry, demoAllowlist, balanceCheck: legacyBalanceCheck, sink, adapters, legacyDirectSolana } = getContext();
 
   const endpoint = await registry.get(slug);
   if (!endpoint) {
@@ -38,6 +38,33 @@ export async function proxyRoute(c: Context): Promise<Response> {
   const handler = handlerRegistry[slug];
   if (!handler) {
     return c.json({ error: "no handler for endpoint" }, 501);
+  }
+
+  // Resolve the network for this endpoint. The DB row carries a `network`
+  // column (added in WP-MN-03a). EndpointRegistry defaults to "solana-devnet"
+  // for rows from before the migration so this is always a valid network string.
+  const endpointNetwork = endpoint.network;
+
+  // Select balance check: legacy direct (from createBalanceCheck) or
+  // adapter-backed (from ChainAdapter.checkAgentEligibility).
+  const adapterForNetwork = adapters.get(endpointNetwork);
+  let balanceCheck: import("@pact-network/wrap").BalanceCheck;
+  if (legacyDirectSolana && endpointNetwork.startsWith("solana-")) {
+    balanceCheck = legacyBalanceCheck;
+  } else if (adapterForNetwork) {
+    balanceCheck = adapterToBalanceCheck(adapterForNetwork);
+  } else {
+    // Adapter missing for this network — explicit 503 + WARN log.
+    // Silent fallback to legacyBalanceCheck was removed in WP-MN-03b T5:
+    // an unknown network means the operator has not enabled it in
+    // PACT_ENABLED_NETWORKS, so we must not silently degrade to Solana.
+    console.warn(
+      `[proxy] endpoint "${endpoint.slug}" requires network "${endpointNetwork}", not in PACT_ENABLED_NETWORKS`,
+    );
+    return c.text(
+      `Network "${endpointNetwork}" not enabled on this proxy`,
+      503,
+    );
   }
 
   // Agent identity: the CLI transmits the agent pubkey in the `x-pact-agent`
@@ -134,7 +161,7 @@ export async function proxyRoute(c: Context): Promise<Response> {
     endpointConfig,
     fetchImpl: buffered.fetchImpl,
     pool: slug,
-    network: getChain("solana-devnet").network,
+    network: endpointNetwork,
   });
 
   // Alan review M2: wrap's response carries upstream headers (with

@@ -1,11 +1,46 @@
 import { Pool } from "pg";
 import type { BalanceCheck, EventSink } from "@pact-network/wrap";
+import {
+  ChainAdapter,
+  EvmAdapterStub,
+  SolanaAdapter,
+  getChain,
+} from "@pact-network/shared";
 import { EndpointRegistry } from "./endpoints.js";
 import { Allowlist } from "./allowlist.js";
 import { createBalanceCheck } from "./balance.js";
 import { createEventSink } from "./events.js";
 import { createSystemFlagReader, type SystemFlagReader } from "./system-flag.js";
 import { env } from "../env.js";
+
+export function buildAdapterMap(processEnv: NodeJS.ProcessEnv): {
+  adapters: Map<string, ChainAdapter>;
+  legacyDirectSolana: boolean;
+} {
+  const adapters = new Map<string, ChainAdapter>();
+  const legacyDirectSolana = processEnv.PACT_LEGACY_DIRECT_SOLANA === "true";
+
+  const enabled = (processEnv.PACT_ENABLED_NETWORKS ?? "solana-devnet")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  for (const name of enabled) {
+    const descriptor = getChain(name); // throws on unknown
+    if (descriptor.vm === "solana") {
+      const envKey = `PACT_RPC_URL_${name.replace(/-/g, "_").toUpperCase()}`;
+      const rpcUrl =
+        processEnv[envKey] ??
+        processEnv.SOLANA_RPC_URL ??
+        "https://api.devnet.solana.com";
+      adapters.set(name, new SolanaAdapter({ descriptor, rpcUrl }));
+    } else if (descriptor.vm === "evm") {
+      adapters.set(name, new EvmAdapterStub({ descriptor }));
+    }
+  }
+
+  return { adapters, legacyDirectSolana };
+}
 
 export interface AppContext {
   registry: EndpointRegistry;
@@ -15,6 +50,8 @@ export interface AppContext {
   sink: EventSink;
   pg: Pool;
   betaGateFlag: SystemFlagReader;
+  adapters: Map<string, ChainAdapter>;
+  legacyDirectSolana: boolean;
 }
 
 let _ctx: AppContext | null = null;
@@ -56,6 +93,8 @@ export async function initContext(): Promise<AppContext> {
   // the Postgres lookup fails (see PRD "Feature flag" / Risks accepted).
   const betaGateFlag = createSystemFlagReader(pg);
 
+  const { adapters, legacyDirectSolana } = buildAdapterMap(process.env);
+
   // Warm caches — don't throw on startup if DB unavailable yet.
   await Promise.allSettled([
     registry.reload(),
@@ -71,6 +110,8 @@ export async function initContext(): Promise<AppContext> {
     sink,
     pg,
     betaGateFlag,
+    adapters,
+    legacyDirectSolana,
   };
   return _ctx;
 }

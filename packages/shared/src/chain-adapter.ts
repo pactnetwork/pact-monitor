@@ -45,6 +45,13 @@ export interface SettleBatchInput {
     premiumBaseUnits: bigint;
     outcome: "ok" | "breach";
     feeRecipientCountHint: number;
+    /**
+     * Per-call latency in ms. Written verbatim into the on-chain CallRecord.
+     * NOT used for breach logic (the on-chain program does not compare).
+     * The wrap classifier and the off-chain indexer use this; the adapter
+     * just passes it through.
+     */
+    latencyMs: number;
   }>;
   options?: {
     commitment?: "confirmed" | "finalized";
