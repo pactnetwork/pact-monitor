@@ -10,11 +10,11 @@
 WP-MN-01..03b refactored existing code paths and ran against existing infra. WP-MN-04 **provisions new infrastructure**:
 
 - One new Cloud Run revision per service with EVM config layered in (`PACT_ENABLED_NETWORKS=solana-devnet,arc-testnet`).
-- One new Google Secret Manager secret per fleet: `pact-settler-arc-testnet` (0x-prefixed hex private key).
+- The Arc settler EOA private key stored as a Cloud Run env value (Phase 1, Tu-doable). Promotion to Google Secret Manager (`pact-settler-arc-testnet`) is a **Phase 2 Rick-owned follow-up** because Tu does not currently hold GCP IAM permission to create Secret Manager secrets. Code is identical in both phases — the settler's loader detects the `projects/...` prefix and routes accordingly. D6 §6 / RESEARCH §5 lock this two-phase model.
 - One new Arc Testnet RPC endpoint (currently `rpcUrl: null` in `chains.json`).
 - One Tu-signed on-chain admin tx granting `SETTLER_ROLE` to the new settler EOA on the deployed `PactSettler` (`0xe461CE50ef53BFC10945B101FB94b11Ec5eB591f`).
 
-Tu's standing "auto-drive unless it really touches production" rule kicks in here: this DOES touch production-shape infrastructure (Secret Manager, Cloud Run env, on-chain role grant). Captain-proxy stops at Gate A.
+Tu's standing "auto-drive unless it really touches production" rule kicks in here: this DOES touch production-shape infrastructure (Cloud Run env, on-chain role grant). Captain-proxy stops at Gate A.
 
 ## Purpose
 

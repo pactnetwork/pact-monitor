@@ -277,10 +277,12 @@ class SecretLoaderService {
 
 Env keys, locked:
 
-| Network | Env var | Secret Manager resource (when set to `projects/...`) |
-|---|---|---|
-| `solana-devnet` | `SETTLEMENT_AUTHORITY_KEY` (legacy, kept for back-compat) OR `PACT_SETTLER_KEYPAIR_SOLANA_DEVNET` | `projects/<gcp>/secrets/pact-settler-solana-devnet/versions/latest` |
-| `arc-testnet` | `PACT_SETTLER_KEYPAIR_ARC_TESTNET` | `projects/<gcp>/secrets/pact-settler-arc-testnet/versions/latest` |
+| Network | Env var | Phase 1 value (Tu, now) | Phase 2 value (Rick, later) |
+|---|---|---|---|
+| `solana-devnet` | `SETTLEMENT_AUTHORITY_KEY` (legacy, kept for back-compat) OR `PACT_SETTLER_KEYPAIR_SOLANA_DEVNET` | base58 keypair string OR `projects/...` (already deployed) | unchanged |
+| `arc-testnet` | `PACT_SETTLER_KEYPAIR_ARC_TESTNET` | raw `0x`-hex private key | `projects/<gcp>/secrets/pact-settler-arc-testnet/versions/latest` |
+
+**Two-phase rationale (D6 §6 lock):** Tu does not currently have GCP IAM permission to create Secret Manager secrets. Rick owns that capability. The settler's `loadFor()` already detects the `projects/...` prefix and routes through Secret Manager, so the code is identical for both phases — only the env *value* changes. Phase 1 stores the hex key directly in Cloud Run env (encrypted at rest by Google; only Tu + Rick have IAM access to the revision spec). Phase 2 is a Rick-owned follow-up: create the secret, add a version with the same hex, swap the Cloud Run env value to the resource path, roll the revision. No code redeploy, no behavior change.
 
 Rotation procedure: per D6 §6. The Solana model already supports this loader shape (`SETTLEMENT_AUTHORITY_KEY` is honored).
 
@@ -339,32 +341,34 @@ This is a Prisma `view` (read-only). No production-DB write. Local docker `pnpm 
 
 T6 task. Tu-executable checklist (NOT captain-proxy auto-driven):
 
-**Pre-flight:**
+**Pre-flight (Tu-executable; no GCP Secret Manager permissions needed):**
 1. Generate Arc EOA: `cast wallet new` → save private key + address.
 2. Fund Arc EOA with testnet gas USDC (testnet faucet).
 3. Tu signs `PactSettler.grantRole(SETTLER_ROLE, <address>)` on Arc Testnet from the Tu admin EOA.
 
-**Secret Manager:**
-4. `gcloud secrets create pact-settler-arc-testnet --replication-policy=automatic`
-5. `echo -n "0x<privatekey>" | gcloud secrets versions add pact-settler-arc-testnet --data-file=-`
-6. (Optional, for RPC URL) `gcloud secrets create pact-arc-testnet-rpc-url ...` if treating RPC as secret. Default: commit URL to chains.json (public).
-
-**Cloud Run env update (3 services):**
-7. Settler revision: append env
+**Cloud Run env update (3 services — Phase 1, raw-hex env):**
+4. Settler revision: append env
    - `PACT_ENABLED_NETWORKS=solana-devnet,arc-testnet`
-   - `PACT_SETTLER_KEYPAIR_ARC_TESTNET=projects/<gcp>/secrets/pact-settler-arc-testnet/versions/latest`
-8. Indexer revision: append env
+   - `PACT_SETTLER_KEYPAIR_ARC_TESTNET=0x<the hex private key from step 1>` — raw value, NOT a Secret Manager path
+5. Indexer revision: append env
    - `PACT_ENABLED_NETWORKS=solana-devnet,arc-testnet`
-9. Market-proxy revision: append env
+6. Market-proxy revision: append env
    - `PACT_ENABLED_NETWORKS=solana-devnet,arc-testnet`
-10. Roll all three revisions; verify boot logs print "[adapter map] solana-devnet=SolanaAdapter arc-testnet=EvmAdapter" or equivalent.
+7. Roll all three revisions; verify boot logs print "[adapter map] solana-devnet=SolanaAdapter arc-testnet=EvmAdapter" or equivalent.
 
 **Verification:**
-11. `curl <settler-url>/health` → 200.
-12. `curl <indexer-url>/api/endpoints?network=arc-testnet` → 200 (empty array until first registerEndpoint).
-13. `curl <market-proxy-url>/health` → 200.
+8. `curl <settler-url>/health` → 200.
+9. `curl <indexer-url>/api/endpoints?network=arc-testnet` → 200 (empty array until first registerEndpoint).
+10. `curl <market-proxy-url>/health` → 200.
 
-This runbook is for Tu, not for code. Captain-proxy ships everything up to step 7's pre-flight; Tu executes 1-12.
+**Rick follow-up (Phase 2 — Secret Manager upgrade, NOT blocking WP-MN-04):**
+- R1. `gcloud secrets create pact-settler-arc-testnet --replication-policy=automatic`
+- R2. `echo -n "0x<privatekey>" | gcloud secrets versions add pact-settler-arc-testnet --data-file=-`
+- R3. Settler Cloud Run revision: change `PACT_SETTLER_KEYPAIR_ARC_TESTNET` value from raw hex to `projects/<gcp>/secrets/pact-settler-arc-testnet/versions/latest`. Code path is identical (loader detects `projects/...` prefix); only the env value swaps.
+- R4. Roll settler revision; verify boot logs.
+- R5. (Hygiene) Once Phase 2 is verified for 1 week, Rick can scrub the raw hex from prior Cloud Run revision history if desired — past revisions retain the old env value until Cloud Run prunes them.
+
+This runbook is for Tu, not for code. Captain-proxy ships everything up to step 4's pre-flight; Tu executes 1-10. Rick executes R1-R5 as a separate ops cycle.
 
 ## 9 · End-to-end smoke runbook (Arc Testnet)
 

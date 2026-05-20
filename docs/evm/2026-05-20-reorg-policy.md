@@ -95,13 +95,22 @@ If a chain reorg exceeds `finalityBlocks` (rare; usually a network incident), th
 
 ## 6 · Per-VM auth (off-chain §2.5 implementation lock)
 
-The off-chain spec §2.5 already specifies the shape; this doc locks the implementation for Arc:
+The off-chain spec §2.5 already specifies the shape; this doc locks the implementation for Arc.
+
+**Two-phase secret-storage rollout (Tu lacks GCP Secret Manager permissions; Rick owns the upgrade):**
+
+- **Phase 1 — Cloud Run env (Tu-executable now):** the 0x-prefixed hex private key is stored directly as a Cloud Run env value on `PACT_SETTLER_KEYPAIR_ARC_TESTNET`. The settler's `secret-loader` accepts a raw hex value verbatim (no `projects/...` prefix). Acceptable because (a) Cloud Run env is encrypted at rest by Google, (b) only Tu + Rick have IAM access to read the revision spec, (c) this is Arc Testnet only, (d) rotation is a one-line env swap.
+- **Phase 2 — Secret Manager (Rick later):** Rick creates `pact-settler-arc-testnet` in Secret Manager, adds the same hex value as version 1, then swaps the Cloud Run env value from the raw hex to `projects/<gcp>/secrets/pact-settler-arc-testnet/versions/latest`. Same code path — the loader detects `projects/...` prefix and routes through `SecretManagerServiceClient`. No redeploy of code; only an env-value swap and a revision roll.
+
+Phase 1 is the WP-MN-04 default. Phase 2 is tracked as a follow-up Rick-owned ops task.
 
 | Concern | Arc-Testnet implementation |
 |---|---|
-| Settler EOA secret | Google Secret Manager, key name `pact-settler-arc-testnet`. Value is 0x-prefixed hex private key. Loaded by NestJS via `secret-loader` (new EVM branch). Held in `WalletClient` instance, never written to disk or logs. |
+| Settler EOA secret (Phase 1) | Cloud Run env `PACT_SETTLER_KEYPAIR_ARC_TESTNET` = raw 0x-prefixed hex private key. Loaded verbatim. Held in `WalletClient` instance, never written to disk or logs. |
+| Settler EOA secret (Phase 2) | Same env var, value changed to `projects/<gcp>/secrets/pact-settler-arc-testnet/versions/latest`. Loader detects prefix and fetches via Secret Manager API. |
 | EOA address derivation | `privateKeyToAccount(hex).address` at settler boot. Logged once. Granted `SETTLER_ROLE` on `PactSettler` via a separate Tu-signed admin tx pre-fleet-boot. |
-| Rotation procedure | 1. Generate new key. 2. Store in Secret Manager. 3. Tu signs `grantRole(SETTLER_ROLE, newAddr)`. 4. Cloud Run env update pointing to new secret. 5. Restart settler. 6. Tu signs `revokeRole(SETTLER_ROLE, oldAddr)`. 7. Delete old secret after 1 week. No contract change. |
+| Rotation procedure (Phase 1) | 1. Generate new key. 2. Tu signs `grantRole(SETTLER_ROLE, newAddr)`. 3. Update Cloud Run env value with new hex. 4. Roll revision. 5. Tu signs `revokeRole(SETTLER_ROLE, oldAddr)`. No contract change. |
+| Rotation procedure (Phase 2, post-Rick) | Same as today's Solana model: add new Secret Manager version, point env to `versions/latest` (no env change if already on `/latest`), restart, revoke role on old EOA, delete old version after 1 week. |
 | Ops signature verify | EIP-191 personal-sign for v1 (matches MetaMask / WalletConnect default). EIP-4361 (SIWE) deferred to v2. `adapter.verifyOpsSignature` impl uses `viem.verifyMessage`. |
 | Allowlist columns | `OperatorAllowlist.walletPubkey @db.VarChar(44)` widens to `VarChar(64)` in WP-MN-04 T4 to accept both base58-44 and hex-42 (0x-prefixed). |
 

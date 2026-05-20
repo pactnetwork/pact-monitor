@@ -42,20 +42,21 @@ T1..T5. All atomic code changes against local docker postgres; no remote pushes 
 
 ## What captain-proxy WILL NOT execute
 
-T6 (fleet boot runbook). This is Tu's checklist:
+T6 (fleet boot runbook). This is Tu's checklist (D6 §6 / RESEARCH §8 Phase 1):
 
 1. Generate Arc EOA + fund with testnet gas (Tu owns the private key).
 2. `cast send PactSettler.grantRole(SETTLER_ROLE, <addr>)` from Tu's admin EOA on Arc Testnet.
-3. `gcloud secrets create pact-settler-arc-testnet` + add version.
-4. Cloud Run revision env updates × 3 services.
-5. Roll revisions; verify boot logs.
-6. Run the end-to-end smoke (register endpoint → top up pool → agent call → indexer row → read API).
+3. Cloud Run revision env updates × 3 services. **`PACT_SETTLER_KEYPAIR_ARC_TESTNET` value is the raw `0x`-hex private key** — no Secret Manager path. (Tu lacks GCP Secret Manager permissions; Rick swaps to a `projects/...` path in a Phase 2 follow-up, no code change needed.)
+4. Roll revisions; verify boot logs.
+5. Run the end-to-end smoke (register endpoint → top up pool → agent call → indexer row → read API).
 
 Captain-proxy CANNOT do these because:
 - Step 1: private-key custody is a Tu decision.
 - Step 2: requires Tu's admin EOA signature.
-- Steps 3–5: GCP and Cloud Run are Tu's deployment surface.
-- Step 6: real testnet spend.
+- Steps 3–4: Cloud Run is Tu's deployment surface.
+- Step 5: real testnet spend.
+
+**Phase 2 (Rick, post-WP-MN-04, NOT blocking Gate B):** `gcloud secrets create pact-settler-arc-testnet` + add version with the same hex + swap Cloud Run env value from raw hex to the resource path. Code path identical; only the env value changes.
 
 ---
 
