@@ -4,8 +4,9 @@
     "name": "arc-testnet",
     "usdcAddress": "0x3600000000000000000000000000000000000000",
     "usdcDecimals": 6,
-    "rpcUrl": null,
-    "blockTimeMs": null,
-    "finalityBlocks": null
+    "rpcUrl": "https://rpc.testnet.arc.network",
+    "blockTimeMs": 500,
+    "finalityBlocks": 64,
+    "deploymentBlock": 42953139
   }
 }
