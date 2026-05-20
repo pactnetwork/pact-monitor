@@ -304,3 +304,52 @@ export async function fetchAgent(pubkey: string): Promise<AgentHistory> {
     recentCalls: callRows.map((c) => mapCall(c)),
   };
 }
+
+// ---------------------------------------------------------------------------
+// Recipients (C2 indexer routes — used by the C4 /ops/earnings views).
+// Distinct from the older `RecipientEarnings` type in ./types.ts (which is a
+// per-endpoint fee-recipient summary).
+// ---------------------------------------------------------------------------
+
+export interface RecipientLifetime {
+  recipientPubkey: string;
+  recipientKind: number | null;
+  lifetimeEarnedLamports: string;
+  lastUpdated: string | null;
+}
+
+export interface RecipientSettlementItem {
+  id: string;
+  settledAt: string;
+  txSignature: string;
+  amountLamports: string;
+  recipientKind: number;
+}
+
+export interface RecipientSettlementsPage {
+  items: RecipientSettlementItem[];
+  nextCursor: string | null;
+}
+
+export async function fetchRecipient(
+  pubkey: string,
+): Promise<RecipientLifetime> {
+  // Server returns the zero envelope (200, not 404) when the pubkey has no
+  // RecipientEarnings row — see packages/indexer/src/api/recipients.controller.ts.
+  return getJson<RecipientLifetime>(
+    `/api/recipients/${encodeURIComponent(pubkey)}`,
+  );
+}
+
+export async function fetchRecipientSettlements(
+  pubkey: string,
+  opts: { limit?: number; cursor?: string } = {},
+): Promise<RecipientSettlementsPage> {
+  const params = new URLSearchParams();
+  if (opts.limit !== undefined) params.set("limit", String(opts.limit));
+  if (opts.cursor !== undefined) params.set("cursor", opts.cursor);
+  const qs = params.toString();
+  return getJson<RecipientSettlementsPage>(
+    `/api/recipients/${encodeURIComponent(pubkey)}/settlements${qs ? `?${qs}` : ""}`,
+  );
+}

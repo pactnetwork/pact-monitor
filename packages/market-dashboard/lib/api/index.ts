@@ -25,6 +25,12 @@ export const fetchEndpoints = useReal
   ? realApi.fetchEndpoints
   : mockApi.fetchEndpoints;
 export const fetchAgent = useReal ? realApi.fetchAgent : mockApi.fetchAgent;
+export const fetchRecipient = useReal
+  ? realApi.fetchRecipient
+  : mockApi.fetchRecipient;
+export const fetchRecipientSettlements = useReal
+  ? realApi.fetchRecipientSettlements
+  : mockApi.fetchRecipientSettlements;
 
 export type {
   Stats,

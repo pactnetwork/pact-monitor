@@ -249,3 +249,35 @@ export async function fetchAgent(pubkey: string): Promise<AgentHistory> {
     recentCalls: agentCalls,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Recipients (C4): empty fixtures so the /ops/earnings view renders under
+// the mock data layer (no indexer URL set).
+// ---------------------------------------------------------------------------
+
+export interface RecipientLifetime {
+  recipientPubkey: string;
+  recipientKind: number | null;
+  lifetimeEarnedLamports: string;
+  lastUpdated: string | null;
+}
+
+export interface RecipientSettlementsPage {
+  items: never[];
+  nextCursor: null;
+}
+
+export async function fetchRecipient(
+  pubkey: string,
+): Promise<RecipientLifetime> {
+  return {
+    recipientPubkey: pubkey,
+    recipientKind: null,
+    lifetimeEarnedLamports: "0",
+    lastUpdated: null,
+  };
+}
+
+export async function fetchRecipientSettlements(): Promise<RecipientSettlementsPage> {
+  return { items: [], nextCursor: null };
+}

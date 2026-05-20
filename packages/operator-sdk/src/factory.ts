@@ -36,9 +36,20 @@ export interface OperatorInstance {
   /** Resolved config (echo of input plus any defaults filled in). */
   readonly config: OperatorConfig;
   /**
+   * Read on-chain `ProtocolConfig.authority` and return it. Lets a caller
+   * compare against any pubkey they have (e.g. a wallet-adapter's
+   * `publicKey` in a browser, where no `Signer.secretKey` is available).
+   * Throws `OperatorError.CONFIG_INVALID` if the ProtocolConfig PDA is
+   * missing on this RPC (wrong programId / not initialized).
+   */
+  getProtocolAuthority(): Promise<PublicKey>;
+
+  /**
    * Read on-chain `ProtocolConfig.authority` and assert the supplied signer
    * matches. Convenience for callers that want an early `AUTHORITY_MISMATCH`
-   * before submitting. Returns the on-chain authority on success.
+   * before submitting. Returns the on-chain authority on success. Backend /
+   * CLI usage; browsers should call `getProtocolAuthority()` and compare
+   * against `wallet.publicKey` themselves to avoid an unsafe Signer cast.
    */
   assertProtocolAuthority(signer: Signer): Promise<PublicKey>;
 
@@ -129,20 +140,25 @@ export function createOperator(config: OperatorConfig): OperatorInstance {
       buildTopUpCoveragePoolIxs(config, authority, params),
   };
 
+  const readProtocolAuthority = async (): Promise<PublicKey> => {
+    const [pda] = getProtocolConfigPda(config.programId);
+    const info = await config.connection.getAccountInfo(pda, "confirmed");
+    if (!info) {
+      throw new OperatorError(
+        OperatorErrorCode.CONFIG_INVALID,
+        `ProtocolConfig PDA ${pda.toBase58()} not found — wrong programId / not initialized on this RPC?`,
+      );
+    }
+    const cfg = decodeProtocolConfig(info.data);
+    return new PublicKey(cfg.authority as never);
+  };
+
   return {
     config,
     build,
+    getProtocolAuthority: readProtocolAuthority,
     assertProtocolAuthority: async (signer) => {
-      const [pda] = getProtocolConfigPda(config.programId);
-      const info = await config.connection.getAccountInfo(pda, "confirmed");
-      if (!info) {
-        throw new OperatorError(
-          OperatorErrorCode.CONFIG_INVALID,
-          `ProtocolConfig PDA ${pda.toBase58()} not found — wrong programId / not initialized on this RPC?`,
-        );
-      }
-      const cfg = decodeProtocolConfig(info.data);
-      const onChainAuth = new PublicKey(cfg.authority as never);
+      const onChainAuth = await readProtocolAuthority();
       if (!onChainAuth.equals(signer.publicKey)) {
         throw new OperatorError(
           OperatorErrorCode.AUTHORITY_MISMATCH,
