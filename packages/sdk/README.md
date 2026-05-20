@@ -4,6 +4,12 @@ Unified Pact Network **agent** SDK. Replace `fetch` with `pact.fetch` and any
 **registered** API call gets parametric refund coverage — automatically, on
 Pact Network V1.
 
+Install from npm after the SDK publish workflow has released the package:
+
+```bash
+npm install @pact-network/sdk
+```
+
 ```ts
 import { createPact } from "@pact-network/sdk";
 import { Keypair } from "@solana/web3.js";

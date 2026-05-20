@@ -599,9 +599,6 @@ importers:
       '@pact-network/protocol-v1-client':
         specifier: workspace:*
         version: link:../protocol-v1-client
-      '@pact-network/wrap':
-        specifier: workspace:*
-        version: link:../wrap
       '@solana/web3.js':
         specifier: ^1.95.8
         version: 1.98.4(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)

@@ -21,7 +21,7 @@
     "README.md"
   ],
   "scripts": {
-    "_build:deps": "pnpm --filter @pact-network/protocol-v1-client --filter @pact-network/wrap build",
+    "_build:deps": "pnpm --filter @pact-network/protocol-v1-client build",
     "prebuild": "pnpm run _build:deps",
     "build": "tsc",
     "clean": "rm -rf dist",
@@ -31,7 +31,8 @@
     "test": "vitest run",
     "test:e2e": "vitest run src/__tests__/integration.test.ts",
     "test:watch": "vitest",
-    "coverage": "vitest run --coverage"
+    "coverage": "vitest run --coverage",
+    "smoke:pack": "bash scripts/smoke-pack.sh"
   },
   "keywords": [
     "pact-network",
@@ -49,7 +50,6 @@
   },
   "dependencies": {
     "@pact-network/protocol-v1-client": "workspace:*",
-    "@pact-network/wrap": "workspace:*",
     "@solana/web3.js": "^1.95.8",
     "bs58": "^6.0.0",
     "tweetnacl": "^1.0.3"
