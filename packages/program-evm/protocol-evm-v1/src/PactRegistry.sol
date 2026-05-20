@@ -4,7 +4,7 @@ pragma solidity ^0.8.30;
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 import {IPactRegistry} from "./interfaces/IPactRegistry.sol";
 import {PactEvents} from "./PactEvents.sol";
-import {ArcConfig} from "./ArcConfig.sol";
+import {ProtocolInvariants} from "./ProtocolInvariants.sol";
 import {FeeValidation} from "./libraries/FeeValidation.sol";
 import "./errors/PactErrors.sol";
 
@@ -111,7 +111,7 @@ contract PactRegistry is IPactRegistry, PactEvents, AccessControl {
             count = feeRecipientCount;
         } else {
             // register_endpoint.rs: pc_default_count > MAX → FeeRecipientArrayTooLong
-            if (_defaultCount > ArcConfig.MAX_FEE_RECIPIENTS) revert FeeRecipientArrayTooLong();
+            if (_defaultCount > ProtocolInvariants.MAX_FEE_RECIPIENTS) revert FeeRecipientArrayTooLong();
             for (uint256 i = 0; i < 8; i++) entries[i] = _defaultFeeRecipients[i];
             count = _defaultCount;
         }

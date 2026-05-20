@@ -10,7 +10,7 @@ import { ARC_TESTNET_CHAIN_ID, ARC_TESTNET_USDC } from "../src/constants.js";
 // Spec §5: addresses.ts is the EVM analogue of pda.ts — "deployed addresses
 // per chain — no PDAs" (§4 #2). WP-EVM-07 COMPLETE: the Arc Testnet protocol
 // contracts are deployed + arcscan-verified (2026-05-19) and baked into
-// DEPLOYMENTS (EIP-55 checksummed); chain id + USDC are from ArcConfig.
+// DEPLOYMENTS (EIP-55 checksummed); chain id + USDC are from ProtocolInvariants + chains.json.
 describe("addresses — per-chain deployment registry (D-B)", () => {
   it("Arc Testnet entry has known constants and WP-07 deployed addresses", () => {
     const d = DEPLOYMENTS[ARC_TESTNET];

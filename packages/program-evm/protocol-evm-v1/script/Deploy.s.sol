@@ -5,7 +5,7 @@ import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {IERC20Metadata} from
     "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
-import {ArcConfig} from "../src/ArcConfig.sol";
+import {ProtocolInvariants} from "../src/ProtocolInvariants.sol";
 import {IPactRegistry} from "../src/interfaces/IPactRegistry.sol";
 import {PactRegistry} from "../src/PactRegistry.sol";
 import {PactPool} from "../src/PactPool.sol";
@@ -49,14 +49,14 @@ contract Deploy is Script {
         address treasuryVault = vm.envAddress("TREASURY_VAULT_ADDRESS");
         require(treasuryVault != address(0), "TREASURY_VAULT_ZERO");
 
-        address usdc = ArcConfig.ARC_TESTNET_USDC;
+        address usdc = ProtocolInvariants.ARC_TESTNET_USDC;
 
         // --- USDC-decimals guard (handoff (c); same require() shape as
         //     test/UsdcDecimals.t.sol). FIRST action before any construction
         //     so a wrong-decimals USDC fails the deploy loudly with zero
         //     contracts deployed. ---
         require(
-            IERC20Metadata(usdc).decimals() == ArcConfig.EXPECTED_USDC_DECIMALS,
+            IERC20Metadata(usdc).decimals() == ProtocolInvariants.EXPECTED_USDC_DECIMALS,
             "USDC_DECIMALS_MISMATCH"
         );
 
@@ -65,7 +65,7 @@ contract Deploy is Script {
         console.log("deployer/auth   :", deployer);
         console.log("usdc            :", usdc);
         console.log("treasury vault  :", treasuryVault);
-        console.log("maxTotalFeeBps  :", uint256(ArcConfig.DEFAULT_MAX_TOTAL_FEE_BPS));
+        console.log("maxTotalFeeBps  :", uint256(ProtocolInvariants.DEFAULT_MAX_TOTAL_FEE_BPS));
         console.log("default fee tmpl : EMPTY (defaultCount_=0) [C2 ratified]");
 
         // EMPTY default fee template (C2 #3): defaultRecipients_ all-zero,
@@ -82,7 +82,7 @@ contract Deploy is Script {
             deployer,
             usdc,
             treasuryVault,
-            ArcConfig.DEFAULT_MAX_TOTAL_FEE_BPS,
+            ProtocolInvariants.DEFAULT_MAX_TOTAL_FEE_BPS,
             emptyDefaults,
             defaultCount
         );

@@ -26,13 +26,13 @@ Verified network facts (design PR #201 §4.8.4, checked 2026-05-15):
 | Testnet USDC | `0x3600000000000000000000000000000000000000` (6-decimal ERC-20 interface) |
 | EVM | Prague hard fork (`evm_version = "prague"`) |
 
-These constants are pinned in `src/ArcConfig.sol` and `.env.example`.
+These constants are pinned in `src/ProtocolInvariants.sol` and `.env.example`.
 
 ## Layout
 
 ```
 src/
-  ArcConfig.sol          Arc Testnet constants
+  ProtocolInvariants.sol    Protocol-wide constants
   PactRegistry.sol       endpoint registry + protocol kill switch (stub)
   PactPool.sol           per-slug USDC coverage pools (stub)
   PactSettler.sol        settleBatch executor (stub)
