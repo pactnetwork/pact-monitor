@@ -19,6 +19,13 @@ import {PactSettler} from "../src/PactSettler.sol";
 /// @dev Deploy script ONLY — no contract source is edited (contracts LOCKED
 ///      WP-02..05; WP-06 added zero behavior). Replaces the WP-EVM-01 stub.
 ///
+///      WP-MN-01 generalized chain selection: the script now reads
+///      config/chains.json via vm.parseJsonKeys iteration keyed on
+///      CHAIN_ID env (defaults to block.chainid). The USDC-decimals
+///      guard remains in the exact position WP-EVM-07 placed it; a
+///      new invariant cross-check (chains.json usdcDecimals ==
+///      ProtocolInvariants.EXPECTED_USDC_DECIMALS) precedes it.
+///
 ///      C1 (captain GATE A verdict): `authority_` IS the deployer EOA, full
 ///      stop. The post-deploy SETTLER_ROLE grants are issued BY the deployer
 ///      and only succeed if deployer == registry.authority() (deployer holds

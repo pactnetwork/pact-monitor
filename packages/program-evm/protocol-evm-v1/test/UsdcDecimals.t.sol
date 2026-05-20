@@ -37,7 +37,12 @@ contract UsdcDecimalsTest is Test {
         this.requireUsdcDecimals(address(usdc));
     }
 
-    function test_GuardRevertsOnWrongDecimals() public {
+    /// @notice WP-MN-01 Gate B exit step 3: "USDC-decimals deploy guard fires
+    ///         on a synthetic 18-decimals chain entry (negative test)." This
+    ///         test materializes a synthetic 18-decimal token (the Mock18 above)
+    ///         and proves the guard reverts loudly with the production error
+    ///         shape ("USDC_DECIMALS_MISMATCH").
+    function test_GuardRevertsOnSynthetic18DecimalChain() public {
         Mock18 bad = new Mock18();
         // Non-vacuous: the guard distinguishes a wrong-decimals token.
         assertTrue(bad.decimals() != ProtocolInvariants.EXPECTED_USDC_DECIMALS);
