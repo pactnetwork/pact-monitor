@@ -35,7 +35,7 @@
  *
  * Wire shape: 104 bytes per event, with `fee_recipient_count_hint` at offset
  * 85 (the on-chain handler bounds-checks the per-event slice). This is encoded
- * by `buildSettleBatchIx` from @pact-network/protocol-v1-client — we don't
+ * by `buildSettleBatchIx` from @q3labs/pact-protocol-v1-client — we don't
  * touch the byte-level layout here.
  */
 import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
@@ -65,7 +65,7 @@ import {
   slugBytes,
   USDC_MINT_DEVNET,
   type SettlementEvent as ChainSettlementEvent,
-} from "@pact-network/protocol-v1-client";
+} from "@q3labs/pact-protocol-v1-client";
 
 import { SettleBatch } from "../batcher/batcher.service";
 import { SecretLoaderService } from "../config/secret-loader.service";

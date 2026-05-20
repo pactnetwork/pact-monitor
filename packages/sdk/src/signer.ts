@@ -16,7 +16,7 @@
  * V1's primary target is server-side agents holding a hot `Keypair`.
  * `@solana/kit` is intentionally NOT supported to avoid a second, conflicting
  * Solana library tree — `@solana/web3.js` 1.x is the only Solana runtime dep
- * (matches `@pact-network/protocol-v1-client` and `@q3labs/pact-cli`).
+ * (matches `@q3labs/pact-protocol-v1-client` and `@q3labs/pact-cli`).
  */
 import type { Keypair, Transaction } from "@solana/web3.js";
 

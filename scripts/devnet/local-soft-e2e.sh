@@ -100,7 +100,7 @@ echo ">> [8] soft-mode E2E (local proxy, no indexer)"
 PACT_SDK_E2E=1 PACT_DEVNET_SECRET_KEY="$SK" \
   PACT_DEVNET_PROXY_URL="http://localhost:$PROXY_PORT" \
   PACT_DEVNET_PROGRAM_ID="$PROGRAM_ID" \
-  pnpm --filter @pact-network/sdk run test:e2e
+  pnpm --filter @q3labs/pact-sdk run test:e2e
 
 echo ">> [9] on-chain corroboration"
 pnpm --filter @pact-network/scripts-devnet exec tsx verify-network.ts \

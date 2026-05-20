@@ -1,5 +1,5 @@
 /**
- * Constants for `@pact-network/protocol-v1-client`.
+ * Constants for `@q3labs/pact-protocol-v1-client`.
  *
  * Mirrors `packages/program/programs-pinocchio/pact-network-v1-pinocchio/src/constants.rs`
  * and `pda.rs`. Values flagged // CANONICAL are part of the public on-wire

@@ -10,7 +10,7 @@ import {
   ENDPOINT_CONFIG_LEN,
   EndpointConfig,
   PROGRAM_ID,
-} from "@pact-network/protocol-v1-client";
+} from "@q3labs/pact-protocol-v1-client";
 import {
   Connection,
   GetProgramAccountsResponse,
@@ -252,7 +252,7 @@ export class OnChainSyncService implements OnModuleInit {
 
 /**
  * Convert the on-chain 16-byte NUL-padded slug array to a JS string.
- * Mirrors `slugBytes()` in `@pact-network/protocol-v1-client/pda` in reverse:
+ * Mirrors `slugBytes()` in `@q3labs/pact-protocol-v1-client/pda` in reverse:
  * strip every byte from the first NUL onward (bytes after the slug are
  * deterministically zero-filled).
  */

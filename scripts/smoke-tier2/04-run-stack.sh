@@ -96,7 +96,7 @@ echo "Running prisma migrate deploy"
 
 # 7. Build indexer + settler + protocol-v1-client
 echo "Building protocol-v1-client + db + indexer + settler"
-( cd "$REPO_ROOT" && pnpm --filter @pact-network/db --filter @pact-network/protocol-v1-client run build 2>&1 | tee "$LOGS_DIR/build-libs.log" )
+( cd "$REPO_ROOT" && pnpm --filter @pact-network/db --filter @q3labs/pact-protocol-v1-client run build 2>&1 | tee "$LOGS_DIR/build-libs.log" )
 ( cd "$REPO_ROOT" && pnpm --filter @pact-network/indexer run build 2>&1 | tee "$LOGS_DIR/build-indexer.log" )
 ( cd "$REPO_ROOT" && pnpm --filter @pact-network/settler run build 2>&1 | tee "$LOGS_DIR/build-settler.log" )
 

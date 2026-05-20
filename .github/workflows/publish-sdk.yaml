@@ -1,6 +1,6 @@
-name: Publish @pact-network/sdk
+name: Publish @q3labs/pact-sdk
 
-# Publishes @pact-network/sdk and its public protocol client dependency to npm
+# Publishes @q3labs/pact-sdk and its public protocol client dependency to npm
 # on every push to main that touches the SDK release surface. The workflow is
 # path-gated, version-monotonic, and idempotent on re-runs.
 
@@ -41,17 +41,17 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build publish packages
-        run: pnpm --filter @pact-network/protocol-v1-client --filter @pact-network/sdk build
+        run: pnpm --filter @q3labs/pact-protocol-v1-client --filter @q3labs/pact-sdk build
 
       - name: Typecheck publish packages
         run: |
-          pnpm --filter @pact-network/protocol-v1-client typecheck
-          pnpm --filter @pact-network/sdk typecheck
+          pnpm --filter @q3labs/pact-protocol-v1-client typecheck
+          pnpm --filter @q3labs/pact-sdk typecheck
 
       - name: Test publish packages
         run: |
-          pnpm --filter @pact-network/protocol-v1-client test
-          pnpm --filter @pact-network/sdk test
+          pnpm --filter @q3labs/pact-protocol-v1-client test
+          pnpm --filter @q3labs/pact-sdk test
 
       - name: Resolve protocol client version
         id: protocol_check
@@ -79,17 +79,38 @@ jobs:
             echo "::notice::Will publish $NAME@$VERSION."
           fi
 
-      - name: Publish @pact-network/protocol-v1-client
+      - name: Publish @q3labs/pact-protocol-v1-client
         if: steps.protocol_check.outputs.skip == 'false'
         working-directory: packages/protocol-v1-client
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         # TODO(repo-public): re-add `--provenance` and id-token: write when
         # pactnetwork/pact-monitor is public.
-        run: pnpm publish --access public --no-git-checks
+        run: |
+          # Dry-run first so package metadata/packing problems surface before
+          # the real append-only npm publish. If this real publish succeeds but
+          # a later SDK gate fails, recover by bumping this package version.
+          pnpm publish --access public --no-git-checks --dry-run
+          pnpm publish --access public --no-git-checks
+
+      - name: Verify @q3labs/pact-protocol-v1-client on npm
+        env:
+          NAME: ${{ steps.protocol_check.outputs.name }}
+          VERSION: ${{ steps.protocol_check.outputs.version }}
+        run: |
+          set -euo pipefail
+          for i in {1..12}; do
+            if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
+              echo "$NAME@$VERSION is visible on npm"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::$NAME@$VERSION was not visible on npm after 60s"
+          exit 1
 
       - name: Pack and install external consumer smoke
-        run: pnpm --filter @pact-network/sdk smoke:pack
+        run: pnpm --filter @q3labs/pact-sdk smoke:pack
 
       - name: Resolve SDK version
         id: sdk_check
@@ -117,14 +138,32 @@ jobs:
             echo "::notice::Will publish $NAME@$VERSION."
           fi
 
-      - name: Publish @pact-network/sdk
+      - name: Publish @q3labs/pact-sdk
         if: steps.sdk_check.outputs.skip == 'false'
         working-directory: packages/sdk
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         # TODO(repo-public): re-add `--provenance` and id-token: write when
         # pactnetwork/pact-monitor is public.
-        run: pnpm publish --access public --no-git-checks
+        run: |
+          pnpm publish --access public --no-git-checks --dry-run
+          pnpm publish --access public --no-git-checks
+
+      - name: Verify @q3labs/pact-sdk on npm
+        env:
+          NAME: ${{ steps.sdk_check.outputs.name }}
+          VERSION: ${{ steps.sdk_check.outputs.version }}
+        run: |
+          set -euo pipefail
+          for i in {1..12}; do
+            if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
+              echo "$NAME@$VERSION is visible on npm"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::$NAME@$VERSION was not visible on npm after 60s"
+          exit 1
 
       - name: Tag and release
         if: steps.sdk_check.outputs.skip == 'false'
@@ -139,7 +178,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git tag -a "$TAG" -m "$NAME@$VERSION"
           git push origin "$TAG"
-          NOTES=$'Published to npm: https://www.npmjs.com/package/'"${NAME}"'/v/'"${VERSION}"$'\n\nAgent SDK for Pact Network V1. External install smoke passed before publish: `npm install @pact-network/sdk` and ESM import of `createPact`.'
+          NOTES=$'Published to npm: https://www.npmjs.com/package/'"${NAME}"'/v/'"${VERSION}"$'\n\nAgent SDK for Pact Network V1. External install smoke passed before publish: `npm install @q3labs/pact-sdk` and ESM import of `createPact`.'
           gh release create "$TAG" \
             --title "$NAME@$VERSION" \
             --notes "$NOTES" \

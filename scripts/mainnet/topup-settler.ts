@@ -57,7 +57,7 @@ import bs58 from "bs58";
 import {
   decodeSettlementAuthority,
   getSettlementAuthorityPda,
-} from "@pact-network/protocol-v1-client";
+} from "@q3labs/pact-protocol-v1-client";
 
 // MAINNET program ID (this is a scripts/mainnet/ ops tool — see header). The
 // devnet program is 5jBQb7fL… and must never be the default here; an operator

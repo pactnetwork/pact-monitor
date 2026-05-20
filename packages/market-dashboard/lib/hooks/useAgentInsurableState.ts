@@ -23,7 +23,7 @@ import {
   PROGRAM_ID,
   getSettlementAuthorityPda,
   type AgentInsurableState,
-} from "@pact-network/protocol-v1-client";
+} from "@q3labs/pact-protocol-v1-client";
 
 import { SOLANA_RPC, USDC_MINT } from "../solana";
 

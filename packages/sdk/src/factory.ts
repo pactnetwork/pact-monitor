@@ -15,7 +15,7 @@ import {
   getEndpointConfigPda,
   decodeEndpointConfig,
   slugBytes,
-} from "@pact-network/protocol-v1-client";
+} from "@q3labs/pact-protocol-v1-client";
 import { validateConfig, type PactConfig } from "./config.js";
 import { resolveNetwork, type ResolvedNetwork } from "./network.js";
 import { resolveSecretKey, signerPublicKey } from "./signer.js";

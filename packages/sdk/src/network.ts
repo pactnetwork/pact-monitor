@@ -31,7 +31,7 @@ import {
   PROGRAM_ID,
   USDC_MINT_MAINNET,
   USDC_MINT_DEVNET,
-} from "@pact-network/protocol-v1-client";
+} from "@q3labs/pact-protocol-v1-client";
 
 export type Network = "mainnet" | "devnet" | "localnet";
 

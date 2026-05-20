@@ -1,7 +1,7 @@
 /**
  * The ONE webhook contract (indexer -> agent), in the repo's existing
  * `v1\n…` ed25519/bs58 family (same as market-proxy verify-signature.ts and
- * @pact-network/sdk proxy-transport.ts). NO HMAC, NO per-agent shared secret:
+ * @q3labs/pact-sdk proxy-transport.ts). NO HMAC, NO per-agent shared secret:
  * the indexer signs with its own ed25519 key; the agent verifies a single
  * pinned indexer pubkey (it travels in `x-pact-agent`, self-describing).
  *

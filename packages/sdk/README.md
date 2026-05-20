@@ -1,4 +1,4 @@
-# @pact-network/sdk
+# @q3labs/pact-sdk
 
 Unified Pact Network **agent** SDK. Replace `fetch` with `pact.fetch` and any
 **registered** API call gets parametric refund coverage — automatically, on
@@ -7,11 +7,11 @@ Pact Network V1.
 Install from npm after the SDK publish workflow has released the package:
 
 ```bash
-npm install @pact-network/sdk
+npm install @q3labs/pact-sdk
 ```
 
 ```ts
-import { createPact } from "@pact-network/sdk";
+import { createPact } from "@q3labs/pact-sdk";
 import { Keypair } from "@solana/web3.js";
 
 const pact = await createPact({
@@ -88,7 +88,7 @@ never loses an observation — the next `createPact()` resumes reconciliation.
 
 ## Operator notes (blockers)
 
-- **B1 — devnet/localnet program ID.** `@pact-network/protocol-v1-client`
+- **B1 — devnet/localnet program ID.** `@q3labs/pact-protocol-v1-client`
   ships a program ID for **mainnet only** and marks every prior devnet deploy
   ORPHAN. On devnet/localnet you **must** pass a confirmed
   `createPact({ programId })`; on-chain ops (`setup`/`topUp`/`policy`) throw a
@@ -105,7 +105,7 @@ never loses an observation — the next `createPact()` resumes reconciliation.
 ## Build & test
 
 ```bash
-pnpm --filter @pact-network/sdk build
-pnpm --filter @pact-network/sdk test
-pnpm --filter @pact-network/sdk typecheck
+pnpm --filter @q3labs/pact-sdk build
+pnpm --filter @q3labs/pact-sdk test
+pnpm --filter @q3labs/pact-sdk typecheck
 ```

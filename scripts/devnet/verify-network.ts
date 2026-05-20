@@ -74,7 +74,7 @@ import {
   getCallRecordPda,
   SettlementStatus,
   USDC_MINT_DEVNET,
-} from "@pact-network/protocol-v1-client";
+} from "@q3labs/pact-protocol-v1-client";
 
 const DEFAULT_RPC = "https://api.devnet.solana.com";
 const DEFAULT_INDEXER = "https://indexer.pactnetwork.io";

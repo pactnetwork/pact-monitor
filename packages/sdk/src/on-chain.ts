@@ -10,7 +10,7 @@
  *
  * The approve + revoke flow is the proven path from
  * `packages/cli/src/cmd/approve.ts`; PDA/ix builders are reused from
- * `@pact-network/protocol-v1-client`. The associated-token-account
+ * `@q3labs/pact-protocol-v1-client`. The associated-token-account
  * create-idempotent instruction is built inline (well-known program, fixed
  * layout) so the SDK keeps `@solana/web3.js` as its only Solana runtime dep.
  *
@@ -36,7 +36,7 @@ import {
   getAgentInsurableState,
   TOKEN_PROGRAM_ID,
   type AgentInsurableState,
-} from "@pact-network/protocol-v1-client";
+} from "@q3labs/pact-protocol-v1-client";
 import { PactError, PactErrorCode } from "./errors.js";
 import { isKeypair, signerPublicKey, type PactSigner } from "./signer.js";
 

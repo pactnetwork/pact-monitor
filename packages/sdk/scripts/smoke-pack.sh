@@ -4,6 +4,15 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 TMP_DIR="$(mktemp -d)"
 GENERATED_TARBALLS=()
+
+node -e '
+const major = Number(process.versions.node.split(".")[0]);
+if (!Number.isFinite(major) || major < 18) {
+  console.error(`@q3labs/pact-sdk smoke requires Node >=18, got ${process.version}`);
+  process.exit(1);
+}
+'
+
 cleanup() {
   rm -rf "$TMP_DIR"
   if ((${#GENERATED_TARBALLS[@]})); then
@@ -64,13 +73,27 @@ npm init -y >/dev/null
 npm install "$PROTOCOL_TARBALL" "$SDK_TARBALL"
 
 cat > smoke.mjs <<'EOF'
-import { createPact } from "@pact-network/sdk";
+import { createPact } from "@q3labs/pact-sdk";
+import { Keypair } from "@solana/web3.js";
 
 if (typeof createPact !== "function") {
   throw new Error(`expected createPact to be a function, got ${typeof createPact}`);
 }
 
-console.log("ok createPact is", typeof createPact);
+const pact = await createPact({
+  network: "localnet",
+  signer: Keypair.generate(),
+  storagePath: "./pact-smoke-observations.jsonl",
+  installSignalHandlers: false,
+});
+
+if (!pact || typeof pact.fetch !== "function" || typeof pact.shutdown !== "function") {
+  throw new Error("expected createPact() to return a pact instance with fetch/shutdown");
+}
+
+await pact.shutdown();
+
+console.log("ok createPact produced", typeof pact.fetch);
 EOF
 
 node smoke.mjs

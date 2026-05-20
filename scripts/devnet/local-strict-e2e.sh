@@ -249,7 +249,7 @@ PACT_SDK_E2E=1 PACT_DEVNET_SECRET_KEY="$AGENT_SK" \
   PACT_DEVNET_PROXY_URL="http://localhost:$PROXY_PORT" \
   PACT_DEVNET_PROGRAM_ID="$PROGRAM_ID" \
   PACT_DEVNET_INDEXER_URL="http://localhost:$INDEXER_PORT" \
-  pnpm --filter @pact-network/sdk run test:e2e 2>&1 | tee /tmp/pact-strict-sdk.log
+  pnpm --filter @q3labs/pact-sdk run test:e2e 2>&1 | tee /tmp/pact-strict-sdk.log
 SDK_RC=${PIPESTATUS[0]}
 set -e
 echo "   SDK strict vitest exit = $SDK_RC"

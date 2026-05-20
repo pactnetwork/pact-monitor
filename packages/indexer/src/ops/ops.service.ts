@@ -65,7 +65,7 @@ export class OpsService {
   }
 
   // The ix builders below shape the JSON envelope that gets handed to the
-  // wallet for signing. When @pact-network/protocol-v1-client lands in the
+  // wallet for signing. When @q3labs/pact-protocol-v1-client lands in the
   // workspace, these will delegate to its `buildPauseEndpointIx`,
   // `buildUpdateEndpointConfigIx`, `buildTopUpCoveragePoolIx`, and
   // `buildUpdateFeeRecipientsIx` helpers respectively. The wire format
@@ -73,7 +73,7 @@ export class OpsService {
   // callers do not need to change.
   //
   // TODO(layered-phase1): replace these stubs with calls into
-  // `@pact-network/protocol-v1-client` once Step C of the layering plan
+  // `@q3labs/pact-protocol-v1-client` once Step C of the layering plan
   // lands the protocol-v1-client package.
 
   async buildPauseEndpointTx(slug: string, paused: boolean): Promise<string> {

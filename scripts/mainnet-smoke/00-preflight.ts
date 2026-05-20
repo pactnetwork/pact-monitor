@@ -42,7 +42,7 @@ import {
   getProtocolConfigPda,
   getSettlementAuthorityPda,
   getTreasuryPda,
-} from "@pact-network/protocol-v1-client";
+} from "@q3labs/pact-protocol-v1-client";
 import { loadConfig, MAINNET_ENDPOINT_SLUGS } from "./lib/config";
 import { patchState } from "./lib/state";
 

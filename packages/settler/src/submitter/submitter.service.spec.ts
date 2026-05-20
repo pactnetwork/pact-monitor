@@ -14,7 +14,7 @@ import {
   type EndpointConfig,
   type CoveragePool,
   type Treasury,
-} from "@pact-network/protocol-v1-client";
+} from "@q3labs/pact-protocol-v1-client";
 
 // ---------------------------------------------------------------------------
 // Mock the chain plumbing. We keep web3.js's PublicKey real so derivations and
@@ -42,9 +42,9 @@ const decodeCoveragePoolMock = vi.fn();
 const decodeTreasuryMock = vi.fn();
 const buildSettleBatchIxMock = vi.fn();
 
-vi.mock("@pact-network/protocol-v1-client", async (importOriginal) => {
+vi.mock("@q3labs/pact-protocol-v1-client", async (importOriginal) => {
   const actual = await importOriginal<
-    typeof import("@pact-network/protocol-v1-client")
+    typeof import("@q3labs/pact-protocol-v1-client")
   >();
   return {
     ...actual,
@@ -265,7 +265,7 @@ describe("SubmitterService", () => {
       "5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5",
     );
     const { getEndpointConfigPda, getCoveragePoolPda, getTreasuryPda, slugBytes } =
-      await import("@pact-network/protocol-v1-client");
+      await import("@q3labs/pact-protocol-v1-client");
     [heliusEpPda] = getEndpointConfigPda(programId, slugBytes("helius"));
     [heliusPoolPda] = getCoveragePoolPda(programId, slugBytes("helius"));
     [birdeyeEpPda] = getEndpointConfigPda(programId, slugBytes("birdeye"));
@@ -356,7 +356,7 @@ describe("SubmitterService", () => {
       "5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5",
     );
     const { getProtocolConfigPda } = await import(
-      "@pact-network/protocol-v1-client"
+      "@q3labs/pact-protocol-v1-client"
     );
     const [expectedPcPda] = getProtocolConfigPda(programId);
 

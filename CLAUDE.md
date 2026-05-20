@@ -18,7 +18,7 @@ For the canonical architecture and build plan, see:
 - **Proxy:** Hono on Cloud Run (Node 22), `@hono/node-server`
 - **Settler / Indexer:** NestJS on Cloud Run, Pub/Sub queue, Cloud SQL Postgres
 - **Dashboard:** Next.js 15 (App Router), Tailwind 4, shadcn/ui, `@solana/wallet-adapter-react`
-- **Solana client:** `@solana/web3.js` 1.x as workspace peerDep, `@solana/kit` 2.x where needed, hand-written Codama-style decoders in `@pact-network/protocol-v1-client`
+- **Solana client:** `@solana/web3.js` 1.x as workspace peerDep, `@solana/kit` 2.x where needed, hand-written Codama-style decoders in `@q3labs/pact-protocol-v1-client`
 - **Tooling:** pnpm workspaces, Turborepo, Vitest, LiteSVM (Bun), surfpool
 
 ## Monorepo Structure
@@ -26,7 +26,7 @@ For the canonical architecture and build plan, see:
 ```
 packages/
   # Network rails — generic, can be consumed by any interface
-  protocol-v1-client/  — @pact-network/protocol-v1-client: TS client for the v1 program (PDA helpers, instruction builders, account decoders, error map)
+  protocol-v1-client/  — @q3labs/pact-protocol-v1-client: TS client for the v1 program (PDA helpers, instruction builders, account decoders, error map)
   wrap/                — @pact-network/wrap: generic fetch-call wrap library (wrapFetch, BalanceCheck, Classifier, EventSink, X-Pact-* headers)
   settler/             — @pact-network/settler: Pub/Sub → settle_batch submitter (NestJS)
   indexer/             — @pact-network/indexer: per-call indexer + read API + ops controller (NestJS)
@@ -74,7 +74,7 @@ pnpm install
 pnpm -r build
 
 # Build a specific package
-pnpm --filter @pact-network/protocol-v1-client build
+pnpm --filter @q3labs/pact-protocol-v1-client build
 pnpm --filter @pact-network/wrap build
 pnpm --filter @pact-network/market-proxy build
 pnpm --filter @pact-network/market-dashboard build

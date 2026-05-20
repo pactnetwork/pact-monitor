@@ -1,5 +1,5 @@
 /**
- * Structured error model for `@pact-network/sdk`.
+ * Structured error model for `@q3labs/pact-sdk`.
  *
  * Golden rule: `pact.fetch()` NEVER throws a `PactError`. Pact-internal
  * failures (discovery, proxy, signing, indexer) degrade silently to a bare

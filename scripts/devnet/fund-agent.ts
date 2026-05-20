@@ -41,7 +41,7 @@ import {
   getSettlementAuthorityPda,
   PROGRAM_ID_DEVNET,
   USDC_MINT_DEVNET,
-} from "@pact-network/protocol-v1-client";
+} from "@q3labs/pact-protocol-v1-client";
 
 const DEFAULT_RPC = "https://api.devnet.solana.com";
 const USDC_DECIMALS = 1_000_000; // devnet USDC has 6 decimals
@@ -232,7 +232,7 @@ async function main(): Promise<void> {
     console.log(
       `  PACT_SDK_E2E=1 PACT_DEVNET_PROGRAM_ID=${programId.toBase58()} \\\n` +
         `  PACT_DEVNET_SECRET_KEY=<bs58> PACT_DEVNET_INDEXER_URL=https://indexer.pactnetwork.io \\\n` +
-        `  pnpm --filter @pact-network/sdk test:e2e`,
+        `  pnpm --filter @q3labs/pact-sdk test:e2e`,
     );
   } catch (err) {
     console.error(`Approve failed: ${(err as Error).message ?? err}`);

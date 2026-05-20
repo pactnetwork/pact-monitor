@@ -1,5 +1,5 @@
 /**
- * `@pact-network/sdk` — unified Pact Network agent SDK.
+ * `@q3labs/pact-sdk` — unified Pact Network agent SDK.
  *
  * `createPact()` returns a `pact.fetch()` that transparently routes covered
  * calls through the Pact Market proxy (auto-refund on breach, V1), manages

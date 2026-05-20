@@ -1,5 +1,5 @@
 {
-  "name": "@pact-network/sdk",
+  "name": "@q3labs/pact-sdk",
   "version": "0.1.0",
   "description": "Unified Pact Network agent SDK: createPact() + pact.fetch(). Proxy-backed parametric refund coverage for any registered API on Pact Network V1.",
   "type": "module",
@@ -21,7 +21,7 @@
     "README.md"
   ],
   "scripts": {
-    "_build:deps": "pnpm --filter @pact-network/protocol-v1-client build",
+    "_build:deps": "pnpm --filter @q3labs/pact-protocol-v1-client build",
     "prebuild": "pnpm run _build:deps",
     "build": "tsc",
     "clean": "rm -rf dist",
@@ -49,7 +49,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@pact-network/protocol-v1-client": "workspace:*",
+    "@q3labs/pact-protocol-v1-client": "workspace:*",
     "@solana/web3.js": "^1.95.8",
     "bs58": "^6.0.0",
     "tweetnacl": "^1.0.3"
