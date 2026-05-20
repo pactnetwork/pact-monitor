@@ -1,14 +1,43 @@
 # @q3labs/pact-sdk
 
+```bash
+npm install @q3labs/pact-sdk
+```
+
 Unified Pact Network **agent** SDK. Replace `fetch` with `pact.fetch` and any
 **registered** API call gets parametric refund coverage — automatically, on
 Pact Network V1.
 
-Install from npm after the SDK publish workflow has released the package:
+## Quickstart
 
-```bash
-npm install @q3labs/pact-sdk
+Three steps from a fresh project to a covered call:
+
+```ts
+// 1. install: npm install @q3labs/pact-sdk
+// 2. create:
+import { createPact } from "@q3labs/pact-sdk";
+import { Keypair } from "@solana/web3.js";
+
+const pact = await createPact({
+  network: "mainnet",
+  signer: Keypair.fromSecretKey(/* your 64-byte ed25519 secret */),
+});
+
+// 3. call (drop-in fetch):
+const res = await pact.fetch("https://api.helius.xyz/v0/addresses/…");
 ```
+
+On mainnet that's the whole thing — the SDK ships a sane default for every
+host, proxy, indexer, and program ID. The full example below adds the
+one-time on-chain `setup()` (a single SPL approve) and event listeners.
+
+## Supported runtimes
+
+Node ≥ 18 (the package targets the Node 18+ `fetch`, `TextEncoder`, and
+`WebCrypto` globals). Browser via any ESM bundler — Vite, Webpack 5, esbuild,
+Rollup. The package is **ESM-only**; there is no CJS export.
+
+## Full example
 
 ```ts
 import { createPact } from "@q3labs/pact-sdk";
@@ -32,6 +61,26 @@ pact.on("refund",  (e) => {/* USDC settled back on-chain */});
 pact.on("billed",  (e) => {/* premium settled on-chain */});
 pact.on("degraded",(e) => {/* fell back to bare fetch */});
 ```
+
+## Environment variables
+
+The SDK doesn't read `process.env` directly — every knob is an explicit
+`createPact()` field — but most operators want to feed those fields from env
+vars, and we follow the convention below so the landing-page docs, the CLI,
+and the SDK all agree. None of these are required on mainnet.
+
+| Env var | Maps to | Default | When you need it |
+|---|---|---|---|
+| `SOLANA_RPC_URL` | `createPact({ rpcUrl })` | mainnet-beta / `api.devnet.solana.com` / `127.0.0.1:8899` | You're rate-limited on the public RPC, or you're on a private cluster. |
+| `PACT_PROXY_BASE_URL` | `createPact({ proxyBaseUrl })` | `https://market.pactnetwork.io` (mainnet & devnet) | You're running your own Pact Market proxy, or pointing at a Railway preview. |
+| `PACT_INDEXER_BASE_URL` | `createPact({ indexerBaseUrl })` | `https://indexer.pactnetwork.io` (mainnet & devnet) | Same as above for the indexer (refund/billed event source — best-effort). |
+| `PACT_PROGRAM_ID` | `createPact({ programId })` | mainnet only; `null` on devnet/localnet (see B1 below) | Devnet, localnet, or any time you're pinning a specific deploy. |
+
+The webhook receiver takes a **pinned ed25519 public key**, not a shared
+secret. Pass it as `createPact({ webhook: { indexerSigningKey: "<bs58 pubkey>" } })`
+— typically loaded from a `PACT_INDEXER_SIGNING_KEY` env var on your side.
+Reusing the name `PACT_WEBHOOK_SECRET` is fine if you prefer it, but the
+value is a public key, not a secret.
 
 ## How V1 actually works (this differs from the original design draft)
 
