@@ -171,7 +171,7 @@ describe("enable_insurance — failure modes", () => {
     });
     const code = sendAndExtractCode(svm, new Transaction().add(ix), policy.agent);
     // AccountAlreadyInitialized OR 6002 PolicyAlreadyExists — both are
-    // valid duplicate-rejection paths.
-    expect(code === undefined ? "ok" : "fail").toBe("fail");
+    // valid duplicate-rejection paths. Either is a "non-undefined" outcome.
+    expect(code).not.toBeUndefined();
   });
 });

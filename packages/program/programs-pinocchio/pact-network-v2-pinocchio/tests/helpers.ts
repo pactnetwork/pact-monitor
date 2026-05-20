@@ -312,38 +312,63 @@ export function readU8(data: Uint8Array, offset: number): number {
 
 /**
  * Extract the numeric `Custom(code)` from a LiteSVM `FailedTransactionMetadata`.
- * LiteSVM serializes the InstructionError shape to a string that includes
- * the code as a token — we parse it out so tests can assert specific
- * V2 error codes (6000..=6030).
+ * LiteSVM 0.6.x: `result.err()` returns an opaque `{}` from JS, but
+ * `String(result)` (toString) embeds the Rust debug repr including the
+ * `Custom(code)` token and the `custom program error: 0xHEX` log line.
+ *
+ * Strategy: stringify the whole result and grep for `Custom(<digits>)` first,
+ * falling back to the hex `0xHEX` in the logs.
  */
 export function extractCustomCode(err: unknown): number | undefined {
-  if (!err || typeof err !== "object") return undefined;
-  // LiteSVM 0.6.x returns errors with .toString() containing the JSON-ish
-  // form: `{"InstructionError":[0,{"Custom":6018}]}` or similar.
-  const s = String((err as { err?: unknown }).err ?? err);
-  const m = s.match(/"?Custom"?\s*:\s*(\d+)/);
-  return m ? Number(m[1]) : undefined;
+  if (!err) return undefined;
+  const s = String(err);
+  // Primary: `Custom(6030)` in the Rust debug repr.
+  let m = s.match(/Custom\((\d+)\)/);
+  if (m) return Number(m[1]);
+  // Fallback: `custom program error: 0xHEX` in program logs.
+  m = s.match(/custom program error:\s*0x([0-9a-fA-F]+)/);
+  if (m) return parseInt(m[1], 16);
+  return undefined;
 }
 
 /**
- * Convenience: send a tx + return undefined on success, or the Custom code
- * on failure. LiteSVM's `latestBlockhash()` already returns the canonical
- * base58 blockhash string compatible with web3.js Transaction.
+ * Convenience: send a tx + return:
+ *  - `undefined` on success
+ *  - a `number` for V2 Custom(code) errors (6000..=6030)
+ *  - `"non-custom-failure"` for built-in errors (AlreadyProcessed,
+ *    AccountAlreadyInitialized, InvalidSeeds, MissingRequiredSignature, etc.)
+ *
+ * Calls `svm.expireBlockhash()` before every send so back-to-back
+ * structurally-identical txs don't get rejected as duplicates (the canonical
+ * LiteSVM trap for repeated negative-path tests).
  */
+export type TxOutcome = undefined | number | "non-custom-failure";
+
 export function sendAndExtractCode(
   svm: LiteSVM,
   tx: import("@solana/web3.js").Transaction,
   payer: Keypair,
   extraSigners: Keypair[] = []
-): number | undefined {
+): TxOutcome {
+  svm.expireBlockhash();
   tx.feePayer = payer.publicKey;
   tx.recentBlockhash = svm.latestBlockhash();
   tx.sign(payer, ...extraSigners);
   const result = svm.sendTransaction(tx);
-  if (typeof result === "object" && result !== null && "err" in result) {
-    return extractCustomCode(result);
+  if (
+    result &&
+    typeof result === "object" &&
+    result.constructor?.name === "FailedTransactionMetadata"
+  ) {
+    const code = extractCustomCode(result);
+    return code === undefined ? "non-custom-failure" : code;
   }
   return undefined;
+}
+
+/** Boolean variant for tests that just need "did it fail at all?". */
+export function didFail(outcome: TxOutcome): boolean {
+  return outcome !== undefined;
 }
 
 // Re-export so test files don't need separate web3.js imports for the basics.

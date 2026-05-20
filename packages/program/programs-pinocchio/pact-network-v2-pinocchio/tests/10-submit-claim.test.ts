@@ -57,11 +57,15 @@ interface FullStack {
 function setupFullStack(opts: {
   underwriterDeposit?: bigint;
   policyExpiresAt?: bigint;
+  /** Override pool.max_coverage_per_call (default uses program default = 1M). */
+  poolMaxCoveragePerCall?: bigint;
 } = {}): FullStack {
   const svm = new LiteSVM();
   loadProgram(svm, { bypass: true });
   const proto = setupProtocol(svm);
-  const pool = setupPool(svm, proto, "api.openai.com");
+  const pool = setupPool(svm, proto, "api.openai.com", {
+    maxCoveragePerCall: opts.poolMaxCoveragePerCall,
+  });
   setupUnderwriter(svm, proto, pool, opts.underwriterDeposit ?? 500_000_000n);
   const policy = setupPolicy(svm, proto, pool, {
     expiresAt: opts.policyExpiresAt,
@@ -148,7 +152,7 @@ describe("submit_claim — DuplicateClaim 6013 (sha256 PDA collision)", () => {
     // 6013 DuplicateClaim OR built-in AccountAlreadyInitialized — both
     // are valid duplicate signals (the on-chain handler checks
     // claim.is_data_empty() first per submit_claim.rs:212-214).
-    expect(code === undefined ? "ok" : "fail").toBe("fail");
+    expect(code).not.toBeUndefined();
   });
 });
 
@@ -168,13 +172,18 @@ describe("submit_claim — ClaimWindowExpired 6012", () => {
 describe("submit_claim — AggregateCapExceeded 6011 + window reset", () => {
   it("rejects when cumulative payout exceeds aggregate cap", () => {
     // DEFAULT_AGGREGATE_CAP_BPS = 3000 → 30% of total_deposited.
-    // Deposit 100M USDC → cap = 30M. Try 30M+1 in one shot.
-    const stack = setupFullStack({ underwriterDeposit: 200_000_000n });
+    // Deposit 200M USDC → cap = 60M. Override pool.max_coverage_per_call
+    // to 100M so the refund clamp doesn't truncate the payment to 1M
+    // (default) before the cap check fires. Try 60M+1 in one shot.
+    const stack = setupFullStack({
+      underwriterDeposit: 200_000_000n,
+      poolMaxCoveragePerCall: 100_000_000n,
+    });
     const code = sendAndExtractCode(
       stack.svm,
       buildSubmit(stack, {
         callId: "over-cap",
-        paymentAmount: 60_000_001n, // > 30% of 200M
+        paymentAmount: 60_000_001n,
       }),
       stack.proto.oracle
     );
@@ -182,7 +191,13 @@ describe("submit_claim — AggregateCapExceeded 6011 + window reset", () => {
   });
 
   it("resets the window after cap_window_seconds elapses", () => {
-    const stack = setupFullStack({ underwriterDeposit: 200_000_000n });
+    // expiresAt set far in the future so the 86_400s advance doesn't
+    // trip 6029 PolicyExpired before we test window reset.
+    const future = BigInt(Math.floor(Date.now() / 1000)) + 86_400n * 30n;
+    const stack = setupFullStack({
+      underwriterDeposit: 200_000_000n,
+      policyExpiresAt: future,
+    });
     // Fill the window with a payout that succeeds (well under cap).
     expect(
       sendAndExtractCode(

@@ -41,7 +41,8 @@ describe("deposit — init path", () => {
 
     const underwriter = generateKeypair(svm);
     const ta = createTokenAccount(svm, proto.mint, underwriter.publicKey);
-    mintTokensToAccount(svm, ta, 50_000_000n);
+    // DEFAULT_MIN_POOL_DEPOSIT = 100_000_000 — deposits must be >= 100 USDC.
+    mintTokensToAccount(svm, ta, 300_000_000n);
 
     const [positionPda] = getUnderwriterPositionPda(
       PROGRAM_ID,
@@ -57,20 +58,20 @@ describe("deposit — init path", () => {
       positionPda,
       underwriterTokenAccount: ta,
       underwriter: underwriter.publicKey,
-      amount: 20_000_000n,
+      amount: 100_000_000n,
     });
     expect(sendAndExtractCode(svm, new Transaction().add(ix), underwriter)).toBeUndefined();
 
     const position = decodeUnderwriterPosition(getAccountData(svm, positionPda)!);
-    expect(position.deposited).toBe(20_000_000n);
+    expect(position.deposited).toBe(100_000_000n);
     expect(position.earnedPremiums).toBe(0n);
     expect(position.lossesAbsorbed).toBe(0n);
 
     const updatedPool = decodeCoveragePool(getAccountData(svm, pool.poolPda)!);
-    expect(updatedPool.totalDeposited).toBe(20_000_000n);
-    expect(updatedPool.totalAvailable).toBe(20_000_000n);
-    expect(getTokenBalance(svm, pool.vaultPda)).toBe(20_000_000n);
-    expect(getTokenBalance(svm, ta)).toBe(30_000_000n);
+    expect(updatedPool.totalDeposited).toBe(100_000_000n);
+    expect(updatedPool.totalAvailable).toBe(100_000_000n);
+    expect(getTokenBalance(svm, pool.vaultPda)).toBe(100_000_000n);
+    expect(getTokenBalance(svm, ta)).toBe(200_000_000n);
   });
 });
 
@@ -83,7 +84,7 @@ describe("deposit — re-open path (Alan #5: cooldown resets on every deposit)",
 
     const underwriter = generateKeypair(svm);
     const ta = createTokenAccount(svm, proto.mint, underwriter.publicKey);
-    mintTokensToAccount(svm, ta, 50_000_000n);
+    mintTokensToAccount(svm, ta, 500_000_000n);
 
     const [positionPda] = getUnderwriterPositionPda(
       PROGRAM_ID,
@@ -102,7 +103,8 @@ describe("deposit — re-open path (Alan #5: cooldown resets on every deposit)",
         amount,
       });
 
-    expect(sendAndExtractCode(svm, new Transaction().add(ix(5_000_000n)), underwriter)).toBeUndefined();
+    // Both deposits must be >= DEFAULT_MIN_POOL_DEPOSIT (100M).
+    expect(sendAndExtractCode(svm, new Transaction().add(ix(150_000_000n)), underwriter)).toBeUndefined();
     const before = decodeUnderwriterPosition(getAccountData(svm, positionPda)!);
 
     // Advance clock — deposit reads Clock AFTER the Transfer CPI (deposit.rs
@@ -110,10 +112,10 @@ describe("deposit — re-open path (Alan #5: cooldown resets on every deposit)",
     // recorded timestamp for the second deposit.
     advanceClock(svm, 7200n); // +2h
 
-    expect(sendAndExtractCode(svm, new Transaction().add(ix(3_000_000n)), underwriter)).toBeUndefined();
+    expect(sendAndExtractCode(svm, new Transaction().add(ix(120_000_000n)), underwriter)).toBeUndefined();
     const after = decodeUnderwriterPosition(getAccountData(svm, positionPda)!);
 
-    expect(after.deposited).toBe(8_000_000n);
+    expect(after.deposited).toBe(270_000_000n);
     expect(after.earnedPremiums).toBe(before.earnedPremiums);
     expect(after.lossesAbsorbed).toBe(before.lossesAbsorbed);
     expect(after.depositTimestamp).toBeGreaterThan(before.depositTimestamp);
