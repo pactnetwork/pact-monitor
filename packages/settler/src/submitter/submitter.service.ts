@@ -192,6 +192,11 @@ export class SubmitterService implements OnModuleInit {
    *
    * Note: the adapter handles per-slug EndpointConfig/CoveragePool loading
    * internally. The legacy endpointCache is NOT used on this path.
+   *
+   * RESEARCH §5.2: we accept one duplicate EndpointConfig load here (the
+   * adapter's submitSettleBatch does its own load internally). This keeps
+   * the off-chain share computation byte-identical to the legacy path
+   * without leaking internal adapter state.
    */
   private async submitViaAdapter(
     batch: SettleBatch,
@@ -205,12 +210,12 @@ export class SubmitterService implements OnModuleInit {
     const firstData = batch.messages[0]?.data as Record<string, unknown>;
     const slug = this.extractSlug(firstData);
 
-    // Build per-event SettlementOutcome share breakdown off the legacy cache
-    // (still loaded for the legacy path). On the adapter path we don't have
-    // fee-recipient ATAs until the adapter resolves them on-chain; we emit
-    // empty perEventShares here. T5's e2e gate will verify on-chain outcomes
-    // are byte-identical; perEventShares is indexer metadata only.
-    const perEventShares: RecipientShare[][] = batch.messages.map(() => []);
+    // Load EndpointConfig off-chain so we can compute perEventShares with
+    // byte-identical math to the legacy path. The adapter loads it again
+    // internally for the on-chain tx (RESEARCH §5.2 accepted this). We use
+    // the same loadEndpoint() + endpointCache used by the legacy path so
+    // TTL + invalidation are shared across both paths.
+    const snap = await this.loadEndpoint(slug);
 
     const result = await adapter.submitSettleBatch({
       slug,
@@ -227,17 +232,62 @@ export class SubmitterService implements OnModuleInit {
           agent: String(d["agentPubkey"] ?? ""),
           premiumBaseUnits: BigInt(d["premiumLamports"] as string | number),
           outcome: breachFromOutcome(outcome) ? ("breach" as const) : ("ok" as const),
-          feeRecipientCountHint: 0,
+          feeRecipientCountHint: snap.config.feeRecipientCount,
           latencyMs: Number(d["latencyMs"] ?? 0),
         };
       }),
       options: { commitment: "confirmed", skipPreflight: false },
     });
 
+    // Compute per-event fee-recipient shares using the same helper that the
+    // legacy path uses. This is the byte-identical computation gate (T5).
+    const perEventShares: RecipientShare[][] = [];
+    for (const m of batch.messages) {
+      const d = m.data as Record<string, unknown>;
+      const premiumLamports = BigInt(d["premiumLamports"] as string | number);
+      const shares = await this.computeFeeSharesForEvent(premiumLamports, snap.config);
+      perEventShares.push(shares);
+    }
+
     return {
       signature: result.txId,
       perEventShares,
     };
+  }
+
+  /**
+   * Compute off-chain fee-recipient share breakdown for a single event.
+   * Mirrors on-chain math exactly: floor(premiumLamports * bps / 10_000).
+   * Called by BOTH submitLegacyDirect and submitViaAdapter — the byte-
+   * identical gate (WP-MN-03b T5) verifies both paths produce equal arrays.
+   *
+   * Treasury entries resolve to the Treasury USDC vault (singleton, loaded
+   * via requireTreasuryVault). All other kinds use the stored destination
+   * directly.
+   */
+  private async computeFeeSharesForEvent(
+    premiumLamports: bigint,
+    endpointConfig: EndpointConfig,
+  ): Promise<RecipientShare[]> {
+    const shares: RecipientShare[] = [];
+    const feeRecipientCount = endpointConfig.feeRecipientCount;
+    for (let i = 0; i < feeRecipientCount; i++) {
+      const r = endpointConfig.feeRecipients[i];
+      let dest: PublicKey;
+      if (r.kind === FeeRecipientKind.Treasury) {
+        dest = await this.requireTreasuryVault();
+      } else {
+        dest = new PublicKey(r.destination);
+      }
+      // Mirror on-chain math: floor(premium * bps / 10_000).
+      const amount = (premiumLamports * BigInt(r.bps)) / 10_000n;
+      shares.push({
+        kind: r.kind,
+        pubkey: dest.toBase58(),
+        amountLamports: amount,
+      });
+    }
+    return shares;
   }
 
   /**
@@ -280,30 +330,12 @@ export class SubmitterService implements OnModuleInit {
       const breach = breachFromOutcome(outcomeStr);
       const ts = parseEventTimestamp(d);
 
-      // Resolve per-recipient ATAs in EndpointConfig order. Treasury entries
-      // are mapped to the Treasury USDC vault (singleton); Affiliate* kinds
-      // already store the destination ATA/PDA in EndpointConfig.
-      const feeRecipientAtas: PublicKey[] = [];
-      const shares: RecipientShare[] = [];
-      const feeRecipientCount = snap.config.feeRecipientCount;
-      for (let i = 0; i < feeRecipientCount; i++) {
-        const r = snap.config.feeRecipients[i];
-        let dest: PublicKey;
-        if (r.kind === FeeRecipientKind.Treasury) {
-          const vault = await this.requireTreasuryVault();
-          dest = vault;
-        } else {
-          dest = new PublicKey(r.destination);
-        }
-        feeRecipientAtas.push(dest);
-        // Mirror on-chain math: floor(premium * bps / 10_000).
-        const amount = (premiumLamports * BigInt(r.bps)) / 10_000n;
-        shares.push({
-          kind: r.kind,
-          pubkey: dest.toBase58(),
-          amountLamports: amount,
-        });
-      }
+      // Resolve per-recipient ATAs and compute share breakdown using the
+      // shared helper (same computation as the adapter path — byte-identical).
+      const shares = await this.computeFeeSharesForEvent(premiumLamports, snap.config);
+      // Build feeRecipientAtas array from the computed shares (maintains
+      // EndpointConfig order as required by the on-chain handler).
+      const feeRecipientAtas: PublicKey[] = shares.map((s) => new PublicKey(s.pubkey));
 
       events.push({
         callId,
