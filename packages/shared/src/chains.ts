@@ -27,6 +27,10 @@ const _evmChains = JSON.parse(readFileSync(_evmChainsPath, "utf-8")) as Record<
     name: string;
     usdcAddress: string;
     usdcDecimals: number;
+    rpcUrl?: string | null;
+    blockTimeMs?: number | null;
+    finalityBlocks?: number | null;
+    deploymentBlock?: number | null;
   }
 >;
 
@@ -39,6 +43,10 @@ const _evmEntries: Record<string, ChainDescriptor> = Object.fromEntries(
       chainId: c.chainId,
       usdcMint: c.usdcAddress,
       usdcDecimals: c.usdcDecimals,
+      ...(c.rpcUrl != null && { rpcUrl: c.rpcUrl }),
+      ...(c.blockTimeMs != null && { blockTimeMs: c.blockTimeMs }),
+      ...(c.finalityBlocks != null && { finalityBlocks: c.finalityBlocks }),
+      ...(c.deploymentBlock != null && { deploymentBlock: c.deploymentBlock }),
     },
   ]),
 );

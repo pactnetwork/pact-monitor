@@ -2,10 +2,11 @@ import { Pool } from "pg";
 import type { BalanceCheck, EventSink } from "@pact-network/wrap";
 import {
   ChainAdapter,
-  EvmAdapterStub,
+  EvmAdapter,
   SolanaAdapter,
   getChain,
 } from "@pact-network/shared";
+import { resolveDeployment } from "@pact-network/protocol-evm-v1-client";
 import { EndpointRegistry } from "./endpoints.js";
 import { Allowlist } from "./allowlist.js";
 import { createBalanceCheck } from "./balance.js";
@@ -35,7 +36,36 @@ export function buildAdapterMap(processEnv: NodeJS.ProcessEnv): {
         "https://api.devnet.solana.com";
       adapters.set(name, new SolanaAdapter({ descriptor, rpcUrl }));
     } else if (descriptor.vm === "evm") {
-      adapters.set(name, new EvmAdapterStub({ descriptor }));
+      if (!descriptor.chainId) {
+        throw new Error(`evm network ${name} missing chainId`);
+      }
+      if (!descriptor.rpcUrl) {
+        throw new Error(`evm network ${name} missing rpcUrl`);
+      }
+      if (descriptor.finalityBlocks == null) {
+        throw new Error(`evm network ${name} missing finalityBlocks`);
+      }
+      if (descriptor.blockTimeMs == null) {
+        throw new Error(`evm network ${name} missing blockTimeMs`);
+      }
+      if (descriptor.deploymentBlock == null) {
+        throw new Error(`evm network ${name} missing deploymentBlock`);
+      }
+
+      const deployment = resolveDeployment(descriptor.chainId, processEnv as Record<string, string | undefined>);
+
+      adapters.set(
+        name,
+        new EvmAdapter({
+          descriptor,
+          rpcUrl: descriptor.rpcUrl,
+          finalityBlocks: descriptor.finalityBlocks,
+          blockTimeMs: descriptor.blockTimeMs,
+          deploymentBlock: BigInt(descriptor.deploymentBlock),
+          deployment,
+          // no signer — market-proxy is read-only
+        }),
+      );
     }
   }
 

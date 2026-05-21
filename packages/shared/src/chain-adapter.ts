@@ -21,6 +21,14 @@ export interface ChainDescriptor {
   chainId?: number;
   usdcMint: string;
   usdcDecimals: number;
+  /** EVM only — JSON-RPC endpoint. Read from chains.json. */
+  rpcUrl?: string;
+  /** EVM only — block time in ms. Used by EvmAdapter wait-loop sleep. D6 §2. */
+  blockTimeMs?: number;
+  /** EVM only — confirmation depth before a tx is treated as final. D6 §2/§5.1. */
+  finalityBlocks?: number;
+  /** EVM only — block number where PactRegistry was deployed; `fromBlock` for EndpointRegistered log scan. */
+  deploymentBlock?: number;
 }
 
 export interface EndpointConfigSnapshot {

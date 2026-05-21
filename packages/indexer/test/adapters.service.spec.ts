@@ -9,12 +9,12 @@
 // Manual mock for @pact-network/shared
 // ---------------------------------------------------------------------------
 const mockSolanaAdapterInstances: object[] = [];
-const mockEvmAdapterStubInstances: object[] = [];
+const mockEvmAdapterInstances: object[] = [];
 
 jest.mock("@pact-network/shared", () => {
-  const CHAINS: Record<string, { vm: string; network: string; usdcMint: string; usdcDecimals: number }> = {
+  const CHAINS: Record<string, { vm: string; network: string; usdcMint: string; usdcDecimals: number; chainId?: number; rpcUrl?: string; finalityBlocks?: number; blockTimeMs?: number; deploymentBlock?: number }> = {
     "solana-devnet": { vm: "solana", network: "solana-devnet", usdcMint: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU", usdcDecimals: 6 },
-    "arc-testnet":   { vm: "evm",    network: "arc-testnet",   usdcMint: "0x0", usdcDecimals: 6 },
+    "arc-testnet":   { vm: "evm",    network: "arc-testnet",   usdcMint: "0x0", usdcDecimals: 6, chainId: 5042002, rpcUrl: "https://rpc.testnet.arc.network", finalityBlocks: 64, blockTimeMs: 500, deploymentBlock: 42953139 },
   };
 
   function getChain(name: string) {
@@ -31,16 +31,29 @@ jest.mock("@pact-network/shared", () => {
     }
   }
 
-  class EvmAdapterStub {
+  class EvmAdapter {
     descriptor: object;
     constructor(opts: { descriptor: object }) {
       this.descriptor = opts.descriptor;
-      mockEvmAdapterStubInstances.push(this);
+      mockEvmAdapterInstances.push(this);
     }
   }
 
-  return { getChain, SolanaAdapter, EvmAdapterStub };
+  return { getChain, SolanaAdapter, EvmAdapter };
 });
+
+// ---------------------------------------------------------------------------
+// Mock @pact-network/protocol-evm-v1-client so resolveDeployment is a no-op
+// ---------------------------------------------------------------------------
+jest.mock("@pact-network/protocol-evm-v1-client", () => ({
+  resolveDeployment: jest.fn().mockReturnValue({
+    chainId: 5042002,
+    usdc: "0x3600000000000000000000000000000000000000",
+    registry: "0x056BAC33546b5b51B8CF6f332379651f715B889C",
+    pool: "0xa6135d9C6BFA0F256B9DeBa10d76C7698329aFdE",
+    settler: "0xe461CE50ef53BFC10945B101FB94b11Ec5eB591f",
+  }),
+}));
 
 import { Test, TestingModule } from "@nestjs/testing";
 import { ConfigService } from "@nestjs/config";
@@ -66,7 +79,7 @@ function makeConfig(env: Record<string, string> = {}): Partial<ConfigService> {
 describe("AdaptersService (indexer)", () => {
   beforeEach(() => {
     mockSolanaAdapterInstances.length = 0;
-    mockEvmAdapterStubInstances.length = 0;
+    mockEvmAdapterInstances.length = 0;
   });
 
   async function buildSvc(env: Record<string, string> = {}): Promise<AdaptersService> {
@@ -85,10 +98,10 @@ describe("AdaptersService (indexer)", () => {
 
     expect(svc.listEnabledNetworks()).toEqual(["solana-devnet"]);
     expect(mockSolanaAdapterInstances).toHaveLength(1);
-    expect(mockEvmAdapterStubInstances).toHaveLength(0);
+    expect(mockEvmAdapterInstances).toHaveLength(0);
   });
 
-  it("PACT_ENABLED_NETWORKS=solana-devnet,arc-testnet: 2 entries, second is EvmAdapterStub", async () => {
+  it("PACT_ENABLED_NETWORKS=solana-devnet,arc-testnet: 2 entries, second is real EvmAdapter (read-only)", async () => {
     const svc = await buildSvc({ PACT_ENABLED_NETWORKS: "solana-devnet,arc-testnet" });
     svc.onModuleInit();
 
@@ -97,10 +110,10 @@ describe("AdaptersService (indexer)", () => {
     expect(networks).toContain("solana-devnet");
     expect(networks).toContain("arc-testnet");
     expect(mockSolanaAdapterInstances).toHaveLength(1);
-    expect(mockEvmAdapterStubInstances).toHaveLength(1);
+    expect(mockEvmAdapterInstances).toHaveLength(1);
 
     const arcAdapter = svc.getAdapter("arc-testnet");
-    expect(mockEvmAdapterStubInstances).toContain(arcAdapter);
+    expect(mockEvmAdapterInstances).toContain(arcAdapter);
   });
 
   it("PACT_ENABLED_NETWORKS=bogus-chain: throws via getChain (unknown network)", async () => {
