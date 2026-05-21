@@ -4,6 +4,7 @@
 - **Owner:** Rick (Tu lacks GCP Secret Manager + Cloud Run IAM)
 - **Pre-req (Tu, DONE):** SETTLER_ROLE granted on PactSettler to the settler EOA. Tx `0x383ba632ff34366b4a98461bf0301574f70e4ce8ae014a27f77ef425d74d9f65`, Arc Testnet block 43317982, confirmed via `cast call hasRole(...) == true`. Settler EOA = `0x777d569Bd3b0A2De007097A3D7E1687C5E5EB859` (reuses the Arc deployer EOA for Arc Testnet only; mainnet will rotate per D6 §6).
 - **Code:** merged in PR #222 (merge commit `dadb01c`) on `feat/multi-network`. Rollback tag `pre-mn-05-rollback`.
+- **HOTFIX REQUIRED before deploy:** commit `72e892a` on `feat/multi-network-04-evm-fleet` fixes two Arc-Testnet-RPC blockers in `EvmAdapter` (eth_getLogs 10k-block cap pagination + viem Multicall3 chain-object wiring). Discovered via post-merge live-RPC smoke. MUST be on the deployed image — please cherry-pick `72e892a` onto `feat/multi-network` (or wait for the rollup PR) before running the Cloud Run env updates below. Without it, every settler/indexer/market-proxy revision throws on first Arc adapter call.
 
 ## What you need from Tu
 
@@ -145,6 +146,7 @@ After verifying Phase 2 works for a week, you can scrub the raw hex from prior C
 | Item | Owner | Status |
 |---|---|---|
 | WP-MN-04 code | captain-proxy | ✅ merged into feat/multi-network (PR #222, `dadb01c`) |
+| EVM RPC compat hotfix (eth_getLogs chunking + Multicall3) | captain-proxy | ✅ commit `72e892a` on feat/multi-network-04-evm-fleet — MUST land on feat/multi-network before deploy |
 | Pre-mn-05-rollback tag | captain-proxy | ✅ pushed |
 | `grantRole(SETTLER_ROLE, 0x777d56...)` on Arc Testnet | Tu | ✅ tx `0x383ba632...` |
 | Cloud Run env updates × 3 services | **Rick** | **⏸ this doc** |
