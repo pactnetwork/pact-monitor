@@ -235,6 +235,7 @@ describe("EvmAdapter unit tests (WP-MN-04 T2)", () => {
     const adapter = new EvmAdapter(BASE_OPTS);
 
     mockReadContract.mockResolvedValue("0xAuthorityAddress");
+    mockGetBlock.mockResolvedValue({ number: 0n });
     mockGetContractEvents.mockResolvedValue([]);
 
     const result = await adapter.readEndpointConfigs();
@@ -247,6 +248,7 @@ describe("EvmAdapter unit tests (WP-MN-04 T2)", () => {
 
     const AUTHORITY = "0xAuthorityAddr000000000000000000000000001";
     mockReadContract.mockResolvedValue(AUTHORITY);
+    mockGetBlock.mockResolvedValue({ number: 0n });
 
     const SLUG_HEX = "0x68656c6975730000000000000000000000000000000000000000000000000000".slice(0, 34) as `0x${string}`;
     mockGetContractEvents.mockResolvedValue([
@@ -356,6 +358,31 @@ describe("EvmAdapter unit tests (WP-MN-04 T2)", () => {
       expect(result.balance).toBe(5000n);
       expect(result.allowance).toBe(3000n);
     }
+  });
+
+  // 12. Hotfix regression: readEndpointConfigs must paginate eth_getLogs
+  //     when (finalized - deploymentBlock) exceeds Arc Testnet's 10k-block
+  //     cap. Asserts the loop runs N chunks rather than a single oversized
+  //     query (the bug surfaced post-merge against live Arc Testnet RPC).
+  it("readEndpointConfigs chunks getContractEvents into <=10k-block windows", async () => {
+    const adapter = new EvmAdapter({
+      ...BASE_OPTS,
+      deploymentBlock: 0n,
+    });
+
+    mockReadContract.mockResolvedValue("0xAuthorityAddress");
+    // finalized far past deploymentBlock → forces ~3 chunks at 9500/chunk
+    mockGetBlock.mockResolvedValue({ number: 25_000n });
+    mockGetContractEvents.mockResolvedValue([]);
+
+    await adapter.readEndpointConfigs();
+
+    // Expect 3 chunks: [0, 9499], [9500, 18999], [19000, 25000]
+    expect(mockGetContractEvents).toHaveBeenCalledTimes(3);
+    const calls = mockGetContractEvents.mock.calls;
+    expect(calls[0]?.[0]).toMatchObject({ fromBlock: 0n, toBlock: 9_499n });
+    expect(calls[1]?.[0]).toMatchObject({ fromBlock: 9_500n, toBlock: 18_999n });
+    expect(calls[2]?.[0]).toMatchObject({ fromBlock: 19_000n, toBlock: 25_000n });
   });
 
   // 11. Minor B: eligibility boundary — exact-equality case
