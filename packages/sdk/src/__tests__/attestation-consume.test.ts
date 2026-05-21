@@ -24,10 +24,13 @@ function fakeResolver(
   } as unknown as GoldenFetchDeps["resolver"];
 }
 
-function fakeMerchantRegistry(known: Set<string>): MerchantRegistry {
+function fakeMerchantRegistry(
+  known: Set<string>,
+  hostnames: Record<string, string[]> = {},
+): MerchantRegistry {
   return {
     hasMerchant: (pk: string) => known.has(pk),
-    getMerchantHostnames: () => undefined,
+    getMerchantHostnames: (pk: string) => hostnames[pk],
     start: async () => {},
     stop: () => {},
     refresh: async () => true,
@@ -66,7 +69,10 @@ describe("E3 — golden-fetch attestation consumption", () => {
 
     const deps: GoldenFetchDeps = {
       resolver: fakeResolver(),
-      merchantRegistry: fakeMerchantRegistry(new Set([merchantPubkey])),
+      merchantRegistry: fakeMerchantRegistry(
+        new Set([merchantPubkey]),
+        { [merchantPubkey]: ["api.test.local"] },
+      ),
       proxyBaseUrl: "https://market.example",
       project: "test",
       signRequests: true,
@@ -150,7 +156,10 @@ describe("E3 — golden-fetch attestation consumption", () => {
     const startedAt = 1_717_000_000_000;
     const deps: GoldenFetchDeps = {
       resolver: fakeResolver(),
-      merchantRegistry: fakeMerchantRegistry(new Set([merchantPubkey])),
+      merchantRegistry: fakeMerchantRegistry(
+        new Set([merchantPubkey]),
+        { [merchantPubkey]: ["api.test.local"] },
+      ),
       proxyBaseUrl: "https://market.example",
       project: "test",
       signRequests: true,
@@ -175,7 +184,10 @@ describe("E3 — golden-fetch attestation consumption", () => {
 
     const deps: GoldenFetchDeps = {
       resolver: fakeResolver(),
-      merchantRegistry: fakeMerchantRegistry(new Set(["pk-doesnt-matter"])),
+      merchantRegistry: fakeMerchantRegistry(
+        new Set(["pk-doesnt-matter"]),
+        { "pk-doesnt-matter": ["api.test.local"] },
+      ),
       proxyBaseUrl: "https://market.example",
       project: "test",
       signRequests: true,
@@ -185,6 +197,95 @@ describe("E3 — golden-fetch attestation consumption", () => {
         "X-Pact-Call-Id": "call-1",
         "X-Pact-Outcome": "ok",
       }),
+    };
+
+    const res = await goldenFetch(deps, "https://api.test.local/v1/foo");
+    expect(res.attribution).toBeNull();
+  });
+
+  // PR #223 Section B: attestation must be bound to the merchant's
+  // registered hostnames. A known pubkey signing for a host it doesn't
+  // own gets treated as no attestation.
+  it("returns attribution=null when the host is not in the merchant's registered hostnames", async () => {
+    const merchantKp = nacl.sign.keyPair();
+    const merchantPubkey = bs58.encode(merchantKp.publicKey);
+    const agentKp = nacl.sign.keyPair();
+    const agentPubkey = bs58.encode(agentKp.publicKey);
+
+    const startedAt = 1_717_000_000_000;
+    const sig = signProxiedBy(
+      {
+        merchantPubkey,
+        agentPubkey,
+        startedAt,
+        endpoint: "slug-x",
+        statusCode: 200,
+      },
+      merchantKp.secretKey,
+    );
+
+    const deps: GoldenFetchDeps = {
+      resolver: fakeResolver(),
+      merchantRegistry: fakeMerchantRegistry(
+        new Set([merchantPubkey]),
+        // Merchant is registered, but ONLY for api.OTHER.local — not for
+        // api.test.local that the agent calls.
+        { [merchantPubkey]: ["api.other.local"] },
+      ),
+      proxyBaseUrl: "https://market.example",
+      project: "test",
+      signRequests: true,
+      agentPubkey,
+      secretKey: agentKp.secretKey,
+      fetchImpl: fakeProxyFetch({
+        "X-Pact-Call-Id": "call-1",
+        "X-Pact-Outcome": "ok",
+        "X-Pact-Proxied-By": merchantPubkey,
+        "X-Pact-Proxied-Sig": sig,
+      }),
+      now: () => startedAt,
+    };
+
+    const res = await goldenFetch(deps, "https://api.test.local/v1/foo");
+    expect(res.attribution).toBeNull();
+  });
+
+  it("returns attribution=null when the merchant's registered hostname list is empty", async () => {
+    const merchantKp = nacl.sign.keyPair();
+    const merchantPubkey = bs58.encode(merchantKp.publicKey);
+    const agentKp = nacl.sign.keyPair();
+    const agentPubkey = bs58.encode(agentKp.publicKey);
+
+    const startedAt = 1_717_000_000_000;
+    const sig = signProxiedBy(
+      {
+        merchantPubkey,
+        agentPubkey,
+        startedAt,
+        endpoint: "slug-x",
+        statusCode: 200,
+      },
+      merchantKp.secretKey,
+    );
+
+    const deps: GoldenFetchDeps = {
+      resolver: fakeResolver(),
+      merchantRegistry: fakeMerchantRegistry(
+        new Set([merchantPubkey]),
+        { [merchantPubkey]: [] },
+      ),
+      proxyBaseUrl: "https://market.example",
+      project: "test",
+      signRequests: true,
+      agentPubkey,
+      secretKey: agentKp.secretKey,
+      fetchImpl: fakeProxyFetch({
+        "X-Pact-Call-Id": "call-1",
+        "X-Pact-Outcome": "ok",
+        "X-Pact-Proxied-By": merchantPubkey,
+        "X-Pact-Proxied-Sig": sig,
+      }),
+      now: () => startedAt,
     };
 
     const res = await goldenFetch(deps, "https://api.test.local/v1/foo");

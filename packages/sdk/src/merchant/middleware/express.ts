@@ -26,17 +26,23 @@ export function createExpressMiddleware(
   options: MiddlewareOptions,
 ): ExpressMerchantMiddleware {
   return (req, res, next) => {
-    // Matched-path key for pricing lookup: prefer the Express route pattern
-    // (e.g. `/v1/generate-image`) so `:param`-style routes share one entry.
-    // Fall back to req.path when no route is matched (404, sub-app boundary).
-    const matchedPath =
-      (req as Request & { route?: { path?: string } }).route?.path ?? req.path;
-    const inbound = parseInbound(
-      req.headers as Record<string, string | string[] | undefined>,
-      matchedPath,
-    );
-
+    // PR #223 Section C: when the middleware is mounted via
+    // `app.use(merchant.middleware(...))`, Express has NOT yet matched the
+    // route at the time this function runs. `req.route` is undefined here.
+    // It only gets set when `Layer.handle_request` invokes the matching
+    // route handler. So defer the matched-path read to the two deferred
+    // call sites below (writeHead override + finish handler) — both fire
+    // AFTER Express has matched the route, so `req.route?.path` is
+    // populated. This lets parameterized routes like `/v1/items/:id` share
+    // one pricing entry. Single-threaded JS guarantees the two reads see
+    // the same `req.route`.
+    const headers = req.headers as Record<string, string | string[] | undefined>;
     const start = Date.now();
+    const resolveInbound = () =>
+      parseInbound(
+        headers,
+        (req as Request & { route?: { path?: string } }).route?.path ?? req.path,
+      );
 
     // Stamp response headers BEFORE the response is sent. Hook into setHeader
     // by listening for the response 'header' event via writeHead override.
@@ -48,6 +54,7 @@ export function createExpressMiddleware(
       try {
         const statusCode =
           typeof args[0] === "number" ? (args[0] as number) : res.statusCode;
+        const inbound = resolveInbound();
         const att = buildAttestation(deps, inbound, statusCode);
         if (att) {
           res.setHeader(att.headerName, att.headerValueBy);
@@ -63,6 +70,7 @@ export function createExpressMiddleware(
 
     res.on("finish", () => {
       const latencyMs = Date.now() - start;
+      const inbound = resolveInbound();
       postObservationFireAndForget(
         deps,
         options,

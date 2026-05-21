@@ -47,12 +47,16 @@ describe("L1 direct-mode E2E: merchant.middleware + agent SDK", () => {
     // Capture observations the merchant SDK POSTs + agent SDK's writes
     // to /merchants (registry refresh + records peek).
     const observationCalls: Array<{ url: string; body: unknown }> = [];
+    // PR #223 Section B: the merchant registry must list the hostname
+    // the agent is actually calling. The agent's URL below is
+    // `http://127.0.0.1:<port>/v1/foo`, so canonicalHostname() yields
+    // "127.0.0.1" — register the merchant for that host.
     const merchantsBody = {
       merchants: [
         {
           pubkey: merchantPubkey,
           label: "test-merchant",
-          hostnames: ["api.test.local"],
+          hostnames: ["127.0.0.1"],
         },
       ],
       generatedAt: new Date().toISOString(),

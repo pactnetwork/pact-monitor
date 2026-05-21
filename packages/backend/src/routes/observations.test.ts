@@ -329,4 +329,294 @@ describe("POST /api/v1/observations", () => {
     );
     assert.equal(claim, null, "no claim should be generated for unpriced endpoints");
   });
+
+  // PR #223 Section A: backend recomputes authoritative classification and
+  // ignores the merchant's hint. A merchant cannot return 503 and claim
+  // "success" to suppress refund creation.
+  it("ignores merchant classification:'success' when status_code is 5xx (authoritative server_error + claim)", async () => {
+    const lyingEndpoint = "/v1/lying";
+    const ep = await query<{ id: string }>(
+      `INSERT INTO merchant_endpoints (
+         merchant_pubkey, hostname, endpoint_path, amount_usd,
+         preferred_rate_bps, status
+       ) VALUES ($1, $2, $3, 0.05, 100, 'active') RETURNING id`,
+      [merchantPubkey, hostname, lyingEndpoint],
+    );
+    try {
+      const body = {
+        hostname,
+        endpoint: lyingEndpoint,
+        startedAt: 1_717_001_111_111,
+        statusCode: 503, // upstream actually failed
+        latencyMs: 100,
+        classification: "success", // merchant lies
+        agentPubkey,
+      };
+      const sig = canonicalSig(body, merchantKp.secretKey);
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/observations",
+        headers: {
+          authorization: `Bearer ${merchantApiKey}`,
+          "content-type": "application/json",
+          "x-pact-pubkey": merchantPubkey,
+          "x-pact-signature": sig,
+        },
+        payload: body,
+      });
+      assert.equal(res.statusCode, 200);
+      const json = res.json() as { accepted: number; recordId?: string };
+      assert.equal(json.accepted, 1);
+      if (json.recordId) insertedRecordIds.push(json.recordId);
+
+      // Backend stored the AUTHORITATIVE classification, not the lie.
+      const row = await getOne<{ classification: string }>(
+        "SELECT classification FROM call_records WHERE id = $1",
+        [json.recordId],
+      );
+      assert.equal(row?.classification, "server_error");
+
+      // A claim was generated despite the merchant's "success" hint.
+      const claim = await getOne<{ trigger_type: string }>(
+        "SELECT trigger_type FROM claims WHERE call_record_id = $1",
+        [json.recordId],
+      );
+      assert.ok(claim, "expected a claims row from the authoritative path");
+      assert.equal(claim!.trigger_type, "server_error");
+    } finally {
+      await query("DELETE FROM claims WHERE call_record_id = ANY($1::uuid[])", [
+        insertedRecordIds,
+      ]).catch(() => {});
+      await query("DELETE FROM merchant_endpoints WHERE id = $1", [ep.rows[0].id]);
+    }
+  });
+
+  it("overrides merchant classification:'server_error' to 'success' when status_code is 2xx and latency is fine (no claim)", async () => {
+    const optimisticEndpoint = "/v1/optimistic";
+    const ep = await query<{ id: string }>(
+      `INSERT INTO merchant_endpoints (
+         merchant_pubkey, hostname, endpoint_path, amount_usd,
+         preferred_rate_bps, status
+       ) VALUES ($1, $2, $3, 0.05, 100, 'active') RETURNING id`,
+      [merchantPubkey, hostname, optimisticEndpoint],
+    );
+    try {
+      const body = {
+        hostname,
+        endpoint: optimisticEndpoint,
+        startedAt: 1_717_002_222_222,
+        statusCode: 200, // upstream actually succeeded
+        latencyMs: 50,
+        classification: "server_error", // merchant lies in the OTHER direction
+        agentPubkey,
+      };
+      const sig = canonicalSig(body, merchantKp.secretKey);
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/observations",
+        headers: {
+          authorization: `Bearer ${merchantApiKey}`,
+          "content-type": "application/json",
+          "x-pact-pubkey": merchantPubkey,
+          "x-pact-signature": sig,
+        },
+        payload: body,
+      });
+      assert.equal(res.statusCode, 200);
+      const json = res.json() as { accepted: number; recordId?: string };
+      assert.equal(json.accepted, 1);
+      if (json.recordId) insertedRecordIds.push(json.recordId);
+
+      const row = await getOne<{ classification: string }>(
+        "SELECT classification FROM call_records WHERE id = $1",
+        [json.recordId],
+      );
+      assert.equal(row?.classification, "success");
+
+      // No claim — success short-circuits maybeCreateClaim regardless of
+      // what the merchant tried to assert.
+      const claim = await getOne<{ id: string }>(
+        "SELECT id FROM claims WHERE call_record_id = $1",
+        [json.recordId],
+      );
+      assert.equal(claim, null);
+    } finally {
+      await query("DELETE FROM claims WHERE call_record_id = ANY($1::uuid[])", [
+        insertedRecordIds,
+      ]).catch(() => {});
+      await query("DELETE FROM merchant_endpoints WHERE id = $1", [ep.rows[0].id]);
+    }
+  });
+
+  // PR #223 Section D: hostname is optional when the merchant has exactly
+  // one active registered endpoint for the given path.
+  it("derives hostname from merchant_endpoints when body.hostname is omitted (exactly one match)", async () => {
+    const derivedHostname = `derived-${tag}.example.com`;
+    const ep = await query<{ id: string }>(
+      `INSERT INTO merchant_endpoints (
+         merchant_pubkey, hostname, endpoint_path, amount_usd,
+         preferred_rate_bps, status
+       ) VALUES ($1, $2, '/v1/derive', 0.05, 100, 'active') RETURNING id`,
+      [merchantPubkey, derivedHostname],
+    );
+    try {
+      const body = {
+        endpoint: "/v1/derive",
+        startedAt: 1_717_010_000_000,
+        statusCode: 200,
+        latencyMs: 50,
+        classification: "success",
+        agentPubkey,
+      };
+      const sig = canonicalSig(body, merchantKp.secretKey);
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/observations",
+        headers: {
+          authorization: `Bearer ${merchantApiKey}`,
+          "content-type": "application/json",
+          "x-pact-pubkey": merchantPubkey,
+          "x-pact-signature": sig,
+        },
+        payload: body,
+      });
+      assert.equal(res.statusCode, 200);
+      const json = res.json() as { accepted: number; recordId?: string };
+      assert.equal(json.accepted, 1);
+      if (json.recordId) insertedRecordIds.push(json.recordId);
+
+      // Confirm the persisted row used the derived hostname's provider.
+      const row = await getOne<{ provider_id: string }>(
+        "SELECT provider_id FROM call_records WHERE id = $1",
+        [json.recordId],
+      );
+      const prov = await getOne<{ base_url: string }>(
+        "SELECT base_url FROM providers WHERE id = $1",
+        [row!.provider_id],
+      );
+      assert.equal(prov?.base_url, derivedHostname);
+    } finally {
+      await query("DELETE FROM merchant_endpoints WHERE id = $1", [ep.rows[0].id]);
+    }
+  });
+
+  it("returns 400 HostnameRequired when body.hostname is omitted and no active endpoint matches", async () => {
+    const body = {
+      endpoint: "/v1/nothing-registered",
+      startedAt: 1_717_011_000_000,
+      statusCode: 200,
+      latencyMs: 50,
+      classification: "success",
+      agentPubkey,
+    };
+    const sig = canonicalSig(body, merchantKp.secretKey);
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/observations",
+      headers: {
+        authorization: `Bearer ${merchantApiKey}`,
+        "content-type": "application/json",
+        "x-pact-pubkey": merchantPubkey,
+        "x-pact-signature": sig,
+      },
+      payload: body,
+    });
+    assert.equal(res.statusCode, 400);
+    assert.equal((res.json() as { error: string }).error, "HostnameRequired");
+  });
+
+  it("returns 400 HostnameAmbiguous when body.hostname is omitted and >1 active endpoint matches", async () => {
+    const hostA = `amb-a-${tag}.example.com`;
+    const hostB = `amb-b-${tag}.example.com`;
+    const epA = await query<{ id: string }>(
+      `INSERT INTO merchant_endpoints (
+         merchant_pubkey, hostname, endpoint_path, amount_usd,
+         preferred_rate_bps, status
+       ) VALUES ($1, $2, '/v1/ambig', 0.05, 100, 'active') RETURNING id`,
+      [merchantPubkey, hostA],
+    );
+    const epB = await query<{ id: string }>(
+      `INSERT INTO merchant_endpoints (
+         merchant_pubkey, hostname, endpoint_path, amount_usd,
+         preferred_rate_bps, status
+       ) VALUES ($1, $2, '/v1/ambig', 0.05, 100, 'active') RETURNING id`,
+      [merchantPubkey, hostB],
+    );
+    try {
+      const body = {
+        endpoint: "/v1/ambig",
+        startedAt: 1_717_012_000_000,
+        statusCode: 200,
+        latencyMs: 50,
+        classification: "success",
+        agentPubkey,
+      };
+      const sig = canonicalSig(body, merchantKp.secretKey);
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/observations",
+        headers: {
+          authorization: `Bearer ${merchantApiKey}`,
+          "content-type": "application/json",
+          "x-pact-pubkey": merchantPubkey,
+          "x-pact-signature": sig,
+        },
+        payload: body,
+      });
+      assert.equal(res.statusCode, 400);
+      assert.equal((res.json() as { error: string }).error, "HostnameAmbiguous");
+    } finally {
+      await query("DELETE FROM merchant_endpoints WHERE id IN ($1, $2)", [
+        epA.rows[0].id,
+        epB.rows[0].id,
+      ]);
+    }
+  });
+
+  it("classifies 200 with high latency as 'timeout' (authoritative latency check)", async () => {
+    const slowEndpoint = "/v1/slow";
+    const ep = await query<{ id: string }>(
+      `INSERT INTO merchant_endpoints (
+         merchant_pubkey, hostname, endpoint_path, amount_usd,
+         preferred_rate_bps, status
+       ) VALUES ($1, $2, $3, 0.05, 100, 'active') RETURNING id`,
+      [merchantPubkey, hostname, slowEndpoint],
+    );
+    try {
+      const body = {
+        hostname,
+        endpoint: slowEndpoint,
+        startedAt: 1_717_003_333_333,
+        statusCode: 200,
+        latencyMs: 7_000, // > 5000ms threshold → timeout
+        classification: "success",
+        agentPubkey,
+      };
+      const sig = canonicalSig(body, merchantKp.secretKey);
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/observations",
+        headers: {
+          authorization: `Bearer ${merchantApiKey}`,
+          "content-type": "application/json",
+          "x-pact-pubkey": merchantPubkey,
+          "x-pact-signature": sig,
+        },
+        payload: body,
+      });
+      assert.equal(res.statusCode, 200);
+      const json = res.json() as { accepted: number; recordId?: string };
+      if (json.recordId) insertedRecordIds.push(json.recordId);
+      const row = await getOne<{ classification: string }>(
+        "SELECT classification FROM call_records WHERE id = $1",
+        [json.recordId],
+      );
+      assert.equal(row?.classification, "timeout");
+    } finally {
+      await query("DELETE FROM claims WHERE call_record_id = ANY($1::uuid[])", [
+        insertedRecordIds,
+      ]).catch(() => {});
+      await query("DELETE FROM merchant_endpoints WHERE id = $1", [ep.rows[0].id]);
+    }
+  });
 });

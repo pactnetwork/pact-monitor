@@ -146,7 +146,11 @@ export async function createPact(config: PactConfig): Promise<PactInstance> {
     backendBaseUrl: net.backendBaseUrl,
     fetchImpl: cfg.fetchImpl,
   });
-  void merchantRegistry.start();
+  // PR #223 Section E: await the boot fetch so the first `pact.fetch`
+  // after `createPact()` doesn't race ahead of registry population and
+  // miss a valid attestation. `start()` swallows network errors and the
+  // periodic refresh retries — no new throw surface.
+  await merchantRegistry.start();
   const buffer = await selectStorage({
     storage: cfg.storage,
     storagePath: cfg.storagePath,

@@ -17,7 +17,18 @@ export interface MerchantConfig {
   apiKey: string;
   /** Canonical hostname this merchant serves (used for endpoint resolution). */
   hostname: string;
-  /** "direct" — middleware on merchant host. "market" — registers for Pact proxy. Default "direct". */
+  /**
+   * Integration mode label. `"direct"` = merchant runs `merchant.middleware()`
+   * on its own host. `"market"` = merchant registers an endpoint with the
+   * Pact Market proxy and lets the proxy attribute calls. Default `"direct"`.
+   *
+   * INFORMATIONAL in this release — both modes accept all `MerchantInstance`
+   * methods (`middleware`, `fastify`, `hono`, `register`, etc.) regardless of
+   * the value. A future version may enforce semantics (direct mode disables
+   * `register()`, market mode disables middleware methods). PR #223 review
+   * Section F flagged this; documenting the intent here so consumers can
+   * still set the field meaningfully today.
+   */
   mode?: "direct" | "market";
   /** Override the resolved backend URL (per-network default otherwise). */
   backendUrl?: string;

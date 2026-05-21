@@ -11,6 +11,13 @@
 // This test pins the mapping. When the real consolidation into a shared
 // classifier package happens (deferred — see plan), this parity test stays
 // to gate any future drift.
+//
+// PR #223 Section A: the backend recomputes the authoritative classification
+// at `packages/backend/src/utils/classifier.ts` using a VERBATIM port of
+// the SDK's `defaultClassify` (same algorithm, same threshold default).
+// As long as the SDK helper and the backend helper stay byte-identical,
+// this SDK↔wrap parity test transitively guarantees backend↔wrap parity.
+// If you change one, change the other.
 
 import { describe, it, expect } from "vitest";
 import { defaultClassifier as wrapClassifier } from "@pact-network/wrap";

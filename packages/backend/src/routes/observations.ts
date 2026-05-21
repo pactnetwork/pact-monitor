@@ -31,6 +31,7 @@ import { query, getOne } from "../db.js";
 import { canonicalHostname } from "../utils/hostname.js";
 import { findOrCreateProvider } from "../utils/providers.js";
 import { maybeCreateClaim } from "../utils/claims.js";
+import { defaultClassify } from "../utils/classifier.js";
 
 const VALID_CLASSIFICATIONS = [
   "success",
@@ -73,9 +74,6 @@ export async function observationsRoutes(app: FastifyInstance): Promise<void> {
       if (!body.endpoint || typeof body.endpoint !== "string") {
         return reply.code(400).send({ error: "endpoint is required" });
       }
-      if (!body.hostname || typeof body.hostname !== "string") {
-        return reply.code(400).send({ error: "hostname is required" });
-      }
       if (typeof body.statusCode !== "number" || typeof body.latencyMs !== "number") {
         return reply.code(400).send({
           error: "statusCode and latencyMs (number) are required",
@@ -95,15 +93,54 @@ export async function observationsRoutes(app: FastifyInstance): Promise<void> {
         });
       }
 
+      const merchantAuthedEarly = request as FastifyRequest & {
+        agentPubkey: string | null;
+      };
+      const merchantPubkeyEarly = merchantAuthedEarly.agentPubkey;
+
+      // PR #223 Section D: spec § POST /observations example omits
+      // `hostname`. Non-Node clients following the spec would 400; derive
+      // from the merchant's active registered endpoints when not supplied.
       let canonicalHost: string;
-      try {
-        canonicalHost = canonicalHostname(body.hostname);
-      } catch (err) {
-        request.log.warn(
-          { err, hostname: body.hostname },
-          "Rejecting observation with invalid hostname",
+      if (body.hostname && typeof body.hostname === "string") {
+        try {
+          canonicalHost = canonicalHostname(body.hostname);
+        } catch (err) {
+          request.log.warn(
+            { err, hostname: body.hostname },
+            "Rejecting observation with invalid hostname",
+          );
+          return reply.code(400).send({ error: "Invalid hostname" });
+        }
+      } else {
+        if (!merchantPubkeyEarly) {
+          return reply.code(400).send({
+            error: "HostnameRequired",
+            message:
+              "hostname missing and merchant API key has no agent_pubkey binding to look up registered endpoints",
+          });
+        }
+        const matches = await query<{ hostname: string }>(
+          `SELECT DISTINCT hostname FROM merchant_endpoints
+             WHERE merchant_pubkey = $1
+               AND endpoint_path = $2
+               AND status = 'active'`,
+          [merchantPubkeyEarly, body.endpoint],
         );
-        return reply.code(400).send({ error: "Invalid hostname" });
+        if (matches.rowCount === 0) {
+          return reply.code(400).send({
+            error: "HostnameRequired",
+            message:
+              "hostname missing and no active registered endpoint matches endpoint_path; supply hostname in the body",
+          });
+        }
+        if ((matches.rowCount ?? 0) > 1) {
+          return reply.code(400).send({
+            error: "HostnameAmbiguous",
+            message: `merchant has ${matches.rowCount} active hostnames for endpoint_path ${body.endpoint}; supply hostname in the body to disambiguate`,
+          });
+        }
+        canonicalHost = matches.rows[0].hostname; // already canonical from /endpoint/register
       }
 
       const providerId = await findOrCreateProvider(canonicalHost);
@@ -114,9 +151,33 @@ export async function observationsRoutes(app: FastifyInstance): Promise<void> {
       };
       // The merchant's pubkey on this route IS the api_keys.agent_pubkey
       // bound to the role='merchant' row (validated by
-      // verifyObservationSignature).
+      // verifyObservationSignature). Same value as `merchantPubkeyEarly`
+      // resolved above for the hostname-derivation block.
       const merchantPubkey = merchantAuthed.agentPubkey;
       const ts = new Date(body.startedAt ?? Date.now());
+
+      // PR #223 review Section A: Pact's classifier is authoritative; the
+      // merchant's body.classification is a hint we record divergence on
+      // but never trust. Recompute from (statusCode, latencyMs) using the
+      // same default-classifier the SDK + market-proxy use (locked by the
+      // cross-package parity test in market-proxy/.../classifier-parity).
+      const authoritativeClassification = defaultClassify({
+        statusCode: body.statusCode,
+        latencyMs: body.latencyMs,
+      });
+      if (body.classification !== authoritativeClassification) {
+        request.log.warn(
+          {
+            merchantPubkey,
+            endpoint: body.endpoint,
+            statusCode: body.statusCode,
+            latencyMs: body.latencyMs,
+            hint: body.classification,
+            authoritative: authoritativeClassification,
+          },
+          "Merchant classification diverged from authoritative",
+        );
+      }
 
       const result = await query<{ id: string }>(
         `INSERT INTO call_records (
@@ -133,7 +194,7 @@ export async function observationsRoutes(app: FastifyInstance): Promise<void> {
           ts,
           body.statusCode,
           body.latencyMs,
-          body.classification,
+          authoritativeClassification,
           merchantAuthed.agentId,
           agentPubkey,
           merchantPubkey,
@@ -181,7 +242,10 @@ export async function observationsRoutes(app: FastifyInstance): Promise<void> {
         callRecordId,
         providerId,
         agentId: merchantAuthed.agentId,
-        classification: body.classification,
+        // Use the AUTHORITATIVE classification (recomputed above) so a
+        // merchant can't return 503 and pass classification:"success" to
+        // suppress refund creation.
+        classification: authoritativeClassification,
         paymentAmount,
         agentPubkey,
         referrerPubkey: null,

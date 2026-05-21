@@ -167,4 +167,83 @@ describe("express middleware", () => {
       await m.shutdown();
     }
   });
+
+  // PR #223 Section C: parameterized routes share one pricing entry.
+  // The middleware reads `req.route.path` lazily — by the time the
+  // writeHead override or the finish handler fires, Express has matched
+  // the route and `req.route?.path` returns the pattern (e.g.
+  // "/v1/items/:id"), not the concrete URL ("/v1/items/42").
+  it("uses Express route pattern (e.g. /v1/items/:id) as the pricing key + signed endpoint", async () => {
+    const merchantSigner = freshKeypair();
+    const agentPubkey = freshKeypair().publicKey.toBase58();
+    const observations: unknown[] = [];
+
+    const fakeFetch = (async (url: string, init: RequestInit) => {
+      if (typeof url === "string" && url.includes("/api/v1/observations")) {
+        observations.push({ url, body: JSON.parse(init.body as string) });
+      }
+      return { status: 200, async json() { return { accepted: 1 }; } };
+    }) as unknown as typeof fetch;
+
+    const m = await createPactMerchant(
+      {
+        network: "localnet",
+        signer: merchantSigner,
+        apiKey: "k",
+        hostname: "api.test.local",
+        installSignalHandlers: false,
+      },
+      { fetchImpl: fakeFetch },
+    );
+
+    const app = express();
+    app.use(
+      m.middleware({
+        pricing: { "/v1/items/:id": { amountUsd: 0.01 } },
+      }),
+    );
+    app.get("/v1/items/:id", (_req, res) => {
+      res.status(200).json({ ok: true });
+    });
+
+    const server = await listen(app);
+    try {
+      const startedAt = 1_717_500_000_000;
+      const res = await fetch(`${server.url}/v1/items/42`, {
+        headers: {
+          "X-Pact-Pubkey": agentPubkey,
+          "X-Pact-Started-At": String(startedAt),
+        },
+      });
+      expect(res.status).toBe(200);
+
+      const proxiedBy = res.headers.get("x-pact-proxied-by");
+      const proxiedSig = res.headers.get("x-pact-proxied-sig");
+      expect(proxiedBy).toBe(merchantSigner.publicKey.toBase58());
+      expect(proxiedSig).toBeTruthy();
+      // The signed endpoint is the route PATTERN, not the concrete URL.
+      expect(
+        verifyProxiedBy(
+          {
+            merchantPubkey: merchantSigner.publicKey.toBase58(),
+            agentPubkey,
+            startedAt,
+            endpoint: "/v1/items/:id",
+            statusCode: 200,
+          },
+          proxiedSig!,
+          merchantSigner.publicKey.toBase58(),
+        ),
+      ).toBe(true);
+
+      await new Promise((r) => setTimeout(r, 50));
+      // The observation also reports the route pattern as `endpoint`.
+      expect(observations.length).toBe(1);
+      const body = (observations[0] as { body: Record<string, unknown> }).body;
+      expect(body.endpoint).toBe("/v1/items/:id");
+    } finally {
+      await server.close();
+      await m.shutdown();
+    }
+  });
 });

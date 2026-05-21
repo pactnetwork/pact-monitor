@@ -102,10 +102,18 @@ function evaluateAttribution(
   startedAt: number,
   endpoint: string,
   statusCode: number,
+  host: string,
 ): AttributionVerified | null {
   if (!pact.proxiedBy || !pact.proxiedSig) return null;
   if (!deps.merchantRegistry) return null;
   if (!deps.merchantRegistry.hasMerchant(pact.proxiedBy)) return null;
+  // PR #223 Section B: a registered merchant may only attest for hostnames
+  // it owns. Without this check, any active merchant key in the registry
+  // could produce a valid attestation for any host — defeating the spec's
+  // spoofing mitigation. Unknown hostnames (or empty registered list)
+  // collapse to mismatch → return null and let the SDK record normally.
+  const registeredHostnames = deps.merchantRegistry.getMerchantHostnames(pact.proxiedBy);
+  if (!registeredHostnames || !registeredHostnames.includes(host)) return null;
   const ok = verifyProxiedBy(
     {
       merchantPubkey: pact.proxiedBy,
@@ -199,6 +207,7 @@ export async function goldenFetch(
       startedAtForVerify,
       slug,
       resp.status,
+      host,
     );
     return {
       response: resp,
@@ -262,9 +271,18 @@ async function bare(
     /* malformed URL — bare path already swallowed it above */
   }
   const pact = parsePactHeaders(response.headers);
+  // PR #223 Section B: hostname binding applies on the bare path too.
+  // The canonical host comes from the request URL (the agent's intended
+  // upstream); the merchant must be registered for that host to attest.
+  let bareHost = "";
+  try {
+    bareHost = canonicalHostname(url);
+  } catch {
+    /* malformed URL — falls through; evaluateAttribution will mismatch */
+  }
   const directAttribution =
     pact.proxiedBy && pact.proxiedSig
-      ? evaluateAttribution(deps, pact, startedAt, directEndpoint, response.status)
+      ? evaluateAttribution(deps, pact, startedAt, directEndpoint, response.status, bareHost)
       : null;
   return {
     response,
