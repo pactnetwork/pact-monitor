@@ -5,6 +5,7 @@ import { maybeCreateClaim } from "../utils/claims.js";
 import { detectAnomalies } from "../utils/fraud-detection.js";
 import { getEffectiveRate } from "../utils/insurance.js";
 import { canonicalHostname } from "../utils/hostname.js";
+import { findOrCreateProvider } from "../utils/providers.js";
 
 // Mirror of the call_records.classification CHECK constraint in schema.sql.
 // Keep in sync with the migration in
@@ -42,22 +43,6 @@ interface RecordsBody {
 const MAX_BATCH_SIZE = 500;
 const MAX_RECORDS_PER_HOUR = 10_000;
 const RATE_LIMIT_WARNING_THRESHOLD = 0.8;
-
-async function findOrCreateProvider(hostname: string): Promise<string> {
-  // Callers pass already-canonicalized hostname; this function no longer
-  // normalizes so the transform is explicit at the ingest boundary.
-  const existing = await getOne<{ id: string }>(
-    "SELECT id FROM providers WHERE base_url = $1",
-    [hostname],
-  );
-  if (existing) return existing.id;
-
-  const created = await getOne<{ id: string }>(
-    "INSERT INTO providers (name, base_url) VALUES ($1, $2) ON CONFLICT (base_url) DO UPDATE SET base_url = EXCLUDED.base_url RETURNING id",
-    [hostname, hostname],
-  );
-  return created!.id;
-}
 
 export async function recordsRoutes(app: FastifyInstance): Promise<void> {
   app.post<{ Body: RecordsBody }>(

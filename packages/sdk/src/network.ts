@@ -41,6 +41,12 @@ export interface NetworkConfig {
   usdcMint: string;
   proxyBaseUrl: string;
   indexerBaseUrl: string;
+  /**
+   * Pact backend host (legacy scorecard API). Used by the merchant SDK for
+   * `/api/v1/observations`, `/api/v1/merchants`, etc. Distinct from the proxy
+   * (market) and indexer hosts.
+   */
+  backendBaseUrl: string;
   defaultRpcUrl: string;
 }
 
@@ -50,6 +56,7 @@ export const NETWORK_CONFIGS: Record<Network, NetworkConfig> = {
     usdcMint: USDC_MINT_MAINNET.toBase58(),
     proxyBaseUrl: "https://market.pactnetwork.io",
     indexerBaseUrl: "https://indexer.pactnetwork.io",
+    backendBaseUrl: "https://pactnetwork.io",
     defaultRpcUrl: "https://api.mainnet-beta.solana.com",
   },
   devnet: {
@@ -60,6 +67,7 @@ export const NETWORK_CONFIGS: Record<Network, NetworkConfig> = {
     usdcMint: USDC_MINT_DEVNET.toBase58(),
     proxyBaseUrl: "https://market.pactnetwork.io",
     indexerBaseUrl: "https://indexer.pactnetwork.io",
+    backendBaseUrl: "https://pactnetwork.io",
     defaultRpcUrl: "https://api.devnet.solana.com",
   },
   localnet: {
@@ -68,6 +76,7 @@ export const NETWORK_CONFIGS: Record<Network, NetworkConfig> = {
     usdcMint: USDC_MINT_DEVNET.toBase58(),
     proxyBaseUrl: "http://localhost:3001",
     indexerBaseUrl: "http://localhost:3002",
+    backendBaseUrl: "http://localhost:3001",
     defaultRpcUrl: "http://127.0.0.1:8899",
   },
 };
@@ -85,6 +94,7 @@ export function resolveNetwork(
     usdcMint?: string;
     proxyBaseUrl?: string;
     indexerBaseUrl?: string;
+    backendBaseUrl?: string;
     rpcUrl?: string;
   },
 ): ResolvedNetwork {
@@ -101,6 +111,9 @@ export function resolveNetwork(
     ),
     indexerBaseUrl: stripTrailingSlash(
       overrides?.indexerBaseUrl ?? base.indexerBaseUrl,
+    ),
+    backendBaseUrl: stripTrailingSlash(
+      overrides?.backendBaseUrl ?? base.backendBaseUrl,
     ),
     defaultRpcUrl: base.defaultRpcUrl,
     rpcUrl: overrides?.rpcUrl ?? base.defaultRpcUrl,

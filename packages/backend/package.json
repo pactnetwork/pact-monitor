@@ -12,7 +12,8 @@
     "migrate:canonicalize-hostnames": "tsx migrations/20260422-canonicalize-hostnames.ts",
     "migrate:referrer-schema": "tsx migrations/20260424-referrer-schema.ts",
     "migrate:split-error-classification": "tsx migrations/20260503-split-error-classification.ts",
-    "test": "tsx --test src/utils/*.test.ts src/routes/*.test.ts migrations/*.test.ts"
+    "migrate:merchant-role-and-origin": "tsx migrations/20260601-merchant-role-and-origin.ts",
+    "test": "tsx --test --test-concurrency=1 src/utils/*.test.ts src/routes/*.test.ts migrations/*.test.ts"
   },
   "dependencies": {
     "@anchor-lang/core": "^1.0.0",

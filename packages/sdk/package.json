@@ -13,6 +13,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./merchant": {
+      "types": "./dist/merchant/index.d.ts",
+      "default": "./dist/merchant/index.js"
     }
   },
   "files": [
@@ -55,10 +59,24 @@
     "tweetnacl": "^1.0.3",
     "viem": "^2.21.0"
   },
+  "peerDependencies": {
+    "express": "*",
+    "fastify": "*",
+    "hono": "*"
+  },
+  "peerDependenciesMeta": {
+    "express": { "optional": true },
+    "fastify": { "optional": true },
+    "hono": { "optional": true }
+  },
   "devDependencies": {
+    "@types/express": "^5.0.0",
     "@types/node": "^22.10.5",
     "@vitest/coverage-v8": "^3.0.4",
+    "express": "^5.0.0",
+    "fastify": "^5.3.3",
     "happy-dom": "^15.11.7",
+    "hono": "^4.6.0",
     "typescript": "^5.7.3",
     "vitest": "^3.0.4"
   }

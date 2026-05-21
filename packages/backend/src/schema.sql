@@ -467,3 +467,38 @@ FROM beta_applicants;
 
 CREATE INDEX IF NOT EXISTS idx_agent_flags_status
   ON agent_flags(status, created_at);
+
+-- ============================================================
+-- Merchant SDK (Commit 1): role + observation provenance
+-- ============================================================
+--
+-- Additive, idempotent. Mirrors packages/backend/migrations/
+-- 20260601-merchant-role-and-origin.ts. See plan at
+-- /Users/ken/.claude/plans/implement-merchant-sdk-based-synthetic-pizza.md.
+
+-- B1: api_keys.role. Default 'agent' back-fills every existing row at DDL
+-- time (non-volatile default, table-catalog rewrite only). Include
+-- 'partner' in the CHECK now even though Commit 1 only issues 'agent' and
+-- 'merchant' — Phase K (Commit 3) will issue partner keys, and adding the
+-- value later forces a constraint drop/recreate round-trip on a live DB.
+ALTER TABLE api_keys
+  ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'agent'
+    CHECK (role IN ('agent', 'merchant', 'partner'));
+CREATE INDEX IF NOT EXISTS idx_api_keys_role ON api_keys(role);
+
+-- call_records.origin distinguishes the ingest path. 'agent' is the
+-- existing path (POST /api/v1/records); 'merchant' is the new path
+-- (POST /api/v1/observations); 'proxy' is reserved for the market-proxy
+-- ingest in Commit 2.
+ALTER TABLE call_records
+  ADD COLUMN IF NOT EXISTS origin TEXT NOT NULL DEFAULT 'agent'
+    CHECK (origin IN ('agent', 'merchant', 'proxy'));
+-- call_records.merchant_pubkey: which merchant submitted the observation
+-- when origin IN ('merchant','proxy'). Joinable to api_keys.agent_pubkey
+-- (with role='merchant') for ops audits and divergence-rate monitoring.
+ALTER TABLE call_records
+  ADD COLUMN IF NOT EXISTS merchant_pubkey TEXT NULL;
+CREATE INDEX IF NOT EXISTS idx_call_records_origin
+  ON call_records(origin, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_call_records_merchant_pubkey
+  ON call_records(merchant_pubkey) WHERE merchant_pubkey IS NOT NULL;
