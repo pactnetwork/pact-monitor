@@ -2,10 +2,11 @@ import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import {
   ChainAdapter,
-  EvmAdapterStub,
+  EvmAdapter,
   SolanaAdapter,
   getChain,
 } from "@pact-network/shared";
+import { resolveDeployment } from "@pact-network/protocol-evm-v1-client";
 
 @Injectable()
 export class AdaptersService implements OnModuleInit {
@@ -34,7 +35,41 @@ export class AdaptersService implements OnModuleInit {
         const adapter = new SolanaAdapter({ descriptor, rpcUrl });
         this.adapters.set(name, adapter);
       } else if (descriptor.vm === "evm") {
-        this.adapters.set(name, new EvmAdapterStub({ descriptor }));
+        if (!descriptor.chainId) {
+          throw new Error(`evm network ${name} missing chainId`);
+        }
+        if (!descriptor.rpcUrl) {
+          throw new Error(`evm network ${name} missing rpcUrl`);
+        }
+        if (descriptor.finalityBlocks == null) {
+          throw new Error(`evm network ${name} missing finalityBlocks`);
+        }
+        if (descriptor.blockTimeMs == null) {
+          throw new Error(`evm network ${name} missing blockTimeMs`);
+        }
+        if (descriptor.deploymentBlock == null) {
+          throw new Error(`evm network ${name} missing deploymentBlock`);
+        }
+
+        // NOTE: passing process.env bypasses Nest ConfigService. Acceptable for
+        // Phase 1 (ConfigService backs onto process.env). Phase 2 (Rick
+        // follow-up post WP-MN-04 Gate B) must switch to per-key
+        // this.config.get(...) calls for proper config provider abstraction.
+        // See WP-MN-04 T4 code-review Important #1.
+        const deployment = resolveDeployment(descriptor.chainId, process.env);
+
+        this.adapters.set(
+          name,
+          new EvmAdapter({
+            descriptor,
+            rpcUrl: descriptor.rpcUrl,
+            finalityBlocks: descriptor.finalityBlocks,
+            blockTimeMs: descriptor.blockTimeMs,
+            deploymentBlock: BigInt(descriptor.deploymentBlock),
+            deployment,
+            // no signer — indexer is read-only
+          }),
+        );
       }
     }
 

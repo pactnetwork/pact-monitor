@@ -1,19 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { ConfigService } from "@nestjs/config";
+import { Logger } from "@nestjs/common";
 import { Keypair } from "@solana/web3.js";
 
 // ---------------------------------------------------------------------------
 // Mock @pact-network/shared so we can control getChain, SolanaAdapter,
-// EvmAdapterStub without any real RPC calls or filesystem reads.
+// EvmAdapter without any real RPC calls or filesystem reads.
 // ---------------------------------------------------------------------------
 
 const mockSolanaAdapterInstances: object[] = [];
-const mockEvmAdapterStubInstances: object[] = [];
+const mockEvmAdapterInstances: object[] = [];
 
 vi.mock("@pact-network/shared", () => {
-  const CHAINS: Record<string, { vm: string; network: string; usdcMint: string; usdcDecimals: number }> = {
-    "solana-devnet": { vm: "solana", network: "solana-devnet", usdcMint: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU", usdcDecimals: 6 },
-    "arc-testnet":   { vm: "evm",    network: "arc-testnet",   usdcMint: "0x0", usdcDecimals: 6 },
+  const CHAINS: Record<string, { vm: string; network: string; usdcMint: string; usdcDecimals: number; chainId: number; rpcUrl: string; finalityBlocks: number; blockTimeMs: number; deploymentBlock: number }> = {
+    "solana-devnet": { vm: "solana", network: "solana-devnet", usdcMint: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU", usdcDecimals: 6, chainId: 0, rpcUrl: "", finalityBlocks: 0, blockTimeMs: 0, deploymentBlock: 0 },
+    "arc-testnet":   { vm: "evm",    network: "arc-testnet",   usdcMint: "0x0", usdcDecimals: 6, chainId: 5042002, rpcUrl: "https://rpc.testnet.arc.network", finalityBlocks: 64, blockTimeMs: 500, deploymentBlock: 42953139 },
   };
 
   function getChain(name: string) {
@@ -30,16 +31,47 @@ vi.mock("@pact-network/shared", () => {
     }
   }
 
-  class EvmAdapterStub {
+  class EvmAdapter {
     descriptor: object;
     constructor(opts: { descriptor: object }) {
       this.descriptor = opts.descriptor;
-      mockEvmAdapterStubInstances.push(this);
+      mockEvmAdapterInstances.push(this);
     }
   }
 
-  return { getChain, SolanaAdapter, EvmAdapterStub };
+  return { getChain, SolanaAdapter, EvmAdapter };
 });
+
+// ---------------------------------------------------------------------------
+// Mock @pact-network/protocol-evm-v1-client so resolveDeployment is a no-op
+// in unit tests (no live chain data needed).
+// ---------------------------------------------------------------------------
+vi.mock("@pact-network/protocol-evm-v1-client", () => ({
+  resolveDeployment: vi.fn().mockReturnValue({
+    chainId: 5042002,
+    usdc: "0x3600000000000000000000000000000000000000",
+    registry: "0x056BAC33546b5b51B8CF6f332379651f715B889C",
+    pool: "0xa6135d9C6BFA0F256B9DeBa10d76C7698329aFdE",
+    settler: "0xe461CE50ef53BFC10945B101FB94b11Ec5eB591f",
+  }),
+}));
+
+// ---------------------------------------------------------------------------
+// Mock viem/accounts so privateKeyToAccount works without real crypto validation
+// ---------------------------------------------------------------------------
+vi.mock("viem/accounts", () => ({
+  privateKeyToAccount: vi.fn().mockImplementation((key: string) => ({
+    address: "0xdeadbeef",
+    _key: key,
+    type: "local" as const,
+    sign: vi.fn(),
+    signMessage: vi.fn(),
+    signTransaction: vi.fn(),
+    signTypedData: vi.fn(),
+    source: "privateKey" as const,
+    publicKey: "0xpub",
+  })),
+}));
 
 // ---------------------------------------------------------------------------
 // Also mock @solana/web3.js Keypair so fromSecretKey works in loadKeypair test
@@ -75,7 +107,7 @@ function makeConfig(env: Record<string, string> = {}): ConfigService {
 describe("AdaptersService (settler)", () => {
   beforeEach(() => {
     mockSolanaAdapterInstances.length = 0;
-    mockEvmAdapterStubInstances.length = 0;
+    mockEvmAdapterInstances.length = 0;
   });
 
   it("default boot (no PACT_ENABLED_NETWORKS): exactly 1 entry, solana-devnet, vm=solana", () => {
@@ -86,10 +118,10 @@ describe("AdaptersService (settler)", () => {
     const adapter = svc.getAdapter("solana-devnet");
     expect(adapter).toBeDefined();
     expect(mockSolanaAdapterInstances).toHaveLength(1);
-    expect(mockEvmAdapterStubInstances).toHaveLength(0);
+    expect(mockEvmAdapterInstances).toHaveLength(0);
   });
 
-  it("PACT_ENABLED_NETWORKS=solana-devnet,arc-testnet: 2 entries, second is EvmAdapterStub", () => {
+  it("PACT_ENABLED_NETWORKS=solana-devnet,arc-testnet: 2 entries, second is EvmAdapter", () => {
     const svc = new AdaptersService(
       makeConfig({ PACT_ENABLED_NETWORKS: "solana-devnet,arc-testnet" }),
     );
@@ -101,11 +133,11 @@ describe("AdaptersService (settler)", () => {
     expect(networks).toContain("arc-testnet");
 
     expect(mockSolanaAdapterInstances).toHaveLength(1);
-    expect(mockEvmAdapterStubInstances).toHaveLength(1);
+    expect(mockEvmAdapterInstances).toHaveLength(1);
 
-    // arc-testnet adapter is the EvmAdapterStub instance
+    // arc-testnet adapter is the real EvmAdapter instance
     const arcAdapter = svc.getAdapter("arc-testnet");
-    expect(mockEvmAdapterStubInstances).toContain(arcAdapter);
+    expect(mockEvmAdapterInstances).toContain(arcAdapter);
   });
 
   it("PACT_ENABLED_NETWORKS=bogus-chain: throws via getChain (unknown network)", () => {
@@ -163,13 +195,60 @@ describe("AdaptersService (settler)", () => {
     expect(loaded.publicKey.toBase58()).toBe(kp2.publicKey.toBase58());
   });
 
-  it("getSigner throws for a network with no loaded keypair", () => {
-    // arc-testnet has no keypair loading (EVM signer is WP-MN-04)
+  it("getSigner throws for a network with no loaded keypair (EVM uses getEvmAccount, not getSigner)", () => {
+    // arc-testnet uses getEvmAccount() for EVM signers; getSigner() is Solana-only.
     const svc = new AdaptersService(
       makeConfig({ PACT_ENABLED_NETWORKS: "solana-devnet,arc-testnet" }),
     );
     svc.onModuleInit();
     expect(() => svc.getSigner("arc-testnet")).toThrow(/No settler signer loaded/);
+  });
+
+  it("loadEvmAccount: parses a valid 0x-hex private key for arc-testnet (Phase 1)", () => {
+    const svc = new AdaptersService(
+      makeConfig({
+        PACT_ENABLED_NETWORKS: "solana-devnet,arc-testnet",
+        PACT_SETTLER_KEYPAIR_ARC_TESTNET: "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+      }),
+    );
+    svc.onModuleInit();
+
+    // getEvmAccount does not throw when the key was loaded
+    const account = svc.getEvmAccount("arc-testnet");
+    expect(account).toBeDefined();
+    expect(account.address).toBe("0xdeadbeef"); // from the mock
+  });
+
+  it("getEvmAccount throws when no EVM key is set", () => {
+    const svc = new AdaptersService(
+      makeConfig({ PACT_ENABLED_NETWORKS: "solana-devnet,arc-testnet" }),
+    );
+    svc.onModuleInit();
+    expect(() => svc.getEvmAccount("arc-testnet")).toThrow(/No EVM signer loaded/);
+  });
+
+  it("loadEvmAccount: warns and returns null for Secret Manager path (Phase 2 not yet supported)", () => {
+    // Setup: env value is a Secret Manager resource path (projects/.../versions/latest).
+    // Expected: no signer loaded; warn log fired; getEvmAccount throws.
+    const config = makeConfig({
+      PACT_ENABLED_NETWORKS: "arc-testnet",
+      PACT_SETTLER_KEYPAIR_ARC_TESTNET:
+        "projects/test-gcp/secrets/pact-settler-arc-testnet/versions/latest",
+    });
+    const warnSpy = vi
+      .spyOn(Logger.prototype, "warn")
+      .mockImplementation(() => {});
+    const svc = new AdaptersService(config);
+    svc.onModuleInit();
+    // Adapter is still set up (read-only EVM adapter)...
+    expect(() => svc.getAdapter("arc-testnet")).not.toThrow();
+    // ...but no signer is loaded.
+    expect(() => svc.getEvmAccount("arc-testnet")).toThrow(/No EVM signer loaded/);
+    // Warn message names the network and cites Phase 2.
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringMatching(/arc-testnet.*Secret Manager.*Phase 2/),
+    );
+    warnSpy.mockRestore();
   });
 
   it("getAdapter throws for a network not in the map", () => {
