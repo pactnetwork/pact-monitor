@@ -220,6 +220,7 @@ async function wireStubs(): Promise<{
 // Stub adapter that bypasses all on-chain work. Returns a deterministic txId.
 const STUB_TX_ID = "GATEBstubSignatureAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 const stubAdapter = {
+  descriptor: { vm: "solana" as const },
   submitSettleBatch: vi.fn().mockResolvedValue({ txId: STUB_TX_ID }),
   checkAgentEligibility: vi.fn(),
   readEndpointConfigs: vi.fn(),

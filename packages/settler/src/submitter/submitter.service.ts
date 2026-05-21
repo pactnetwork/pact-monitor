@@ -203,7 +203,16 @@ export class SubmitterService implements OnModuleInit {
     network: string,
   ): Promise<SettlementOutcome> {
     const adapter = this.adaptersService.getAdapter(network);
-    const signer = this.adaptersService.getSigner(network);
+    // Signer routing per VM:
+    //   - Solana: pass the Keypair via SettleBatchInput.signer (the legacy
+    //     convention; SolanaAdapter expects it).
+    //   - EVM: the WalletClient was injected into EvmAdapter at construction
+    //     time (AdaptersService.loadEvmAccount → EvmAdapterOptions.signer in
+    //     T4); the input.signer field is unused on the EVM path. Pass null.
+    const vm = adapter.descriptor.vm;
+    const signer = vm === "solana"
+      ? this.adaptersService.getSigner(network)
+      : null;
 
     // All messages in a batch share the same slug (batcher groups by slug).
     // Extract slug from the first message; fall back gracefully.
