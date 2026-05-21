@@ -29,6 +29,7 @@ export interface MerchantClient {
     body: unknown;
   }>;
   getStats(query?: Record<string, string | number>): Promise<unknown>;
+  getReferrals(since?: number): Promise<unknown>;
   getMerchants(): Promise<unknown>;
   postRegister(body: Record<string, unknown>): Promise<unknown>;
 }
@@ -107,6 +108,10 @@ export function createMerchantClient(
             .join("&")
         : "";
       return getJson(`/api/v1/merchants/me/stats${qs}`);
+    },
+    getReferrals: async (since) => {
+      const qs = typeof since === "number" ? `?since=${encodeURIComponent(String(since))}` : "";
+      return getJson(`/api/v1/merchants/me/referrals${qs}`);
     },
     getMerchants: () => getJson("/api/v1/merchants"),
     postRegister: async (body) => {

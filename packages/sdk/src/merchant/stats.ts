@@ -4,6 +4,7 @@
  * `origin='merchant'` rows are joined to the settler pipeline.
  */
 import type { MerchantClient } from "./client.js";
+import { bigOrZero } from "./bignum.js";
 
 export interface MerchantStats {
   calls: number;
@@ -22,13 +23,6 @@ const ZEROED: MerchantStats = {
   refundsPaidUsdc: 0n,
   netRevenueUsdc: 0n,
 };
-
-function bigOrZero(v: unknown): bigint {
-  if (typeof v === "bigint") return v;
-  if (typeof v === "string" && /^\d+$/.test(v)) return BigInt(v);
-  if (typeof v === "number" && Number.isFinite(v)) return BigInt(Math.trunc(v));
-  return 0n;
-}
 
 export async function fetchStats(
   client: MerchantClient,

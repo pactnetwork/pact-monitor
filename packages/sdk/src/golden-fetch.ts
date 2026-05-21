@@ -248,15 +248,35 @@ async function bare(
     "x-pact-started-at": String(startedAt),
   };
   const response = await deps.fetchImpl(url, { ...init, headers: headersOut });
+
+  // Direct-mode merchant attribution (Commit 3 L1): even on the bare path,
+  // if the upstream's middleware stamped X-Pact-Proxied-By + Sig and the
+  // merchant is in our registry, the call IS attributed — we just bypassed
+  // the Pact Market proxy. The merchant middleware signs over the request
+  // path (req.route.path or req.path), so we reconstruct the same endpoint
+  // identifier from the URL to verify the signature.
+  let directEndpoint = "";
+  try {
+    directEndpoint = new URL(url).pathname;
+  } catch {
+    /* malformed URL — bare path already swallowed it above */
+  }
+  const pact = parsePactHeaders(response.headers);
+  const directAttribution =
+    pact.proxiedBy && pact.proxiedSig
+      ? evaluateAttribution(deps, pact, startedAt, directEndpoint, response.status)
+      : null;
   return {
     response,
     degraded: true,
     degradedReason: reason,
-    pactHeaders: null,
+    // Surface pactHeaders when proxied-by is present so callers can read
+    // the attestation; otherwise null preserves the legacy degraded shape.
+    pactHeaders: directAttribution ? pact : null,
     callId: null,
     host,
     slug,
     premiumBps,
-    attribution: null,
+    attribution: directAttribution,
   };
 }

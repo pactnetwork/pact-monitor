@@ -317,12 +317,28 @@ export async function createPact(config: PactConfig): Promise<PactInstance> {
     async fetch(url, init, opts) {
       const res = await goldenFetch(goldenDeps, url, init, opts?.hostnameOverride);
       const ts = new Date().toISOString();
+      // Direct-mode merchant attribution can fire on the degraded (bare)
+      // path: the agent hit the merchant's host directly, the merchant's
+      // middleware stamped X-Pact-Proxied-By, and golden-fetch verified
+      // against the registry. We emit BOTH 'degraded' (no proxy coverage)
+      // AND 'attributed' (merchant accepted server-of-record) — integrators
+      // listening for 'attributed' care about the latter regardless of the
+      // proxy hop.
       if (res.degraded) {
         emitter.emit("degraded", {
           reason: res.degradedReason ?? "degraded",
           url,
           ts,
         });
+        if (res.attribution) {
+          emitter.emit("attributed", {
+            callId: res.callId,
+            merchantPubkey: res.attribution.merchantPubkey,
+            slug: res.slug ?? "",
+            startedAt: res.attribution.startedAt,
+            ts,
+          });
+        }
         return res.response;
       }
       const p = res.pactHeaders;
@@ -335,7 +351,7 @@ export async function createPact(config: PactConfig): Promise<PactInstance> {
       // (or unknown merchant pubkey) leaves res.attribution null, and we
       // record normally as a fallback (DB unique index then dedupes if the
       // merchant later POSTs the same call).
-      if (res.attribution && res.callId) {
+      if (res.attribution) {
         emitter.emit("attributed", {
           callId: res.callId,
           merchantPubkey: res.attribution.merchantPubkey,
@@ -343,23 +359,31 @@ export async function createPact(config: PactConfig): Promise<PactInstance> {
           startedAt: res.attribution.startedAt,
           ts,
         });
-        watchdog.schedule({
-          callId: res.callId,
-          startedAt: res.attribution.startedAt,
-          endpoint: res.slug ?? "",
-          fallback: {
+        // The watchdog needs a callId to thread through its synthesized
+        // fallback observation. Proxy-mode attribution always has one
+        // (wrap stamps X-Pact-Call-Id); direct-mode attribution does NOT
+        // (the merchant middleware doesn't synthesize a callId). For
+        // direct mode we rely on the merchant's own /observations POST as
+        // the server-of-record; no agent-side watchdog/fallback.
+        if (res.callId) {
+          watchdog.schedule({
             callId: res.callId,
-            agentPubkey,
-            slug: res.slug ?? p?.pool ?? "",
-            host: res.host ?? "",
-            ts,
-            premiumLamports: p?.premiumLamports?.toString() ?? null,
-            refundLamports: p?.refundLamports?.toString() ?? null,
-            outcome,
-            breach,
-            reconciled: false,
-          },
-        });
+            startedAt: res.attribution.startedAt,
+            endpoint: res.slug ?? "",
+            fallback: {
+              callId: res.callId,
+              agentPubkey,
+              slug: res.slug ?? p?.pool ?? "",
+              host: res.host ?? "",
+              ts,
+              premiumLamports: p?.premiumLamports?.toString() ?? null,
+              refundLamports: p?.refundLamports?.toString() ?? null,
+              outcome,
+              breach,
+              reconciled: false,
+            },
+          });
+        }
       } else if (res.callId) {
         buffer.append({
           callId: res.callId,

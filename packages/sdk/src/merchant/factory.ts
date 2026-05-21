@@ -135,7 +135,7 @@ export async function createPactMerchant(
     register: (input) => registerEndpoint(client, config.hostname, input),
     dispute: (input) => fileDispute(input),
     stats: (opts) => fetchStats(client, opts),
-    referrals: (opts) => fetchReferrals(opts),
+    referrals: (opts) => fetchReferrals(client, opts),
     referralLink: () => buildReferralLink(client.merchantPubkey),
     shutdown: async () => {
       if (shuttingDown) return;

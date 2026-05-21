@@ -15,9 +15,10 @@
  * sees a cache miss whenever the merchant set changes.
  */
 import { createHash } from "node:crypto";
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import { requireApiKey, requireRole } from "../middleware/auth.js";
 import { getMany } from "../db.js";
+import { getReferralsForReferrer } from "../utils/referrals.js";
 
 export async function merchantsRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/v1/merchants", async (request, reply) => {
@@ -49,6 +50,38 @@ export async function merchantsRoutes(app: FastifyInstance): Promise<void> {
     reply.header("Cache-Control", "public, max-age=60");
     return body;
   });
+
+  // Commit 3 K4: aggregate revshare attributed to this merchant.
+  // Returns the per-agent breakdown + scalar total over a 30-day window
+  // (override via ?since=ms-epoch). bigint values are decimal-strings
+  // because micro-USDC sums can exceed Number.MAX_SAFE_INTEGER.
+  app.get<{ Querystring: { since?: string } }>(
+    "/api/v1/merchants/me/referrals",
+    { preHandler: [requireApiKey, requireRole("merchant")] },
+    async (request, reply) => {
+      const authed = request as FastifyRequest & {
+        agentPubkey: string | null;
+      };
+      if (!authed.agentPubkey) {
+        return reply.code(400).send({
+          error: "MissingMerchantPubkey",
+          message: "merchant API key has no agent_pubkey binding",
+        });
+      }
+      const sinceRaw = request.query.since;
+      let since: Date | undefined;
+      if (sinceRaw !== undefined) {
+        const n = Number(sinceRaw);
+        if (!Number.isFinite(n) || n < 0) {
+          return reply
+            .code(400)
+            .send({ error: "InvalidSince", message: "since must be ms-epoch" });
+        }
+        since = new Date(n);
+      }
+      return getReferralsForReferrer(authed.agentPubkey, since);
+    },
+  );
 
   app.get(
     "/api/v1/merchants/me/stats",

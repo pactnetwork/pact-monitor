@@ -85,16 +85,29 @@ describe("MerchantInstance surface", () => {
     await m.shutdown();
   });
 
-  it("referrals() throws NOT_AVAILABLE (Commit 3)", async () => {
+  // Commit 3 K4: referrals() graduated from NOT_AVAILABLE stub to a real
+  // call. On a fetch that resolves to garbage (no real backend in this
+  // test), it returns the zeroed shape rather than throwing — golden-rule
+  // mirror of the agent SDK's failure semantics.
+  it("referrals() returns zeroed shape when the backend is unreachable", async () => {
     const signer = freshKeypair();
-    const m = await createPactMerchant({
-      network: "localnet",
-      signer,
-      apiKey: "k",
-      hostname: "api.test.local",
-      installSignalHandlers: false,
-    });
-    await expect(m.referrals()).rejects.toMatchObject({ code: PactErrorCode.NOT_AVAILABLE });
+    const m = await createPactMerchant(
+      {
+        network: "localnet",
+        signer,
+        apiKey: "k",
+        hostname: "api.test.local",
+        installSignalHandlers: false,
+      },
+      {
+        fetchImpl: (async () => {
+          throw new Error("network down");
+        }) as unknown as typeof fetch,
+      },
+    );
+    const r = await m.referrals();
+    expect(r.totalRefShareUsdc).toBe(0n);
+    expect(r.byAgent).toEqual([]);
     await m.shutdown();
   });
 
