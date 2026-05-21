@@ -92,21 +92,29 @@ function makePrismaMock(opts: PrismaMockOptions = {}): any {
     call: {
       // findUnique kept for any legacy callers / sanity checks; the service
       // itself now uses `create` + P2002 to detect duplicates.
-      findUnique: jest.fn(async (args: any) =>
-        callRows.get(args.where.callId) ?? null,
-      ),
+      // Key is composite `network:callId` to match @@id([network, callId]).
+      findUnique: jest.fn(async (args: any) => {
+        const nk = args.where.network_callId;
+        const key = nk
+          ? `${nk.network}:${nk.callId}`
+          : `solana-devnet:${args.where.callId}`;
+        return callRows.get(key) ?? null;
+      }),
       create: jest.fn(async (args: any) => {
         if (opts.throwOnCallCreate) throw opts.throwOnCallCreate;
-        if (callRows.has(args.data.callId)) {
+        // Composite dedup key matches the real @@id([network, callId]) PK.
+        const network = args.data.network ?? "solana-devnet";
+        const compositeKey = `${network}:${args.data.callId}`;
+        if (callRows.has(compositeKey)) {
           // Mirror the Prisma unique-constraint error shape so the service's
           // P2002 catch path is exercised.
           throw new Prisma.PrismaClientKnownRequestError(
-            "Unique constraint failed on the fields: (`callId`)",
-            { code: "P2002", clientVersion: "test", meta: { target: ["callId"] } },
+            "Unique constraint failed on the fields: (`network`, `callId`)",
+            { code: "P2002", clientVersion: "test", meta: { target: ["network", "callId"] } },
           );
         }
         captured.push({ table: "call", op: "create", args });
-        callRows.set(args.data.callId, args.data);
+        callRows.set(compositeKey, args.data);
         return args.data;
       }),
     },
@@ -990,5 +998,133 @@ describe("EventsService", () => {
     expect(agentUpsert).toBeDefined();
     expect(agentUpsert!.args.create.walletPda).toBeUndefined();
     expect(agentUpsert!.args.update.walletPda).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WP-MN-04 T3: EVM reorg-replay dedup regression
+// ---------------------------------------------------------------------------
+// D6 §4 mandates that a reorg-replay delivering the same (network, callId)
+// with a DIFFERENT on-chain signature is idempotent. This test locks the
+// existing behavior (@@id([network, callId]) + P2002 in tryInsertCall) so
+// that a future refactor cannot silently break EVM reorg safety.
+//
+// The test is a REGRESSION LOCK, not a behavior change. If it fails it means
+// the dedup path in tryInsertCall or the composite PK has been broken.
+// ---------------------------------------------------------------------------
+
+describe("EventsService.ingest — (network, callId) dedup regression for EVM reorg-replay (WP-MN-04 T3)", () => {
+  let svc: EventsService;
+  let prisma: ReturnType<typeof makePrismaMock>;
+
+  beforeEach(async () => {
+    prisma = makePrismaMock();
+    const mod = await Test.createTestingModule({
+      providers: [
+        EventsService,
+        { provide: PrismaService, useValue: prisma },
+      ],
+    }).compile();
+    svc = mod.get(EventsService);
+  });
+
+  it("same (network, callId) with different signature is idempotent — EVM reorg-replay (Call PK dedup)", async () => {
+    // Simulate an EVM reorg: the settler delivers the same callId on
+    // arc-testnet but from a different block/signature (the original block
+    // was re-orged and re-mined). The second delivery must be a no-op: the
+    // Call row from the first delivery survives, no second row is created,
+    // and aggregate counters are NOT double-counted.
+
+    const NETWORK = "arc-testnet";
+    const CALL_ID = "evm-reorg-call-0000-0000-000000000001";
+    const AGENT = "AgentP11111111111111111111111111111111111111";
+
+    const makeDto = (sig: string): SettlementEventDto => ({
+      signature: sig,
+      batchSize: 1,
+      totalPremiumsLamports: "500",
+      totalRefundsLamports: "0",
+      ts: new Date().toISOString(),
+      calls: [
+        {
+          callId: CALL_ID,
+          network: NETWORK,
+          agentPubkey: AGENT,
+          endpointSlug: "helius",
+          premiumLamports: "500",
+          refundLamports: "0",
+          latencyMs: 120,
+          outcome: "ok",
+          ts: new Date().toISOString(),
+          settledAt: new Date().toISOString(),
+          signature: sig,
+          shares: [
+            {
+              kind: 0,
+              pubkey: "TreasuryPubkey11111111111111111111111111111",
+              amountLamports: "50",
+            },
+          ],
+        },
+      ],
+    });
+
+    // First delivery: original block, signature A.
+    const r1 = await svc.ingest(makeDto("sigReorgOriginal"));
+    expect(r1.accepted).toBe(1);
+
+    // Capture state after first delivery.
+    const callCreatesAfterFirst = prisma.captured.filter(
+      (c: CapturedCall) => c.table === "call" && c.op === "create",
+    );
+    expect(callCreatesAfterFirst).toHaveLength(1);
+    // The surviving row has the FIRST signature.
+    expect(callCreatesAfterFirst[0]!.args.data.signature).toBe("sigReorgOriginal");
+
+    const agentUpdatesAfterFirst = prisma.captured.filter(
+      (c: CapturedCall) => c.table === "agent" && c.op === "update",
+    );
+    expect(agentUpdatesAfterFirst).toHaveLength(1);
+
+    // Second delivery: reorg produced a new block with different signature
+    // but the same callId on the same network. Must be a complete no-op.
+    const r2 = await svc.ingest(makeDto("sigReorgReplacement"));
+    expect(r2.accepted).toBe(0);
+
+    // Exactly ONE call.create across both deliveries — the second P2002s.
+    const callCreatesTotal = prisma.captured.filter(
+      (c: CapturedCall) => c.table === "call" && c.op === "create",
+    );
+    expect(callCreatesTotal).toHaveLength(1);
+
+    // Agent counters incremented exactly once (no double-count).
+    const agentUpdatesTotal = prisma.captured.filter(
+      (c: CapturedCall) => c.table === "agent" && c.op === "update",
+    );
+    expect(agentUpdatesTotal).toHaveLength(1);
+
+    // PoolState upserted exactly once.
+    const poolUpserts = prisma.captured.filter(
+      (c: CapturedCall) => c.table === "poolState",
+    );
+    expect(poolUpserts).toHaveLength(1);
+
+    // Settlement + SettlementRecipientShare inserted exactly once.
+    const settlementUpserts = prisma.captured.filter(
+      (c: CapturedCall) => c.table === "settlement",
+    );
+    expect(settlementUpserts).toHaveLength(1);
+
+    const shareInserts = prisma.captured.filter(
+      (c: CapturedCall) =>
+        c.table === "settlementRecipientShare" && c.op === "createMany",
+    );
+    expect(shareInserts).toHaveLength(1);
+
+    // The surviving Call row has the first (pre-reorg) signature, not the
+    // replacement. The P2002 short-circuits — the second insert is skipped
+    // entirely, preserving the original row.
+    expect(callCreatesTotal[0]!.args.data.network).toBe(NETWORK);
+    expect(callCreatesTotal[0]!.args.data.callId).toBe(CALL_ID);
   });
 });

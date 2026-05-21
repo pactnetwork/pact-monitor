@@ -1,5 +1,8 @@
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  // Required for the "view" keyword used by settlement_reorg_audit (WP-MN-04 T3).
+  // Remove once Prisma stabilises views in a future release.
+  previewFeatures = ["views"]
 }
 
 datasource db {
@@ -135,4 +138,21 @@ model OperatorAllowlist {
   walletPubkey String   @id @db.VarChar(44)
   addedAt      DateTime @default(now())
   note         String?
+}
+
+/// Read-only audit view of settlements flagged by ReorgService.runReconcile
+/// as potentially orphaned (DB Call row exists but no canonical-chain
+/// CallSettled event in the last reconcile window). Populated externally;
+/// the static SELECT FALSE below is the schema-shape definition only.
+/// Local docker only — production migration is a separate ops step per Tu's
+/// directive (2026-05-20).
+view settlement_reorg_audit {
+  network    String   @db.VarChar(24)
+  callId     String   @db.VarChar(36)
+  signature  String   @db.VarChar(88)
+  amount     BigInt
+  detectedAt DateTime
+
+  @@id([network, callId])
+  @@map("settlement_reorg_audit")
 }
