@@ -65,6 +65,18 @@ const ERC20_ABI = parseAbi([
   "function allowance(address, address) view returns (uint256)",
 ]);
 
+// Canonical Multicall3 address deployed at the same address across all major
+// EVM chains (https://www.multicall3.com/). Verified on Arc Testnet at
+// chain 5042002 via eth_getCode. viem requires this on the chain object to
+// power its publicClient.multicall() helper.
+const MULTICALL3_ADDRESS: Address =
+  "0xcA11bde05977b3631167028862bE2a173976CA11";
+
+// Arc Testnet (and many public RPCs) cap eth_getLogs at 10,000 blocks per
+// request. We use a conservative ceiling and chunk; networks with looser
+// limits also accept smaller chunks at negligible cost.
+const LOG_RANGE_CHUNK = 9_500n;
+
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
@@ -127,9 +139,16 @@ export class EvmAdapter implements ChainAdapter {
 
     const transport = http(opts.rpcUrl);
 
-    // viem chain object: only chainId is strictly required for our use cases
+    // viem chain object: chainId + canonical Multicall3 address. viem's
+    // multicall() helper looks up `contracts.multicall3.address` on the chain;
+    // omitting it throws `Chain "undefined" does not support contract "multicall3"`.
     const viemChain = opts.descriptor.chainId
-      ? ({ id: opts.descriptor.chainId } as Parameters<typeof createPublicClient>[0]["chain"])
+      ? ({
+          id: opts.descriptor.chainId,
+          contracts: {
+            multicall3: { address: MULTICALL3_ADDRESS },
+          },
+        } as Parameters<typeof createPublicClient>[0]["chain"])
       : undefined;
 
     this.publicClient = createPublicClient({
@@ -182,23 +201,39 @@ export class EvmAdapter implements ChainAdapter {
       functionName: "authority",
     }) as Address;
 
-    // 2. Fetch all EndpointRegistered events since deployment
-    const logs = await this.publicClient.getContractEvents({
-      address: registryAddr,
-      abi: PactRegistryAbi,
-      eventName: "EndpointRegistered",
-      fromBlock: this.deploymentBlock,
-      toBlock: "finalized",
+    // 2. Fetch all EndpointRegistered events since deployment. Chunked into
+    //    LOG_RANGE_CHUNK windows because Arc Testnet (and many public RPCs)
+    //    enforce a 10k-block range cap on eth_getLogs. We resolve "finalized"
+    //    to a concrete block number first so every chunk has a stable upper
+    //    bound, and harvest slugs per-chunk so we never hold all logs at once.
+    const finalizedBlock = await this.publicClient.getBlock({
+      blockTag: "finalized",
     });
-
-    if (logs.length === 0) return [];
-
-    // 3. Deduplicate slugs (bytes16 hex)
+    const finalizedNumber = finalizedBlock.number;
     const slugSet = new Set<Hex>();
-    for (const log of logs) {
-      const slug = (log.args as { slug?: Hex }).slug;
-      if (slug) slugSet.add(slug.toLowerCase() as Hex);
+    for (
+      let from = this.deploymentBlock;
+      from <= finalizedNumber;
+      from += LOG_RANGE_CHUNK
+    ) {
+      const to =
+        from + LOG_RANGE_CHUNK - 1n > finalizedNumber
+          ? finalizedNumber
+          : from + LOG_RANGE_CHUNK - 1n;
+      const chunkLogs = await this.publicClient.getContractEvents({
+        address: registryAddr,
+        abi: PactRegistryAbi,
+        eventName: "EndpointRegistered",
+        fromBlock: from,
+        toBlock: to,
+      });
+      for (const log of chunkLogs) {
+        const slug = (log.args as { slug?: Hex }).slug;
+        if (slug) slugSet.add(slug.toLowerCase() as Hex);
+      }
     }
+
+    if (slugSet.size === 0) return [];
     const slugs = Array.from(slugSet);
 
     if (slugs.length === 0) return [];
@@ -485,22 +520,35 @@ export class EvmAdapter implements ChainAdapter {
       }
 
       if (fromBlock <= finalized.number) {
-        const logs = await this.publicClient.getContractEvents({
-          address: settlerAddr,
-          abi: PactEventsAbi,
-          eventName: "CallSettled",
-          fromBlock,
-          toBlock: finalized.number,
-        });
+        // Chunked to respect Arc's 10k eth_getLogs window — same reason as
+        // readEndpointConfigs above. Cold starts at deploymentBlock would
+        // otherwise blow through the limit on first sweep.
+        for (
+          let from = fromBlock;
+          from <= finalized.number;
+          from += LOG_RANGE_CHUNK
+        ) {
+          const to =
+            from + LOG_RANGE_CHUNK - 1n > finalized.number
+              ? finalized.number
+              : from + LOG_RANGE_CHUNK - 1n;
+          const logs = await this.publicClient.getContractEvents({
+            address: settlerAddr,
+            abi: PactEventsAbi,
+            eventName: "CallSettled",
+            fromBlock: from,
+            toBlock: to,
+          });
 
-        for (const log of logs) {
-          const decoded = decodePactEventLog(log as { data: Hex; topics: [Hex, ...Hex[]] });
-          if (decoded.eventName === "CallSettled") {
-            yield {
-              callId: decoded.args["callId"] as string,
-              settlementSig: log.transactionHash ?? "",
-              blockOrSlot: log.blockNumber?.toString() ?? finalized.number.toString(),
-            };
+          for (const log of logs) {
+            const decoded = decodePactEventLog(log as { data: Hex; topics: [Hex, ...Hex[]] });
+            if (decoded.eventName === "CallSettled") {
+              yield {
+                callId: decoded.args["callId"] as string,
+                settlementSig: log.transactionHash ?? "",
+                blockOrSlot: log.blockNumber?.toString() ?? finalized.number.toString(),
+              };
+            }
           }
         }
 
