@@ -230,4 +230,103 @@ describe("POST /api/v1/observations", () => {
     });
     assert.equal(res.statusCode, 401);
   });
+
+  // Commit 2 graduation: with an active merchant_endpoints row supplying the
+  // price, a failure-classified observation should generate a claim row via
+  // maybeCreateClaim. The amount_usd flows through as the paymentAmount that
+  // claims.ts gates on (claims.ts:52: `if (!paymentAmount) return null`).
+  it("creates a claims row when an active merchant_endpoints row exists (Commit 2 B.1)", async () => {
+    const failEndpoint = "/v1/claim-path";
+    const ep = await query<{ id: string }>(
+      `INSERT INTO merchant_endpoints (
+         merchant_pubkey, hostname, endpoint_path, amount_usd,
+         preferred_rate_bps, status
+       ) VALUES ($1, $2, $3, 0.05, 100, 'active') RETURNING id`,
+      [merchantPubkey, hostname, failEndpoint],
+    );
+    try {
+      const body = {
+        hostname,
+        endpoint: failEndpoint,
+        startedAt: 1_717_000_444_444,
+        statusCode: 503,
+        latencyMs: 100,
+        classification: "server_error",
+        agentPubkey,
+      };
+      const sig = canonicalSig(body, merchantKp.secretKey);
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/observations",
+        headers: {
+          authorization: `Bearer ${merchantApiKey}`,
+          "content-type": "application/json",
+          "x-pact-pubkey": merchantPubkey,
+          "x-pact-signature": sig,
+        },
+        payload: body,
+      });
+      assert.equal(res.statusCode, 200);
+      const json = res.json() as { accepted: number; recordId?: string };
+      assert.equal(json.accepted, 1);
+      if (json.recordId) insertedRecordIds.push(json.recordId);
+
+      // The claim row should exist with refund > 0 (server_error → 100% refund
+      // per claims.ts REFUND_PCT).
+      const claim = await getOne<{
+        trigger_type: string;
+        refund_amount: string;
+        call_cost: string;
+      }>(
+        "SELECT trigger_type, refund_amount::text, call_cost::text FROM claims WHERE call_record_id = $1",
+        [json.recordId],
+      );
+      assert.ok(claim, "expected a claims row for the merchant observation");
+      assert.equal(claim!.trigger_type, "server_error");
+      // amount_usd 0.05 → 50_000 micro-USDC → refund 100% → 50_000.
+      assert.equal(claim!.call_cost, "50000");
+      assert.equal(claim!.refund_amount, "50000");
+    } finally {
+      await query("DELETE FROM claims WHERE call_record_id = ANY($1::uuid[])", [
+        insertedRecordIds,
+      ]).catch(() => {});
+      await query("DELETE FROM merchant_endpoints WHERE id = $1", [ep.rows[0].id]);
+    }
+  });
+
+  // Inverse: NO active merchant_endpoints row → observation persists but no
+  // claim (graceful no-op; logged warning only).
+  it("skips claim creation when no merchant_endpoints row matches", async () => {
+    const body = {
+      hostname,
+      endpoint: "/v1/unpriced",
+      startedAt: 1_717_000_555_555,
+      statusCode: 503,
+      latencyMs: 100,
+      classification: "server_error",
+      agentPubkey,
+    };
+    const sig = canonicalSig(body, merchantKp.secretKey);
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/observations",
+      headers: {
+        authorization: `Bearer ${merchantApiKey}`,
+        "content-type": "application/json",
+        "x-pact-pubkey": merchantPubkey,
+        "x-pact-signature": sig,
+      },
+      payload: body,
+    });
+    assert.equal(res.statusCode, 200);
+    const json = res.json() as { accepted: number; recordId?: string };
+    assert.equal(json.accepted, 1);
+    if (json.recordId) insertedRecordIds.push(json.recordId);
+
+    const claim = await getOne<{ id: string }>(
+      "SELECT id FROM claims WHERE call_record_id = $1",
+      [json.recordId],
+    );
+    assert.equal(claim, null, "no claim should be generated for unpriced endpoints");
+  });
 });

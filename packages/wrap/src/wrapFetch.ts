@@ -44,6 +44,16 @@ export interface WrapFetchOptions {
    * defaults to "solana-devnet" if not provided.
    */
   network?: string;
+  /**
+   * Optional override for the call's "started at" wall-clock anchor (ms
+   * epoch). When set, `latencyMs` is computed as `tEnd - overrideStartedAt`
+   * so the recorded latency reflects the true agent → proxy → upstream
+   * wall clock (J3 in the Merchant SDK plan), and the emitted settlement
+   * event's `ts` still derives from `tEnd` so downstream consumers see a
+   * sane "settled at" timestamp. When unset, `latencyMs` is `tEnd - tStart`
+   * where `tStart` is the local clock — the legacy behavior.
+   */
+  overrideStartedAt?: number;
 }
 
 export interface WrapFetchResult {
@@ -141,7 +151,7 @@ export async function wrapFetch(opts: WrapFetchOptions): Promise<WrapFetchResult
   }
 
   // 2. Forward upstream, with timing.
-  const tStart = now();
+  const tStart = opts.overrideStartedAt ?? now();
   let upstreamResponse: Response | null = null;
   try {
     upstreamResponse = await fetchImpl(opts.upstreamUrl, opts.init);

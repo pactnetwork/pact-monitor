@@ -2,7 +2,12 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "outDir": "dist",
-    "rootDir": "src"
+    "rootDir": "src",
+    // Clear the base source-aliases so workspace deps resolve from their
+    // built dist .d.ts (via node_modules symlinks) rather than being pulled
+    // into this package's program (TS6059). The deps are built ahead of time
+    // by turbo via the build dependency graph.
+    "paths": {}
   },
   "include": ["src"]
 }

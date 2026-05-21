@@ -27,6 +27,8 @@ import {
 } from "./signer.js";
 import { canonicalHostname } from "./hostname.js";
 import { SlugResolver } from "./slug-resolver.js";
+import { MerchantRegistry } from "./merchant-registry.js";
+import { AttributionWatchdog } from "./attribution-watchdog.js";
 import { selectStorage } from "./storage-select.js";
 import { IndexerPoller, type SettledNotification } from "./indexer-poller.js";
 import { PactEventEmitter, type PactEventMap, type PactEventName } from "./events.js";
@@ -133,6 +135,18 @@ export async function createPact(config: PactConfig): Promise<PactInstance> {
     proxyBaseUrl: net.proxyBaseUrl,
     fetchImpl: cfg.fetchImpl,
   });
+  // E5: merchant pubkey registry, refreshed in the background so the agent
+  // SDK can verify X-Pact-Proxied-By attestations from the market-proxy and
+  // direct-mode merchant middleware. Fetched lazily — start() returns after
+  // the first fetch but never throws on failure. golden-fetch reads via
+  // hasMerchant() at verification time; an unknown pubkey treats the
+  // attestation as absent (records normally), matching the spec's
+  // fail-safe-to-record posture.
+  const merchantRegistry = new MerchantRegistry({
+    backendBaseUrl: net.backendBaseUrl,
+    fetchImpl: cfg.fetchImpl,
+  });
+  void merchantRegistry.start();
   const buffer = await selectStorage({
     storage: cfg.storage,
     storagePath: cfg.storagePath,
@@ -244,7 +258,11 @@ export async function createPact(config: PactConfig): Promise<PactInstance> {
     poller,
     autoTopUp,
     installSignalHandlers: cfg.installSignalHandlers,
-    onShutdown: () => webhookServer?.close(),
+    onShutdown: async () => {
+      merchantRegistry.stop();
+      watchdog.cancelAll();
+      await webhookServer?.close();
+    },
   });
   lifecycle.install();
   poller.start();
@@ -252,6 +270,7 @@ export async function createPact(config: PactConfig): Promise<PactInstance> {
 
   const goldenDeps: GoldenFetchDeps = {
     resolver,
+    merchantRegistry,
     proxyBaseUrl: net.proxyBaseUrl,
     project: cfg.project,
     network: cfg.endpointNetwork,
@@ -261,6 +280,17 @@ export async function createPact(config: PactConfig): Promise<PactInstance> {
     sign,
     fetchImpl: cfg.fetchImpl,
   };
+
+  // E4: watchdog for attributed calls. If the merchant attests the call but
+  // never POSTs /observations, after a short delay we poll /records/peek
+  // and append the fallback observation locally. Owned by LifecycleManager
+  // via the onShutdown hook so all pending watchdogs cancel cleanly.
+  const watchdog = new AttributionWatchdog({
+    backendBaseUrl: net.backendBaseUrl,
+    agentPubkey,
+    fetchImpl: cfg.fetchImpl,
+    onFallback: (entry) => buffer.append(entry),
+  });
 
   async function indexerJson<T>(path: string): Promise<T> {
     let resp: Response;
@@ -298,7 +328,39 @@ export async function createPact(config: PactConfig): Promise<PactInstance> {
       const p = res.pactHeaders;
       const outcome = p?.outcome ?? null;
       const breach = outcome != null && outcome !== "ok";
-      if (res.callId) {
+      // E3: when a merchant has attested this call via X-Pact-Proxied-By
+      // and the signature verifies against the merchant registry, skip the
+      // local buffer.append — the merchant is the server-of-record. Emit
+      // 'attributed' so integrators have observability. A failed verify
+      // (or unknown merchant pubkey) leaves res.attribution null, and we
+      // record normally as a fallback (DB unique index then dedupes if the
+      // merchant later POSTs the same call).
+      if (res.attribution && res.callId) {
+        emitter.emit("attributed", {
+          callId: res.callId,
+          merchantPubkey: res.attribution.merchantPubkey,
+          slug: res.slug ?? "",
+          startedAt: res.attribution.startedAt,
+          ts,
+        });
+        watchdog.schedule({
+          callId: res.callId,
+          startedAt: res.attribution.startedAt,
+          endpoint: res.slug ?? "",
+          fallback: {
+            callId: res.callId,
+            agentPubkey,
+            slug: res.slug ?? p?.pool ?? "",
+            host: res.host ?? "",
+            ts,
+            premiumLamports: p?.premiumLamports?.toString() ?? null,
+            refundLamports: p?.refundLamports?.toString() ?? null,
+            outcome,
+            breach,
+            reconciled: false,
+          },
+        });
+      } else if (res.callId) {
         buffer.append({
           callId: res.callId,
           agentPubkey,

@@ -35,6 +35,15 @@ export const Env = z
     // Consulted by `lib/system-flag.ts` when the `system_flags` row read
     // fails. Default "false" (off) matches the PRD "Feature flag" section.
     PACT_BETA_GATE_ENABLED: z.string().default("false"),
+    // Merchant attestation identity (Commit 2 D.1). When set, the proxy
+    // signs X-Pact-Proxied-By + X-Pact-Proxied-Sig on covered responses so
+    // the agent SDK can verify and skip its own local recording (E3). When
+    // unset, the proxy logs a one-time warning at boot and degrades to the
+    // legacy behavior — the agent SDK then records normally, and the DB
+    // unique index keeps the books straight if both sides submit. The
+    // pubkey is derived from the secret key at boot; the corresponding
+    // api_keys row (role='merchant') must be inserted by ops out-of-band.
+    PACT_PROXY_MERCHANT_SECRET_KEY: z.string().optional(),
   })
   .superRefine((val, ctx) => {
     if (val.QUEUE_BACKEND === "pubsub") {

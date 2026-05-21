@@ -1,6 +1,5 @@
 /**
- * `POST /api/v1/observations` — merchant-side single-record ingest (Commit 1
- * stub layer of the Merchant SDK).
+ * `POST /api/v1/observations` — merchant-side single-record ingest.
  *
  * Auth chain: requireApiKey (sets request.agentPubkey + request.role from
  * api_keys), requireRole('merchant') (rejects non-merchant keys with 403),
@@ -14,11 +13,13 @@
  *  - When agentPubkey is present, startedAt is REQUIRED (409 otherwise) so
  *    the dedupe key matches an agent's own /records ingest of the same call.
  *  - ON CONFLICT DO NOTHING returns 0 rows on duplicate; we surface that as
- *    { accepted: 0 } so the merchant SDK observe() shape matches Commit 2.
+ *    { accepted: 0 } so the merchant SDK observe() shape matches.
  *
- * `maybeCreateClaim` is intentionally NOT called from this route in Commit
- * 1 — the per-merchant claim pipeline needs the merchant_endpoints + ops
- * registration tables that land in Commit 2.
+ * Commit 2 wires `maybeCreateClaim` after a successful INSERT. The price
+ * fed to the claim is sourced from the registered merchant_endpoints row
+ * (status='active') matching (merchant_pubkey, hostname, endpoint_path) —
+ * passing paymentAmount=null would early-exit at claims.ts:52, so the
+ * lookup is mandatory for any claim to flow through.
  */
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import {
@@ -26,9 +27,10 @@ import {
   requireRole,
   verifyObservationSignature,
 } from "../middleware/auth.js";
-import { query } from "../db.js";
+import { query, getOne } from "../db.js";
 import { canonicalHostname } from "../utils/hostname.js";
 import { findOrCreateProvider } from "../utils/providers.js";
+import { maybeCreateClaim } from "../utils/claims.js";
 
 const VALID_CLASSIFICATIONS = [
   "success",
@@ -141,9 +143,58 @@ export async function observationsRoutes(app: FastifyInstance): Promise<void> {
       if (result.rows.length === 0) {
         return reply.code(200).send({ accepted: 0 });
       }
+      const callRecordId = result.rows[0].id;
+
+      // Look up the priced merchant_endpoints row so maybeCreateClaim has a
+      // real paymentAmount. Without this, claims.ts:52 short-circuits on
+      // `!paymentAmount` and no claim is ever generated. If no active row
+      // is found (endpoint not yet registered or status='pending_review'),
+      // we still persist the observation but skip the claim path — same
+      // graceful no-op as agent records without payment headers.
+      const priced = await getOne<{ amount_usd: string }>(
+        `SELECT amount_usd::text FROM merchant_endpoints
+           WHERE merchant_pubkey = $1
+             AND hostname = $2
+             AND endpoint_path = $3
+             AND status = 'active'
+           LIMIT 1`,
+        [merchantPubkey, canonicalHost, body.endpoint],
+      );
+      let paymentAmount: number | null = null;
+      if (priced) {
+        const usd = parseFloat(priced.amount_usd);
+        if (Number.isFinite(usd) && usd > 0) {
+          paymentAmount = Math.round(usd * 1_000_000); // micro-USDC
+        }
+      } else {
+        request.log.warn(
+          {
+            merchantPubkey,
+            hostname: canonicalHost,
+            endpoint: body.endpoint,
+          },
+          "No active merchant_endpoints row for observation; claim path skipped",
+        );
+      }
+
+      await maybeCreateClaim({
+        callRecordId,
+        providerId,
+        agentId: merchantAuthed.agentId,
+        classification: body.classification,
+        paymentAmount,
+        agentPubkey,
+        referrerPubkey: null,
+        providerHostname: canonicalHost,
+        latencyMs: body.latencyMs,
+        statusCode: body.statusCode,
+        createdAt: ts,
+        logger: app.log,
+      });
+
       return reply.code(200).send({
         accepted: 1,
-        recordId: result.rows[0].id,
+        recordId: callRecordId,
       });
     },
   );

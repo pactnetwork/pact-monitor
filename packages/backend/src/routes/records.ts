@@ -1,5 +1,9 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { requireApiKey, verifyRecordSignature } from "../middleware/auth.js";
+import {
+  requireApiKey,
+  requireRole,
+  verifyRecordSignature,
+} from "../middleware/auth.js";
 import { query, getOne } from "../db.js";
 import { maybeCreateClaim } from "../utils/claims.js";
 import { detectAnomalies } from "../utils/fraud-detection.js";
@@ -217,6 +221,52 @@ export async function recordsRoutes(app: FastifyInstance): Promise<void> {
       }
 
       return { accepted, provider_ids: [...providerIds], effective_rates: effectiveRates };
+    },
+  );
+
+  // B3: GET /api/v1/records/peek — single-row existence check used by the
+  // agent SDK's attribution watchdog (E4). After a merchant attests via
+  // X-Pact-Proxied-By the agent skips local recording; if the merchant's
+  // /observations POST never lands, the SDK polls here after a short delay
+  // and falls back to recording locally.
+  //
+  // Agent-only (a merchant key probing an agent's records would leak
+  // attribution surface). Also auth-binds: a merchant cannot request another
+  // agent's pubkey via the query param.
+  app.get<{
+    Querystring: { agent_pubkey?: string; started_at?: string; endpoint?: string };
+  }>(
+    "/api/v1/records/peek",
+    { preHandler: [requireApiKey, requireRole("agent")] },
+    async (request, reply) => {
+      const { agent_pubkey, started_at, endpoint } = request.query;
+      if (!agent_pubkey || !started_at || !endpoint) {
+        return reply
+          .code(400)
+          .send({ error: "agent_pubkey, started_at, endpoint all required" });
+      }
+      const startedAtMs = Number(started_at);
+      if (!Number.isFinite(startedAtMs)) {
+        return reply.code(400).send({ error: "started_at must be ms epoch" });
+      }
+      const authed = request as FastifyRequest & {
+        agentPubkey: string | null;
+      };
+      if (!authed.agentPubkey || authed.agentPubkey !== agent_pubkey) {
+        return reply
+          .code(403)
+          .send({ error: "Forbidden: agent_pubkey must match the caller" });
+      }
+      const ts = new Date(startedAtMs);
+      const row = await getOne<{ id: string }>(
+        `SELECT id FROM call_records
+           WHERE agent_pubkey = $1
+             AND timestamp = $2
+             AND endpoint = $3
+           LIMIT 1`,
+        [agent_pubkey, ts, endpoint],
+      );
+      return { exists: !!row };
     },
   );
 }

@@ -56,14 +56,20 @@ after(async () => {
 });
 
 describe("GET /api/v1/merchants", () => {
-  it("returns the empty list shape with an ETag", async () => {
+  it("includes the merchant we created (no hostnames yet) and returns an ETag", async () => {
     const res = await listApp.inject({ method: "GET", url: "/api/v1/merchants" });
     assert.equal(res.statusCode, 200);
-    const json = res.json() as { merchants: unknown[]; generatedAt: string };
-    assert.deepEqual(json.merchants, []);
+    const json = res.json() as {
+      merchants: Array<{ pubkey: string; label: string; hostnames: string[] }>;
+      generatedAt: string;
+    };
+    const mine = json.merchants.find((m) => m.pubkey === merchantPubkey);
+    assert.ok(mine, "expected our merchant pubkey in v_active_merchants");
+    assert.equal(mine!.label, merchantLabel);
+    // No active merchant_endpoints rows in this fixture — hostnames is [].
+    assert.deepEqual(mine!.hostnames, []);
     assert.ok(json.generatedAt);
-    const etag = res.headers["etag"];
-    assert.ok(etag);
+    assert.ok(res.headers["etag"]);
   });
 
   it("returns 304 when If-None-Match matches the current ETag", async () => {
@@ -75,6 +81,31 @@ describe("GET /api/v1/merchants", () => {
       headers: { "if-none-match": etag },
     });
     assert.equal(second.statusCode, 304);
+  });
+
+  it("surfaces hostnames once a merchant_endpoints row is active", async () => {
+    const host = `mh-${tag}.example.com`;
+    const ep = await query<{ id: string }>(
+      `INSERT INTO merchant_endpoints (
+         merchant_pubkey, hostname, endpoint_path, amount_usd,
+         preferred_rate_bps, status
+       ) VALUES ($1, $2, '/v1/x', 0.01, 100, 'active') RETURNING id`,
+      [merchantPubkey, host],
+    );
+    try {
+      const res = await listApp.inject({
+        method: "GET",
+        url: "/api/v1/merchants",
+      });
+      const json = res.json() as {
+        merchants: Array<{ pubkey: string; hostnames: string[] }>;
+      };
+      const mine = json.merchants.find((m) => m.pubkey === merchantPubkey);
+      assert.ok(mine);
+      assert.ok(mine!.hostnames.includes(host));
+    } finally {
+      await query("DELETE FROM merchant_endpoints WHERE id = $1", [ep.rows[0].id]);
+    }
   });
 });
 
