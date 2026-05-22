@@ -108,6 +108,26 @@ export interface ChainAdapter {
   readonly descriptor: ChainDescriptor;
   readEndpointConfigs(): Promise<ReadonlyArray<EndpointConfigSnapshot>>;
   /**
+   * Cursor-able variant of {@link readEndpointConfigs} for chains whose config
+   * discovery is a height-scaling log scan (EVM `EndpointRegistered`). Resumes
+   * the discovery scan from `fromBlock` (the indexer's persisted per-network
+   * cursor; cold start = the chain's `deploymentBlock`) instead of always
+   * re-walking from deployment, AND refreshes every `knownSlugs` entry (the
+   * endpoints the indexer already tracks) so mutable config changed via
+   * `update_config` — which emits no `EndpointRegistered` — stays fresh. Returns
+   * the finalized block scanned to, so the caller can persist the next cursor.
+   *
+   * Optional: chains without a height-scaling scan (Solana `getProgramAccounts`)
+   * do not implement it; the indexer falls back to {@link readEndpointConfigs}.
+   */
+  readEndpointConfigsFrom?(
+    fromBlock: bigint,
+    knownSlugs?: ReadonlyArray<string>,
+  ): Promise<{
+    snapshots: ReadonlyArray<EndpointConfigSnapshot>;
+    scannedToBlock: bigint;
+  }>;
+  /**
    * Single-slug endpoint read. Lets the settler derive an EVM endpoint's fee
    * fan-out without a full readEndpointConfigs() log-scan, and crucially
    * without ever touching Solana PDAs for a non-Solana network. Optional: the

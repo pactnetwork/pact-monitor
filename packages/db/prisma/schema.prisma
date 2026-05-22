@@ -140,6 +140,19 @@ model OperatorAllowlist {
   note         String?
 }
 
+/// Per-network config-sync cursor (multi-EVM WP T3). Lets the indexer's 5-min
+/// EndpointConfig refresh resume its EndpointRegistered log scan from the last
+/// finalized block it scanned, instead of re-walking from `deploymentBlock`
+/// every tick (cost otherwise scales with chain HEIGHT). `lastScannedBlock` is
+/// the highest finalized block fully scanned in the last successful pass; the
+/// next pass resumes at `lastScannedBlock + 1`. Cold start (no row) walks from
+/// the chain's `deploymentBlock`.
+model SyncCursor {
+  network          String   @id @db.VarChar(24)
+  lastScannedBlock BigInt
+  updatedAt        DateTime @updatedAt
+}
+
 /// Read-only audit view of settlements flagged by ReorgService.runReconcile
 /// as potentially orphaned (DB Call row exists but no canonical-chain
 /// CallSettled event in the last reconcile window). Populated externally;

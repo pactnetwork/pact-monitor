@@ -405,3 +405,104 @@ describe("EvmAdapter unit tests (WP-MN-04 T2)", () => {
     }
   });
 });
+
+// Multi-EVM WP T3: cursor-able config sync. readEndpointConfigsFrom resumes the
+// EndpointRegistered discovery scan from a caller-supplied fromBlock (the
+// indexer's persisted cursor) instead of always re-walking from deploymentBlock,
+// while still refreshing every KNOWN endpoint (passed in) so mutable config
+// (paused/premium changed via update_config, which emits no EndpointRegistered)
+// stays fresh. Returns the finalized block scanned to so the indexer can persist
+// the next cursor.
+describe("EvmAdapter.readEndpointConfigsFrom (multi-evm WP T3)", () => {
+  const AUTHORITY = "0xAuthorityAddr000000000000000000000000001";
+  const KNOWN_SLUG =
+    "0x68656c6975730000000000000000000000000000000000000000000000000000".slice(
+      0,
+      34,
+    ) as `0x${string}`;
+  const NEW_SLUG =
+    "0x6269726465796500000000000000000000000000000000000000000000000000".slice(
+      0,
+      34,
+    ) as `0x${string}`;
+  const cfg = {
+    paused: false,
+    flatPremium: 100n,
+    percentBps: 0,
+    slaLatencyMs: 200,
+    imputedCost: 0n,
+    exposureCapPerHour: 0n,
+    totalCalls: 0n,
+    totalBreaches: 0n,
+    totalPremiums: 0n,
+    totalRefunds: 0n,
+    currentPeriodStart: 0n,
+    currentPeriodRefunds: 0n,
+    lastUpdated: 0n,
+    feeRecipientCount: 1,
+    feeRecipients: [
+      {
+        kind: 0,
+        destination: "0xTreasuryAddr000000000000000000000000001" as `0x${string}`,
+        bps: 1000,
+      },
+    ],
+  };
+
+  it("scans from the given fromBlock (not deploymentBlock) and returns scannedToBlock", async () => {
+    const adapter = new EvmAdapter({ ...BASE_OPTS, deploymentBlock: 0n });
+    mockReadContract.mockResolvedValue(AUTHORITY);
+    mockGetBlock.mockResolvedValue({ number: 25_000n });
+    mockGetContractEvents.mockResolvedValue([]);
+
+    const res = await adapter.readEndpointConfigsFrom!(10_000n);
+
+    const calls = mockGetContractEvents.mock.calls;
+    // First chunk starts at the cursor (10_000n), NOT deploymentBlock (0n).
+    expect(calls[0]?.[0]).toMatchObject({ fromBlock: 10_000n, toBlock: 19_499n });
+    expect(calls[1]?.[0]).toMatchObject({ fromBlock: 19_500n, toBlock: 25_000n });
+    expect(calls).toHaveLength(2);
+    expect(res.scannedToBlock).toBe(25_000n);
+    expect(res.snapshots).toEqual([]);
+  });
+
+  it("refreshes knownSlugs via multicall even when the scan finds no new registrations", async () => {
+    const adapter = new EvmAdapter({ ...BASE_OPTS, deploymentBlock: 0n });
+    mockReadContract.mockResolvedValue(AUTHORITY);
+    mockGetBlock.mockResolvedValue({ number: 5_000n });
+    mockGetContractEvents.mockResolvedValue([]); // zero NEW registrations
+    mockMulticall.mockResolvedValue([cfg]);
+
+    const res = await adapter.readEndpointConfigsFrom!(1_000n, [KNOWN_SLUG]);
+
+    const calledSlugs = (
+      mockMulticall.mock.calls[0][0] as {
+        contracts: Array<{ args: readonly unknown[] }>;
+      }
+    ).contracts.map((c) => c.args[0]);
+    expect(calledSlugs).toContain(KNOWN_SLUG.toLowerCase());
+    expect(res.snapshots).toHaveLength(1);
+    expect(res.snapshots[0].slug).toBe(KNOWN_SLUG.toLowerCase());
+    expect(res.scannedToBlock).toBe(5_000n);
+  });
+
+  it("unions newly-discovered slugs with knownSlugs (full refresh set)", async () => {
+    const adapter = new EvmAdapter({ ...BASE_OPTS, deploymentBlock: 0n });
+    mockReadContract.mockResolvedValue(AUTHORITY);
+    mockGetBlock.mockResolvedValue({ number: 5_000n }); // single chunk
+    mockGetContractEvents.mockResolvedValue([{ args: { slug: NEW_SLUG } }]);
+    mockMulticall.mockResolvedValue([cfg, cfg]);
+
+    const res = await adapter.readEndpointConfigsFrom!(0n, [KNOWN_SLUG]);
+
+    const calledSlugs = (
+      mockMulticall.mock.calls[0][0] as {
+        contracts: Array<{ args: readonly unknown[] }>;
+      }
+    ).contracts.map((c) => c.args[0]);
+    expect(new Set(calledSlugs)).toEqual(
+      new Set([KNOWN_SLUG.toLowerCase(), NEW_SLUG.toLowerCase()]),
+    );
+    expect(res.snapshots).toHaveLength(2);
+  });
+});

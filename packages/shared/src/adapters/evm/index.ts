@@ -188,9 +188,33 @@ export class EvmAdapter implements ChainAdapter {
   //    - feeRecipients: map FeeRecipient{kind,destination,bps} -> {recipient,bps,kind}
   // -------------------------------------------------------------------------
   async readEndpointConfigs(): Promise<ReadonlyArray<EndpointConfigSnapshot>> {
+    // Full sweep: discover from deploymentBlock with no pre-seeded known set.
+    // Delegates to the cursor-able path so both share one implementation.
+    return (await this.readEndpointConfigsFrom(this.deploymentBlock)).snapshots;
+  }
+
+  // -------------------------------------------------------------------------
+  // readEndpointConfigsFrom (multi-evm WP T3)
+  //
+  // Cursor-able config sync. Resumes the EndpointRegistered discovery scan from
+  // `fromBlock` (the indexer's persisted cursor; cold start = deploymentBlock)
+  // instead of always re-walking from deployment — the discovery scan is what
+  // scales with chain height. Refreshes the FULL set = newly-discovered slugs
+  // UNIONed with `knownSlugs` (the endpoints the indexer already tracks), so a
+  // config change made via update_config (which emits no EndpointRegistered)
+  // still gets re-read on every tick. Returns the finalized block scanned to so
+  // the caller can persist the next cursor.
+  // -------------------------------------------------------------------------
+  async readEndpointConfigsFrom(
+    fromBlock: bigint,
+    knownSlugs: ReadonlyArray<string> = [],
+  ): Promise<{
+    snapshots: ReadonlyArray<EndpointConfigSnapshot>;
+    scannedToBlock: bigint;
+  }> {
     if (!this.deployment.registry) {
       throw new Error(
-        `EvmAdapter.readEndpointConfigs: no registry address for chain ${this.deployment.chainId}`,
+        `EvmAdapter.readEndpointConfigsFrom: no registry address for chain ${this.deployment.chainId}`,
       );
     }
     const registryAddr = this.deployment.registry;
@@ -202,18 +226,22 @@ export class EvmAdapter implements ChainAdapter {
       functionName: "authority",
     }) as Address;
 
-    // 2. Fetch all EndpointRegistered events since deployment. Chunked into
-    //    LOG_RANGE_CHUNK windows because Arc Testnet (and many public RPCs)
-    //    enforce a 10k-block range cap on eth_getLogs. We resolve "finalized"
-    //    to a concrete block number first so every chunk has a stable upper
-    //    bound, and harvest slugs per-chunk so we never hold all logs at once.
+    // 2. Resolve "finalized" to a concrete block first so every chunk has a
+    //    stable upper bound (and so we can persist it as the next cursor).
     const finalizedBlock = await this.publicClient.getBlock({
       blockTag: "finalized",
     });
     const finalizedNumber = finalizedBlock.number;
+
+    // 3. Seed the refresh set with the indexer's KNOWN slugs (so endpoints
+    //    registered before `fromBlock` still get their mutable config re-read),
+    //    then scan [fromBlock..finalized] in LOG_RANGE_CHUNK windows for any
+    //    NEW EndpointRegistered slugs (Arc + many public RPCs cap eth_getLogs
+    //    at 10k blocks; we harvest per-chunk so we never hold all logs at once).
     const slugSet = new Set<Hex>();
+    for (const k of knownSlugs) slugSet.add(k.toLowerCase() as Hex);
     for (
-      let from = this.deploymentBlock;
+      let from = fromBlock;
       from <= finalizedNumber;
       from += LOG_RANGE_CHUNK
     ) {
@@ -234,12 +262,12 @@ export class EvmAdapter implements ChainAdapter {
       }
     }
 
-    if (slugSet.size === 0) return [];
+    if (slugSet.size === 0) {
+      return { snapshots: [], scannedToBlock: finalizedNumber };
+    }
     const slugs = Array.from(slugSet);
 
-    if (slugs.length === 0) return [];
-
-    // 4. Multicall getEndpoint for each slug
+    // 4. Multicall getEndpoint for the full refresh set
     const configs = await this.publicClient.multicall({
       contracts: slugs.map((s) => ({
         address: registryAddr,
@@ -267,7 +295,7 @@ export class EvmAdapter implements ChainAdapter {
     }>;
 
     // 5. Project to EndpointConfigSnapshot
-    return configs.map((c, i) => ({
+    const snapshots = configs.map((c, i) => ({
       slug: slugs[i],
       // Protocol-wide authority on EVM (no per-endpoint authority field)
       authority: authorityAddr,
@@ -282,6 +310,7 @@ export class EvmAdapter implements ChainAdapter {
       paused: c.paused,
       raw: c,
     }));
+    return { snapshots, scannedToBlock: finalizedNumber };
   }
 
   // -------------------------------------------------------------------------
