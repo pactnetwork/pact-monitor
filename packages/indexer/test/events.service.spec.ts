@@ -999,7 +999,109 @@ describe("EventsService", () => {
     expect(agentUpsert!.args.create.walletPda).toBeUndefined();
     expect(agentUpsert!.args.update.walletPda).toBeUndefined();
   });
+
+  // Finding 5b — the batch network (dto.network) must stamp every aggregate
+  // row (Settlement, Endpoint-FK, PoolState, recipient shares + earnings) and
+  // the per-call network must stamp the Call row, instead of defaulting to
+  // solana-devnet.
+  it("finding 5: an arc-testnet batch stamps every aggregate + call row under arc-testnet", async () => {
+    const dto: SettlementEventDto = {
+      signature: "sigArc",
+      network: "arc-testnet",
+      batchSize: 1,
+      totalPremiumsLamports: "1000",
+      totalRefundsLamports: "0",
+      ts: new Date().toISOString(),
+      calls: [
+        {
+          callId: "arc-c1",
+          network: "arc-testnet",
+          agentPubkey: "0xAgent000000000000000000000000000000000001",
+          endpointSlug: "helius",
+          premiumLamports: "1000",
+          refundLamports: "0",
+          latencyMs: 100,
+          outcome: "ok",
+          ts: new Date().toISOString(),
+          settledAt: new Date().toISOString(),
+          signature: "sigArc",
+          shares: [
+            {
+              kind: 0,
+              pubkey: "0xTreasury0000000000000000000000000000000001",
+              amountLamports: "100",
+            },
+          ],
+        },
+      ],
+    };
+
+    const res = await svc.ingest(dto);
+    expect(res.accepted).toBe(1);
+    assertAllRowsUnderNetwork(prisma, "arc-testnet");
+  });
+
+  // Regression: an unstamped batch (no dto.network, no call.network) must keep
+  // landing every row under solana-devnet.
+  it("regression: an unstamped batch lands every aggregate + call row under solana-devnet", async () => {
+    const dto: SettlementEventDto = {
+      signature: "sigSol",
+      batchSize: 1,
+      totalPremiumsLamports: "1000",
+      totalRefundsLamports: "0",
+      ts: new Date().toISOString(),
+      calls: [
+        {
+          callId: "sol-c1",
+          agentPubkey: "AgentP11111111111111111111111111111111111111",
+          endpointSlug: "helius",
+          premiumLamports: "1000",
+          refundLamports: "0",
+          latencyMs: 100,
+          outcome: "ok",
+          ts: new Date().toISOString(),
+          settledAt: new Date().toISOString(),
+          signature: "sigSol",
+          shares: [
+            {
+              kind: 0,
+              pubkey: "TreasuryPubkey11111111111111111111111111111",
+              amountLamports: "100",
+            },
+          ],
+        },
+      ],
+    };
+
+    const res = await svc.ingest(dto);
+    expect(res.accepted).toBe(1);
+    assertAllRowsUnderNetwork(prisma, "solana-devnet");
+  });
 });
+
+/**
+ * Assert that every persisted aggregate row (Settlement, Endpoint, PoolState,
+ * SettlementRecipientShare, RecipientEarnings) and the Call row carry the
+ * expected network, and that NONE landed under any other network.
+ */
+function assertAllRowsUnderNetwork(
+  prisma: ReturnType<typeof makePrismaMock>,
+  expected: string,
+): void {
+  const networks: string[] = [];
+  for (const c of prisma.captured as CapturedCall[]) {
+    if (c.table === "agent") continue; // Agent rows are not network-keyed
+    if (c.op === "createMany") {
+      for (const row of c.args.data) networks.push(row.network);
+    } else if (c.table === "call") {
+      networks.push(c.args.data.network);
+    } else if (c.args.create?.network !== undefined) {
+      networks.push(c.args.create.network);
+    }
+  }
+  expect(networks.length).toBeGreaterThan(0);
+  for (const n of networks) expect(n).toBe(expected);
+}
 
 // ---------------------------------------------------------------------------
 // WP-MN-04 T3: EVM reorg-replay dedup regression
