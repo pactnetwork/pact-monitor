@@ -164,3 +164,65 @@ describe("BatcherService — concurrent cross-group flush (multi-evm WP T2)", ()
     expect(completed).toContain("evm-test-2");
   });
 });
+
+// Review #226 F6: the (network, slug) partition key must be a robust structured
+// key (JSON.stringify([network, slug])) so a field containing the separator
+// char cannot collide two distinct (network, slug) pairs into one batch. The
+// pre-fix key joins with a single separator byte; for ANY single-char separator
+// SEP, the distinct pairs (X, SEP+Y) and (X+SEP, Y) both render X+SEP+SEP+Y and
+// merge into one batch. JSON.stringify quotes/escapes each field so distinct
+// pairs always produce distinct keys.
+describe("BatcherService — structured partition key (review #226 F6)", () => {
+  // The live pre-fix separator byte (verified 0x00 in the source). The
+  // collision construction below uses it directly so the test is RED against
+  // the actual code, not an assumed space separator.
+  const SEP = "\u0000";
+
+  function keyMessage(network: string, slug: string, n: number): SettleMessage {
+    return {
+      id: String(n),
+      data: {
+        network,
+        endpointSlug: slug,
+        premiumLamports: "1000",
+        callId: `call-${n}`,
+        outcome: "ok",
+      },
+      ack: vi.fn(),
+      nack: vi.fn(),
+    };
+  }
+
+  it("does not collide distinct (network,slug) pairs when a field contains the separator char", async () => {
+    const service = new BatcherService();
+    const batches: SettleBatch[] = [];
+    service.setFlushCallback(async (batch) => {
+      batches.push(batch);
+    });
+
+    // (X, SEP+Y) and (X+SEP, Y) both join to X+SEP+SEP+Y under a single-byte
+    // separator, merging two distinct (network,slug) pairs into one batch.
+    service.push(keyMessage("n", `${SEP}s`, 1));
+    service.push(keyMessage(`n${SEP}`, "s", 2));
+
+    await service.flush();
+
+    expect(batches).toHaveLength(2);
+  });
+
+  it("still groups identical (network,slug) messages into one batch", async () => {
+    const service = new BatcherService();
+    const batches: SettleBatch[] = [];
+    service.setFlushCallback(async (batch) => {
+      batches.push(batch);
+    });
+
+    service.push(keyMessage("arc-testnet", "helius", 1));
+    service.push(keyMessage("arc-testnet", "helius", 2));
+
+    await service.flush();
+
+    expect(batches).toHaveLength(1);
+    expect(batches[0].messages).toHaveLength(2);
+  });
+});
