@@ -93,3 +93,74 @@ describe("BatcherService", () => {
     expect(flushed).toHaveLength(0);
   });
 });
+
+// Multi-EVM WP T2: the flush loop must dispatch per-(network,slug) groups
+// CONCURRENTLY so one slow/hung chain's finality wait does not head-of-line-
+// block sibling groups, and a rejecting group must not take down its siblings
+// (each group nacks its own batch inside the pipeline). Real timers — these
+// assert dispatch behavior, not the 5s schedule.
+describe("BatcherService — concurrent cross-group flush (multi-evm WP T2)", () => {
+  function netMessage(network: string, slug: string, n: number): SettleMessage {
+    return {
+      id: String(n),
+      data: {
+        network,
+        endpointSlug: slug,
+        premiumLamports: "1000",
+        callId: `call-${n}`,
+        outcome: "ok",
+      },
+      ack: vi.fn(),
+      nack: vi.fn(),
+    };
+  }
+
+  it("dispatches groups concurrently: a hung group does not block siblings", async () => {
+    const service = new BatcherService();
+    const invoked: string[] = [];
+    let releaseA!: () => void;
+    const aGate = new Promise<void>((r) => {
+      releaseA = r;
+    });
+    service.setFlushCallback(async (batch) => {
+      const net = (batch.messages[0].data as Record<string, unknown>)
+        .network as string;
+      invoked.push(net);
+      if (net === "arc-testnet") await aGate; // hang group A indefinitely
+    });
+
+    // Group A (arc-testnet) is pushed FIRST so the serial loop would reach it
+    // before group B and block; the partition preserves insertion order.
+    service.push(netMessage("arc-testnet", "helius", 1));
+    service.push(netMessage("evm-test-2", "helius", 2));
+
+    const flushP = service.flush();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // Serial loop: B is never invoked while A hangs. Concurrent: B is invoked.
+    expect(invoked).toContain("evm-test-2");
+
+    releaseA();
+    await flushP;
+  });
+
+  it("isolates a rejecting group: siblings still complete and flush resolves", async () => {
+    const service = new BatcherService();
+    const completed: string[] = [];
+    service.setFlushCallback(async (batch) => {
+      const net = (batch.messages[0].data as Record<string, unknown>)
+        .network as string;
+      if (net === "arc-testnet") throw new Error("group A boom");
+      completed.push(net);
+    });
+
+    service.push(netMessage("arc-testnet", "helius", 1));
+    service.push(netMessage("evm-test-2", "helius", 2));
+
+    // A rejecting group must not reject the whole flush (it is surfaced, and the
+    // pipeline nacks that group's own batch); the sibling must still complete.
+    await expect(service.flush()).resolves.toBeUndefined();
+    expect(completed).toContain("evm-test-2");
+  });
+});
