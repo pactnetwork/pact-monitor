@@ -82,6 +82,18 @@ export class HealthController {
       threshold_crit_lamports: CRIT_THRESHOLD_LAMPORTS,
     };
 
+    // EVM-only settler (no solana-* enabled): there is no Solana signer to gate
+    // on (multi-evm WP T5). EVM signer gas is a warn/alert-only signal (T4), so
+    // /health is healthy here — never 503 on the absent Solana balance.
+    if (!this.balance.solanaMonitored) {
+      return {
+        status: "ok",
+        lag_ms: this.pipeline.lagMs,
+        signer,
+        reason: "EVM-only deploy — Solana signer not monitored",
+      };
+    }
+
     // Hard fail: never successfully polled (balance unknown). Treat as
     // unhealthy because the pipeline relies on an RPC connection too — if we
     // can't even fetch a balance, we very likely can't submit txs either.

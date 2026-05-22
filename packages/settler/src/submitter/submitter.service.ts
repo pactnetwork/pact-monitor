@@ -75,6 +75,7 @@ import type {
 import { SettleBatch } from "../batcher/batcher.service";
 import { SecretLoaderService } from "../config/secret-loader.service";
 import { AdaptersService } from "../adapters/adapters.service";
+import { hasSolanaNetwork } from "../config/enabled-networks";
 
 const ENDPOINT_CACHE_TTL_MS = 60_000;
 const DEFAULT_PROGRAM_ID = "5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5";
@@ -153,13 +154,9 @@ export class SubmitterService implements OnModuleInit {
     private readonly secrets: SecretLoaderService,
     private readonly adaptersService: AdaptersService,
   ) {
-    const enabledRaw =
-      this.config.get<string>("PACT_ENABLED_NETWORKS") ?? "solana-devnet";
-    this.solanaEnabled = enabledRaw
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean)
-      .some((n) => n.startsWith("solana"));
+    this.solanaEnabled = hasSolanaNetwork(
+      this.config.get<string>("PACT_ENABLED_NETWORKS"),
+    );
 
     // Build the Solana deps eagerly when a Solana network is enabled so a
     // missing SOLANA_RPC_URL still fails fast at construction, exactly as

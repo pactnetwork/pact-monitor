@@ -38,6 +38,7 @@ import { Gauge, register } from "prom-client";
 
 import { SecretLoaderService } from "../config/secret-loader.service";
 import { AdaptersService } from "../adapters/adapters.service";
+import { hasSolanaNetwork } from "../config/enabled-networks";
 
 /** 1 SOL = 1e9 lamports. */
 export const LAMPORTS_PER_SOL = 1_000_000_000;
@@ -78,7 +79,10 @@ export const UNKNOWN_BALANCE = -1;
 @Injectable()
 export class SignerBalanceService implements OnModuleInit {
   private readonly logger = new Logger(SignerBalanceService.name);
-  private readonly connection: Connection;
+  /** True iff a solana-* network is enabled; gates the Solana balance poll. */
+  private readonly solanaEnabled: boolean;
+  /** Solana RPC connection — null on an EVM-only settler (multi-evm WP T5). */
+  private readonly connection: Connection | null;
   private readonly balanceGauge: Gauge;
   private readonly evmGasGauge: Gauge<"network">;
   private _lamports: number = UNKNOWN_BALANCE;
@@ -92,8 +96,21 @@ export class SignerBalanceService implements OnModuleInit {
     private readonly secrets: SecretLoaderService,
     private readonly adapters: AdaptersService,
   ) {
-    const rpc = this.config.getOrThrow<string>("SOLANA_RPC_URL");
-    this.connection = new Connection(rpc, "confirmed");
+    this.solanaEnabled = hasSolanaNetwork(
+      this.config.get<string>("PACT_ENABLED_NETWORKS"),
+    );
+    // Build the Solana RPC connection only when a Solana network is enabled, so
+    // an EVM-only settler boots without SOLANA_RPC_URL (multi-evm WP T5). When
+    // enabled, behave exactly as today (fail-fast on a missing SOLANA_RPC_URL).
+    if (this.solanaEnabled) {
+      const rpc = this.config.getOrThrow<string>("SOLANA_RPC_URL");
+      this.connection = new Connection(rpc, "confirmed");
+    } else {
+      this.connection = null;
+      this.logger.log(
+        "[settler] EVM-only boot — Solana signer balance monitoring disabled",
+      );
+    }
 
     // Reuse the global registry so /metrics surfaces the gauge alongside the
     // existing pipeline metrics. Guard against duplicate registration when
@@ -146,8 +163,16 @@ export class SignerBalanceService implements OnModuleInit {
     await this.pollEvmSigners();
   }
 
-  /** Solana SettlementAuthority signer SOL-balance poll (unchanged). */
+  /** Whether the Solana signer SOL balance is monitored (a solana-* net enabled). */
+  get solanaMonitored(): boolean {
+    return this.solanaEnabled;
+  }
+
+  /** Solana SettlementAuthority signer SOL-balance poll. */
   private async pollSolana(): Promise<void> {
+    // EVM-only settler: no Solana signer to monitor (multi-evm WP T5).
+    if (!this.solanaEnabled || !this.connection) return;
+    const connection = this.connection;
     let signer: PublicKey;
     try {
       signer = this.secrets.keypair.publicKey;
@@ -161,7 +186,7 @@ export class SignerBalanceService implements OnModuleInit {
     }
 
     try {
-      const lamports = await this.connection.getBalance(signer, "confirmed");
+      const lamports = await connection.getBalance(signer, "confirmed");
       this._lamports = lamports;
       this._lastPolledAt = Date.now();
       this._lastError = null;

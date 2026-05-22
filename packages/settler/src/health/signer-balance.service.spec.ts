@@ -298,6 +298,36 @@ describe("SignerBalanceService — EVM signer gas-balance (multi-evm WP T4)", ()
     expect(svc.currentLamports).toBe(50_000_000);
     expect(svc.getEvmSignerState("arc-testnet")).toBeUndefined();
   });
+
+  // EVM-only boot (multi-evm WP T5 redo): no solana-* enabled, no SOLANA_RPC_URL.
+  // The constructor must NOT getOrThrow SOLANA_RPC_URL or build a Connection,
+  // and pollSolana must be skipped while pollEvmSigners still runs.
+  it("constructs EVM-only without SOLANA_RPC_URL and skips the Solana poll", async () => {
+    const env: Record<string, string | undefined> = {
+      PACT_ENABLED_NETWORKS: "arc-testnet",
+    };
+    const config = {
+      get: vi.fn((k: string) => env[k]),
+      getOrThrow: vi.fn((k: string) => {
+        throw new Error(`missing ${k}`);
+      }),
+    } as unknown as ConfigService;
+    const kp = Keypair.generate();
+    const adapters = makeAdapters([
+      { network: "arc-testnet", vm: "evm", signer: { address: "0xArc" }, balanceWei: 20_000_000_000_000_000n },
+    ]);
+
+    const svc = new SignerBalanceService(config, makeSecrets(kp), adapters);
+    expect(svc.solanaMonitored).toBe(false);
+    expect(config.getOrThrow).not.toHaveBeenCalledWith("SOLANA_RPC_URL");
+
+    await expect(svc.poll()).resolves.toBeUndefined();
+    // Solana poll skipped — never queried the Solana balance.
+    expect(getBalanceMock).not.toHaveBeenCalled();
+    expect(svc.currentLamports).toBe(UNKNOWN_BALANCE);
+    // EVM signer still monitored.
+    expect(svc.getEvmSignerState("arc-testnet")?.status).toBe("ok");
+  });
 });
 
 // ---------------------------------------------------------------------------
