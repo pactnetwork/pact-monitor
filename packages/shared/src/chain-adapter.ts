@@ -69,6 +69,16 @@ export interface SettleBatchInput {
      * just passes it through.
      */
     latencyMs: number;
+    /**
+     * Canonical wrapped-call timestamp (unix seconds) taken from the queued
+     * settlement event's `ts` field, parsed identically to the legacy-direct
+     * path (settler `parseEventTimestamp`). The on-chain CallRecord.timestamp
+     * must record WRAPPED-CALL time, not settler-EXEC time, so both adapters
+     * encode this exact value instead of synthesizing `Date.now()` at submit
+     * time. VM-neutral, alongside refundBaseUnits. Optional for backward
+     * compat; adapters fall back to the submit-time clock when unset.
+     */
+    eventTimestamp?: bigint;
   }>;
   options?: {
     commitment?: "confirmed" | "finalized";

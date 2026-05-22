@@ -392,6 +392,8 @@ export class EvmAdapter implements ChainAdapter {
     const settlerAddr = this.deployment.settler;
 
     // Map SettleBatchInput events -> SettlementEventInput[]
+    // Fallback clock for events that carry no canonical timestamp (backward
+    // compat); the supplied eventTimestamp takes precedence below.
     const now = BigInt(Math.floor(Date.now() / 1000));
     const eventsWire: SettlementEventInput[] = input.events.map((e) => ({
       callId: e.callId,
@@ -405,7 +407,10 @@ export class EvmAdapter implements ChainAdapter {
       latencyMs: e.latencyMs,
       breach: e.outcome === "breach",
       feeRecipientCountHint: e.feeRecipientCountHint,
-      timestamp: now,
+      // Encode the canonical wrapped-call timestamp supplied by the settler
+      // (Rick #226 F1), NOT submit-time Date.now(). Falls back to `now` only
+      // when the caller omits it.
+      timestamp: e.eventTimestamp ?? now,
     }));
 
     const calldata = encodeSettleBatch(eventsWire);

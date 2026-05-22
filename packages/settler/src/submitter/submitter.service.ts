@@ -303,6 +303,11 @@ export class SubmitterService implements OnModuleInit {
           ),
           feeRecipientCountHint: feeConfig.feeRecipientCount,
           latencyMs: Number(d["latencyMs"] ?? 0),
+          // Thread the canonical wrapped-call timestamp (Rick #226 F1). Use the
+          // SAME parser the legacy-direct path uses so the adapter path records
+          // wrapped-call time, not settler-exec Date.now(). parseEventTimestamp
+          // returns unix seconds; the adapter wire field is bigint.
+          eventTimestamp: BigInt(parseEventTimestamp(d)),
         };
       }),
       options: { commitment: "confirmed", skipPreflight: false },
