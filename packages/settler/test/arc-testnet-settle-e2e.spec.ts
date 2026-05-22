@@ -44,11 +44,16 @@ import { Keypair } from "@solana/web3.js";
 import {
   decodeFunctionData,
   encodeAbiParameters,
+  encodeFunctionResult,
   parseAbiParameters,
+  zeroAddress,
   type Hex,
 } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
-import { PactSettlerAbi } from "@pact-network/protocol-evm-v1-client";
+import {
+  PactRegistryAbi,
+  PactSettlerAbi,
+} from "@pact-network/protocol-evm-v1-client";
 import { FeeRecipientKind } from "@pact-network/protocol-v1-client";
 
 import { AdaptersService } from "../src/adapters/adapters.service.js";
@@ -75,6 +80,36 @@ const FAKE_TX_HASH = ("0x" + "ab".repeat(32)) as Hex;
 const ARC_SETTLER_PRIVKEY = generatePrivateKey();
 const AGENT_ACCOUNT = privateKeyToAccount(generatePrivateKey());
 const AGENT_0X = AGENT_ACCOUNT.address; // checksummed 0x address
+
+// EVM treasury fee recipient returned by the fake getEndpoint() view.
+const TREASURY_EVM = privateKeyToAccount(generatePrivateKey()).address;
+
+// The struct EvmAdapter.getEndpoint() decodes from the registry view call.
+// One real Treasury recipient (10%) + zero-padded FeeRecipient[8] tail.
+const GET_ENDPOINT_RESULT = {
+  paused: false,
+  flatPremium: 1000n,
+  percentBps: 0,
+  slaLatencyMs: 200,
+  imputedCost: 5000n,
+  exposureCapPerHour: 1_000_000n,
+  totalCalls: 0n,
+  totalBreaches: 0n,
+  totalPremiums: 0n,
+  totalRefunds: 0n,
+  currentPeriodStart: 0n,
+  currentPeriodRefunds: 0n,
+  lastUpdated: 0n,
+  feeRecipientCount: 1,
+  feeRecipients: [
+    { kind: 0, destination: TREASURY_EVM, bps: 1000 },
+    ...Array.from({ length: 7 }, () => ({
+      kind: 0,
+      destination: zeroAddress,
+      bps: 0,
+    })),
+  ],
+} as const;
 
 // ---------------------------------------------------------------------------
 // Fake viem JSON-RPC transport (the ONLY EVM-side substitution).
@@ -150,11 +185,16 @@ async function fakeEvmRequest(args: {
     }
     case "eth_call": {
       const tx = (params[0] ?? {}) as { to?: string; data?: Hex };
-      if (tx.data) capturedCalldata = tx.data;
       if ((tx.to ?? "").toLowerCase() === MULTICALL3.toLowerCase()) {
+        // checkAgentEligibility -> ERC-20 balanceOf + allowance via multicall3.
         return encodeMulticallResult([fakeBalance, fakeAllowance]);
       }
-      return "0x";
+      // EvmAdapter.getEndpoint() -> registry getEndpoint() single view call.
+      return encodeFunctionResult({
+        abi: PactRegistryAbi,
+        functionName: "getEndpoint",
+        result: GET_ENDPOINT_RESULT,
+      });
     }
     case "eth_sendRawTransaction":
       return FAKE_TX_HASH;
@@ -440,6 +480,26 @@ describe("MN-04 fix-WP T0 — Arc Testnet settle e2e acceptance gate", () => {
     expect(result.eligible).toBe(true);
     expect(evmCalls.some((c) => c.method === "eth_call")).toBe(true);
     // No Solana account reads happened on the ERC-20 eligibility path.
+    expect(getAccountInfoMock).not.toHaveBeenCalled();
+  });
+
+  // Finding 1 — the EVM submit path must derive fee fan-out via the adapter and
+  // never read Solana PDAs (which would either fail for an Arc-only slug or
+  // leak a same-slug Solana endpoint's fee metadata into the EVM tx).
+  it("EVM submit derives fee fan-out via the adapter, never reading Solana PDAs (finding 1)", async () => {
+    // Wire Solana stubs so that IF the submit path wrongly fell back to the
+    // Solana loadEndpoint, getAccountInfo WOULD resolve — making a regression
+    // here a silent leak rather than a throw. The assertion below catches it.
+    wireSolanaStubs();
+    const { submitter } = await buildSubmitter();
+    // Drop the boot-time Treasury read so we measure only the submit path.
+    getAccountInfoMock.mockClear();
+
+    const batch: SettleBatch = {
+      messages: [arcMessage("99999999-0000-0000-0000-000000000001", 2000n)],
+    };
+    await submitter.submit(batch);
+
     expect(getAccountInfoMock).not.toHaveBeenCalled();
   });
 

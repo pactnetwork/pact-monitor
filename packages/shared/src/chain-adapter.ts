@@ -98,6 +98,14 @@ export interface TailOptions {
 export interface ChainAdapter {
   readonly descriptor: ChainDescriptor;
   readEndpointConfigs(): Promise<ReadonlyArray<EndpointConfigSnapshot>>;
+  /**
+   * Single-slug endpoint read. Lets the settler derive an EVM endpoint's fee
+   * fan-out without a full readEndpointConfigs() log-scan, and crucially
+   * without ever touching Solana PDAs for a non-Solana network. Optional: the
+   * SolanaAdapter does not implement it (the settler reads Solana fee config
+   * via its own EndpointConfig/CoveragePool PDA cache).
+   */
+  getEndpoint?(slug: string): Promise<EndpointConfigSnapshot>;
   submitSettleBatch(input: SettleBatchInput): Promise<SettleBatchResult>;
   checkAgentEligibility(
     agent: string,

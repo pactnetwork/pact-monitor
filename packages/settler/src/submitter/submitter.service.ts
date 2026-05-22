@@ -67,6 +67,11 @@ import {
   type SettlementEvent as ChainSettlementEvent,
 } from "@pact-network/protocol-v1-client";
 
+import type {
+  ChainAdapter,
+  EndpointConfigSnapshot,
+} from "@pact-network/shared";
+
 import { SettleBatch } from "../batcher/batcher.service";
 import { SecretLoaderService } from "../config/secret-loader.service";
 import { AdaptersService } from "../adapters/adapters.service";
@@ -214,17 +219,16 @@ export class SubmitterService implements OnModuleInit {
       ? this.adaptersService.getSigner(network)
       : null;
 
-    // All messages in a batch share the same slug (batcher groups by slug).
-    // Extract slug from the first message; fall back gracefully.
+    // All messages in a batch share one (network, slug) — the batcher
+    // partitions before flush. Extract slug from the first message.
     const firstData = batch.messages[0]?.data as Record<string, unknown>;
     const slug = this.extractSlug(firstData);
 
-    // Load EndpointConfig off-chain so we can compute perEventShares with
-    // byte-identical math to the legacy path. The adapter loads it again
-    // internally for the on-chain tx (RESEARCH §5.2 accepted this). We use
-    // the same loadEndpoint() + endpointCache used by the legacy path so
-    // TTL + invalidation are shared across both paths.
-    const snap = await this.loadEndpoint(slug);
+    // VM-aware fee-config load (finding 1). Solana reads EndpointConfig +
+    // CoveragePool PDAs via loadEndpoint; EVM reads the endpoint via the
+    // adapter's getEndpoint(). The EVM path NEVER touches Solana PDAs, so a
+    // same-slug Solana endpoint cannot leak its fee metadata into an EVM tx.
+    const feeConfig = await this.loadFeeConfig(adapter, vm, slug);
 
     const result = await adapter.submitSettleBatch({
       slug,
@@ -238,27 +242,81 @@ export class SubmitterService implements OnModuleInit {
           agent: String(d["agentPubkey"] ?? ""),
           premiumBaseUnits: BigInt(d["premiumLamports"] as string | number),
           outcome: breachFromOutcome(outcome) ? ("breach" as const) : ("ok" as const),
-          feeRecipientCountHint: snap.config.feeRecipientCount,
+          feeRecipientCountHint: feeConfig.feeRecipientCount,
           latencyMs: Number(d["latencyMs"] ?? 0),
         };
       }),
       options: { commitment: "confirmed", skipPreflight: false },
     });
 
-    // Compute per-event fee-recipient shares using the same helper that the
-    // legacy path uses. This is the byte-identical computation gate (T5).
+    // Compute per-event fee-recipient shares for the indexer push, mirroring
+    // on-chain fee math (floor(premium * bps / 10_000)) per VM.
     const perEventShares: RecipientShare[][] = [];
     for (const m of batch.messages) {
       const d = m.data as Record<string, unknown>;
       const premiumLamports = BigInt(d["premiumLamports"] as string | number);
-      const shares = await this.computeFeeSharesForEvent(premiumLamports, snap.config);
-      perEventShares.push(shares);
+      perEventShares.push(await feeConfig.computeShares(premiumLamports));
     }
 
     return {
       signature: result.txId,
       perEventShares,
     };
+  }
+
+  /**
+   * Resolve the fee fan-out for a slug in a VM-aware way (finding 1):
+   *   - Solana: load EndpointConfig + CoveragePool PDAs (cached) and compute
+   *     shares via the existing Treasury-vault-aware helper. Unchanged.
+   *   - EVM: read the endpoint via the adapter's getEndpoint() — never Solana
+   *     PDAs — and compute shares from the EVM fee recipients directly.
+   *
+   * Returns the feeRecipientCount hint the on-chain handler bounds-checks
+   * against, plus a per-event share computation closure.
+   */
+  private async loadFeeConfig(
+    adapter: ChainAdapter,
+    vm: string,
+    slug: string,
+  ): Promise<{
+    feeRecipientCount: number;
+    computeShares: (premiumBaseUnits: bigint) => Promise<RecipientShare[]>;
+  }> {
+    if (vm === "solana") {
+      const snap = await this.loadEndpoint(slug);
+      return {
+        feeRecipientCount: snap.config.feeRecipientCount,
+        computeShares: (premium) =>
+          this.computeFeeSharesForEvent(premium, snap.config),
+      };
+    }
+    if (!adapter.getEndpoint) {
+      throw new Error(
+        `adapter for slug "${slug}" (vm=${vm}) does not implement getEndpoint`,
+      );
+    }
+    const cfg = await adapter.getEndpoint(slug);
+    return {
+      feeRecipientCount: cfg.feeRecipients.length,
+      computeShares: (premium) =>
+        Promise.resolve(this.computeEvmFeeShares(premium, cfg)),
+    };
+  }
+
+  /**
+   * EVM per-event fee-recipient shares. Mirrors on-chain math
+   * floor(premium * bps / 10_000) per recipient. Unlike Solana, EVM has no
+   * Treasury-vault indirection — the recipient address is the pay target.
+   */
+  private computeEvmFeeShares(
+    premiumBaseUnits: bigint,
+    cfg: EndpointConfigSnapshot,
+  ): RecipientShare[] {
+    return cfg.feeRecipients.map((r) => ({
+      kind: r.kind as FeeRecipientKind,
+      pubkey: r.recipient,
+      amountLamports: (premiumBaseUnits * BigInt(r.bps)) / 10_000n,
+    }));
   }
 
   /**

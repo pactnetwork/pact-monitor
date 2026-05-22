@@ -39,6 +39,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import {
   encodeSettleBatch,
   getDeployment,
+  slugToBytes16,
   tryExtractPactError,
   decodePactEventLog,
   PactRegistryAbi,
@@ -281,6 +282,50 @@ export class EvmAdapter implements ChainAdapter {
       paused: c.paused,
       raw: c,
     }));
+  }
+
+  // -------------------------------------------------------------------------
+  // getEndpoint
+  //
+  // Single-slug endpoint read via one getEndpoint() view call (no log scan).
+  // Used by the settler to derive an EVM endpoint's fee fan-out at submit time
+  // without ever reading Solana PDAs. feeRecipients is sliced to the on-chain
+  // feeRecipientCount so the zero-padded FeeRecipient[8] tail is dropped (the
+  // contract only pays the first feeRecipientCount entries).
+  // -------------------------------------------------------------------------
+  async getEndpoint(slug: string): Promise<EndpointConfigSnapshot> {
+    if (!this.deployment.registry) {
+      throw new Error(
+        `EvmAdapter.getEndpoint: no registry address for chain ${this.deployment.chainId}`,
+      );
+    }
+    const slugHex = slugToBytes16(slug);
+    const c = (await this.publicClient.readContract({
+      address: this.deployment.registry,
+      abi: PactRegistryAbi,
+      functionName: "getEndpoint",
+      args: [slugHex],
+    })) as {
+      paused: boolean;
+      feeRecipientCount: number;
+      feeRecipients: ReadonlyArray<{ kind: number; destination: Address; bps: number }>;
+    };
+
+    const count = Number(c.feeRecipientCount);
+    const recipients = c.feeRecipients.slice(0, count);
+    return {
+      slug: slugHex,
+      // No per-endpoint authority on EVM; surface the registry address.
+      authority: this.deployment.registry,
+      maxTotalFeeBps: recipients.reduce((s, f) => s + Number(f.bps), 0),
+      feeRecipients: recipients.map((f) => ({
+        recipient: f.destination,
+        bps: Number(f.bps),
+        kind: Number(f.kind),
+      })),
+      paused: c.paused,
+      raw: c,
+    };
   }
 
   // -------------------------------------------------------------------------

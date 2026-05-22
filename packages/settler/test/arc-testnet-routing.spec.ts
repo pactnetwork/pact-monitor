@@ -196,6 +196,16 @@ describe("WP-MN-04 T5 — arc-testnet routing dispatch", () => {
       submitSettleBatch: vi.fn().mockResolvedValue({ txId: ARC_STUB_TX }),
       checkAgentEligibility: vi.fn(),
       readEndpointConfigs: vi.fn(),
+      // Finding 1 (mn-04 fix-WP T1): the EVM submit path now derives fee
+      // fan-out via the adapter's getEndpoint() instead of Solana PDAs.
+      getEndpoint: vi.fn().mockResolvedValue({
+        slug: "helius",
+        authority: "",
+        maxTotalFeeBps: 0,
+        feeRecipients: [],
+        paused: false,
+        raw: {},
+      }),
     };
 
     // AdaptersService stub — getSigner THROWS to prove submitViaAdapter does not
@@ -240,6 +250,16 @@ describe("WP-MN-04 T5 — arc-testnet routing dispatch", () => {
       submitSettleBatch: vi.fn().mockResolvedValue({ txId: ARC_STUB_TX }),
       checkAgentEligibility: vi.fn(),
       readEndpointConfigs: vi.fn(),
+      // Finding 1 (mn-04 fix-WP T1): the EVM submit path now derives fee
+      // fan-out via the adapter's getEndpoint() instead of Solana PDAs.
+      getEndpoint: vi.fn().mockResolvedValue({
+        slug: "helius",
+        authority: "",
+        maxTotalFeeBps: 0,
+        feeRecipients: [],
+        paused: false,
+        raw: {},
+      }),
     };
 
     // Even with legacyDirectSolana=true, an arc-testnet batch must use the
