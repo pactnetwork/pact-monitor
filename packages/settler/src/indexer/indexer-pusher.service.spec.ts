@@ -155,4 +155,18 @@ describe("IndexerPusherService", () => {
       service.push(makeOutcome("sig_mixed", batch), batch),
     ).rejects.toThrow(/mixed-network batch/);
   });
+
+  // Single-slug invariant (review #226 F5): the batcher now partitions by
+  // (network, slug) before flush, but the submitter routes the whole adapter
+  // batch by the first message's slug. A mixed-slug batch reaching the pusher
+  // means a direct caller or a batcher regression — fail loud rather than
+  // mis-indexing the batch under one slug's endpoint config.
+  it("throws on a mixed-slug batch (single-slug invariant)", async () => {
+    const batch = makeBatch(2);
+    (batch.messages[0].data as Record<string, unknown>)["endpointSlug"] = "helius";
+    (batch.messages[1].data as Record<string, unknown>)["endpointSlug"] = "birdeye";
+    await expect(
+      service.push(makeOutcome("sig_mixed_slug", batch), batch),
+    ).rejects.toThrow(/mixed-slug batch/);
+  });
 });

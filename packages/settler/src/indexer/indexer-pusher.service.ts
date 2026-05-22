@@ -66,6 +66,7 @@ export class IndexerPusherService {
     // rows (which are keyed on network). Without this the indexer fell back
     // to its solana-devnet default and Arc aggregates landed under Solana.
     const network = this.resolveBatchNetwork(batch);
+    this.assertSingleSlug(batch);
 
     const calls = batch.messages.map((m, idx) => {
       const d = m.data as Record<string, unknown>;
@@ -139,6 +140,33 @@ export class IndexerPusherService {
       }
     }
     return network;
+  }
+
+  /**
+   * Enforce the single-slug invariant the batcher guarantees (it partitions
+   * pending by (network, slug) before flush). The submitter routes the whole
+   * adapter batch by the first message's slug and resolves that one endpoint's
+   * fee config; a mixed-slug batch reaching the pusher means a direct caller or
+   * a batcher regression — fail loud rather than silently indexing the batch
+   * under the wrong endpoint (review #226 F5). Mirrors resolveBatchNetwork.
+   */
+  private assertSingleSlug(batch: SettleBatch): void {
+    const slugOf = (m: SettleBatch["messages"][number]): string => {
+      const s = (m.data as Record<string, unknown>)["endpointSlug"];
+      return typeof s === "string" ? s : "";
+    };
+    const first = batch.messages[0];
+    if (!first) return;
+    const slug = slugOf(first);
+    for (const m of batch.messages) {
+      const ms = slugOf(m);
+      if (ms !== slug) {
+        throw new Error(
+          `indexer push received a mixed-slug batch (${slug} vs ${ms}); ` +
+            `the batcher must partition by slug before flush`,
+        );
+      }
+    }
   }
 
   private async postWithRetry(
