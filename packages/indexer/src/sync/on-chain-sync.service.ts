@@ -307,10 +307,11 @@ export class OnChainSyncService implements OnModuleInit {
     const startedAt = Date.now();
 
     try {
+      const syncNetwork = this.resolveLegacySolanaNetwork();
       const accounts = await this.fetchEndpointConfigAccounts();
       let upserted = 0;
       for (const acct of accounts) {
-        const slug = await this.upsertOne(acct);
+        const slug = await this.upsertOne(acct, syncNetwork);
         if (slug) upserted += 1;
       }
       const tookMs = Date.now() - startedAt;
@@ -348,12 +349,27 @@ export class OnChainSyncService implements OnModuleInit {
   }
 
   /**
+   * Resolve the Solana network for the legacy-direct path. In legacy-direct
+   * mode exactly one Solana network is enabled (this.connection points at its
+   * RPC); use it so rows are stamped with the real network (e.g. solana-mainnet)
+   * rather than a hardcoded literal. Falls back to "solana-devnet" only if no
+   * Solana network is enabled (defensive — legacy-direct implies one is).
+   */
+  private resolveLegacySolanaNetwork(): string {
+    const solana = this.adaptersService
+      .listEnabledNetworks()
+      .find((n) => n.startsWith("solana-"));
+    return solana ?? "solana-devnet";
+  }
+
+  /**
    * Decode a single account and upsert the corresponding Endpoint row.
    * Returns the decoded slug on success, or `null` if the decode failed
    * (we log + skip — one bad account doesn't block the rest of the batch).
    */
   private async upsertOne(
     acct: GetProgramAccountsResponse[number],
+    syncNetwork: string,
   ): Promise<string | null> {
     let decoded: EndpointConfig;
     try {
@@ -388,9 +404,10 @@ export class OnChainSyncService implements OnModuleInit {
     // for upstreams that need them (e.g. Helius) are injected by the
     // proxy via env vars, NOT stored in the DB.
     const upstreamBase = DEFAULT_UPSTREAM_BASE[slug] ?? "";
-    // WP-MN-03a: on-chain sync only knows Solana for now; WP-MN-03b will
-    // swap the hardcoded string for adapter-driven network selection.
-    const syncNetwork = "solana-devnet";
+    // Stamp the resolved legacy-direct Solana network (multi-evm WP T6) — was a
+    // hardcoded "solana-devnet" literal, which mislabeled rows on a
+    // solana-mainnet legacy deploy. `syncNetwork` is resolved once per pass in
+    // syncEndpointsFromChain via resolveLegacySolanaNetwork().
     await this.prisma.endpoint.upsert({
       where: { network_slug: { network: syncNetwork, slug } },
       create: {
