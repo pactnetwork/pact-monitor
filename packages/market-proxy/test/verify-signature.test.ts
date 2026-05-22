@@ -5,10 +5,11 @@
 // passthrough-to-next behaviour.
 
 import { describe, test, expect, beforeEach } from "vitest";
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { createHash, randomBytes } from "node:crypto";
 import nacl from "tweetnacl";
 import bs58 from "bs58";
+import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 
 import {
   verifyPactSignature,
@@ -66,7 +67,13 @@ function buildSignedHeaders(opts: {
   };
 }
 
-function makeApp(opts: { now?: () => number; replayTtlMs?: number } = {}) {
+function makeApp(
+  opts: {
+    now?: () => number;
+    replayTtlMs?: number;
+    getEndpointNetwork?: (c: Context) => string | undefined;
+  } = {},
+) {
   const app = new Hono();
   app.use(
     "/v1/:slug/*",
@@ -76,6 +83,7 @@ function makeApp(opts: { now?: () => number; replayTtlMs?: number } = {}) {
       replayCache: createInMemoryReplayCache(
         opts.replayTtlMs ?? DEFAULT_REPLAY_TTL_MS,
       ),
+      getEndpointNetwork: opts.getEndpointNetwork,
     }),
   );
   app.all("/v1/:slug/*", (c) =>
@@ -85,6 +93,36 @@ function makeApp(opts: { now?: () => number; replayTtlMs?: number } = {}) {
     }),
   );
   return app;
+}
+
+/** Build EIP-191 (personal_sign) signed headers for an EVM agent. */
+async function buildEvmSignedHeaders(opts: {
+  account: ReturnType<typeof privateKeyToAccount>;
+  method: string;
+  path: string;
+  body?: string;
+  timestampMs: number;
+  nonce?: string;
+  project?: string;
+}): Promise<Record<string, string>> {
+  const nonce = opts.nonce ?? bs58.encode(randomBytes(16));
+  const body = opts.body ?? "";
+  const bodyHash = body ? sha256Hex(body) : "";
+  const payload = buildSignaturePayload({
+    method: opts.method,
+    path: opts.path,
+    timestampMs: opts.timestampMs,
+    nonce,
+    bodyHash,
+  });
+  const signature = await opts.account.signMessage({ message: payload });
+  return {
+    "x-pact-agent": opts.account.address,
+    "x-pact-timestamp": String(opts.timestampMs),
+    "x-pact-nonce": nonce,
+    "x-pact-signature": signature,
+    "x-pact-project": opts.project ?? PROJECT,
+  };
 }
 
 const FIXED_NOW = 1_700_000_000_000;
@@ -337,6 +375,122 @@ describe("verifyPactSignature middleware", () => {
     });
     headers["x-pact-signature"] = bs58.encode(new Uint8Array(32));
     const resp = await app.request(path, { method: "POST", headers });
+    expect(resp.status).toBe(401);
+    const json = (await resp.json()) as { error: string };
+    expect(json.error).toBe("pact_auth_bad_sig");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Finding 3 (mn-04 fix-WP T3): EVM auth mode + cross-mode guard.
+// ---------------------------------------------------------------------------
+describe("verifyPactSignature — EVM (secp256k1 / EIP-191) auth mode", () => {
+  let account: ReturnType<typeof privateKeyToAccount>;
+  beforeEach(() => {
+    account = privateKeyToAccount(generatePrivateKey());
+  });
+
+  test("EVM agent (0x / EIP-191) authenticates and verifiedAgent is the 0x address", async () => {
+    const app = makeApp({ now: () => FIXED_NOW });
+    const path = `/v1/${SLUG}/`;
+    const headers = await buildEvmSignedHeaders({
+      account,
+      method: "GET",
+      path,
+      timestampMs: FIXED_NOW,
+    });
+    const resp = await app.request(path, { method: "GET", headers });
+    expect(resp.status).toBe(200);
+    const json = (await resp.json()) as { ok: boolean; agent: string };
+    expect(json.ok).toBe(true);
+    expect(json.agent).toBe(account.address);
+  });
+
+  test("EVM agent with a tampered signature → 401 pact_auth_bad_sig", async () => {
+    const app = makeApp({ now: () => FIXED_NOW });
+    const path = `/v1/${SLUG}/`;
+    const headers = await buildEvmSignedHeaders({
+      account,
+      method: "GET",
+      path,
+      timestampMs: FIXED_NOW,
+    });
+    // Re-sign a different agent's message but claim the original address.
+    const other = privateKeyToAccount(generatePrivateKey());
+    headers["x-pact-signature"] = await other.signMessage({ message: "x" });
+    const resp = await app.request(path, { method: "GET", headers });
+    expect(resp.status).toBe(401);
+    const json = (await resp.json()) as { error: string };
+    expect(json.error).toBe("pact_auth_bad_sig");
+  });
+
+  test("Solana Ed25519 agent still authenticates against a solana-devnet endpoint (regression)", async () => {
+    const app = makeApp({
+      now: () => FIXED_NOW,
+      getEndpointNetwork: () => "solana-devnet",
+    });
+    const kp = freshKeypair();
+    const path = `/v1/${SLUG}/`;
+    const headers = buildSignedHeaders({
+      keypair: kp,
+      method: "GET",
+      path,
+      timestampMs: FIXED_NOW,
+    });
+    const resp = await app.request(path, { method: "GET", headers });
+    expect(resp.status).toBe(200);
+    const json = (await resp.json()) as { ok: boolean; agent: string };
+    expect(json.agent).toBe(kp.pubkeyB58);
+  });
+
+  test("EVM agent authenticates against an arc-testnet endpoint (matching VM)", async () => {
+    const app = makeApp({
+      now: () => FIXED_NOW,
+      getEndpointNetwork: () => "arc-testnet",
+    });
+    const path = `/v1/${SLUG}/`;
+    const headers = await buildEvmSignedHeaders({
+      account,
+      method: "GET",
+      path,
+      timestampMs: FIXED_NOW,
+    });
+    const resp = await app.request(path, { method: "GET", headers });
+    expect(resp.status).toBe(200);
+  });
+
+  test("cross-mode: 0x agent on a solana-devnet endpoint → 401", async () => {
+    const app = makeApp({
+      now: () => FIXED_NOW,
+      getEndpointNetwork: () => "solana-devnet",
+    });
+    const path = `/v1/${SLUG}/`;
+    const headers = await buildEvmSignedHeaders({
+      account,
+      method: "GET",
+      path,
+      timestampMs: FIXED_NOW,
+    });
+    const resp = await app.request(path, { method: "GET", headers });
+    expect(resp.status).toBe(401);
+    const json = (await resp.json()) as { error: string };
+    expect(json.error).toBe("pact_auth_bad_sig");
+  });
+
+  test("cross-mode: Ed25519 agent on an arc-testnet endpoint → 401", async () => {
+    const app = makeApp({
+      now: () => FIXED_NOW,
+      getEndpointNetwork: () => "arc-testnet",
+    });
+    const kp = freshKeypair();
+    const path = `/v1/${SLUG}/`;
+    const headers = buildSignedHeaders({
+      keypair: kp,
+      method: "GET",
+      path,
+      timestampMs: FIXED_NOW,
+    });
+    const resp = await app.request(path, { method: "GET", headers });
     expect(resp.status).toBe(401);
     const json = (await resp.json()) as { error: string };
     expect(json.error).toBe("pact_auth_bad_sig");
