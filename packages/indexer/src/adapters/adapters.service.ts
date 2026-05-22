@@ -56,7 +56,11 @@ export class AdaptersService implements OnModuleInit {
         // follow-up post WP-MN-04 Gate B) must switch to per-key
         // this.config.get(...) calls for proper config provider abstraction.
         // See WP-MN-04 T4 code-review Important #1.
-        const deployment = resolveDeployment(descriptor.chainId, process.env);
+        const deployment = resolveDeployment(
+          descriptor.chainId,
+          name,
+          process.env,
+        );
 
         this.adapters.set(
           name,

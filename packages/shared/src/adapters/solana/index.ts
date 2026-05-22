@@ -238,7 +238,11 @@ export class SolanaAdapter implements ChainAdapter {
         refundLamports: e.refundBaseUnits ?? 0n,
         latencyMs: e.latencyMs,
         breach: e.outcome === "breach",
-        timestamp: BigInt(Math.floor(Date.now() / 1000)),
+        // Encode the canonical wrapped-call timestamp supplied by the settler
+        // (Rick #226 F1), NOT submit-time Date.now() — restores parity with the
+        // legacy-direct path. Falls back to the submit-time clock only when the
+        // caller omits it.
+        timestamp: e.eventTimestamp ?? BigInt(Math.floor(Date.now() / 1000)),
         feeRecipientAtas: feeRecipientAtasShared,
       });
     }

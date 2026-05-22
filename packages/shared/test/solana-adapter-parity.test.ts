@@ -1,11 +1,34 @@
 import { describe, it, expect, vi } from "vitest";
-import { Connection } from "@solana/web3.js";
+import { Connection, Keypair } from "@solana/web3.js";
 import {
   ENDPOINT_CONFIG_LEN,
+  FeeRecipientKind,
 } from "@pact-network/protocol-v1-client";
 import type { BalanceCheck } from "@pact-network/wrap";
 import { SolanaAdapter, getChain } from "../src";
 import type { SettleBatchInput } from "../src/chain-adapter";
+
+// Capture the instruction-builder inputs WITHOUT a real send: buildSettleBatchIx
+// runs before sendAndConfirmTransaction, so the mock records the per-event
+// timestamp and throws to short-circuit before any network egress. The three
+// account decoders are stubbed so loadEndpoint resolves against a fake
+// Connection. (Mirrors the sibling arc-testnet-settle-e2e.spec.ts mock style.)
+const buildSettleBatchIxMock = vi.fn();
+const decodeEndpointConfigMock = vi.fn();
+const decodeCoveragePoolMock = vi.fn();
+const decodeTreasuryMock = vi.fn();
+
+vi.mock("@pact-network/protocol-v1-client", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@pact-network/protocol-v1-client")>();
+  return {
+    ...actual,
+    buildSettleBatchIx: (...a: unknown[]) => buildSettleBatchIxMock(...a),
+    decodeEndpointConfig: (...a: unknown[]) => decodeEndpointConfigMock(...a),
+    decodeCoveragePool: (...a: unknown[]) => decodeCoveragePoolMock(...a),
+    decodeTreasury: (...a: unknown[]) => decodeTreasuryMock(...a),
+  };
+});
 
 describe("SolanaAdapter — byte-identical parity vs direct client", () => {
   it("readEndpointConfigs calls getProgramAccounts with the right filter", async () => {
@@ -120,5 +143,70 @@ describe("SolanaAdapter — byte-identical parity vs direct client", () => {
       }],
     };
     expect(input.events[0].latencyMs).toBe(42);
+  });
+
+  // Rick #226 F1 — the adapter path must encode the CANONICAL wrapped-call
+  // timestamp supplied by the settler (parsed via parseEventTimestamp, the same
+  // function the legacy-direct path uses), NOT Date.now() synthesized at submit
+  // time. This is the Solana mirror of the EVM calldata-decode assertion in
+  // arc-testnet-settle-e2e.spec.ts.
+  it("submitSettleBatch encodes the supplied eventTimestamp, not Date.now() (Rick #226 F1)", async () => {
+    const vault = Keypair.generate().publicKey.toBase58();
+    const agent = Keypair.generate().publicKey.toBase58();
+
+    decodeEndpointConfigMock.mockReturnValue({
+      feeRecipientCount: 1,
+      feeRecipients: [
+        { kind: FeeRecipientKind.Treasury, destination: vault, bps: 1000 },
+      ],
+    });
+    decodeCoveragePoolMock.mockReturnValue({ usdcVault: vault });
+    decodeTreasuryMock.mockReturnValue({ usdcVault: vault });
+
+    let capturedTimestamp: bigint | undefined;
+    buildSettleBatchIxMock.mockImplementation(
+      (args: { events: Array<{ timestamp: bigint }> }) => {
+        capturedTimestamp = args.events[0].timestamp;
+        // Short-circuit before the real sendAndConfirmTransaction egress.
+        throw new Error("__captured__");
+      },
+    );
+
+    const stubConnection = {
+      getAccountInfo: vi.fn().mockResolvedValue({ data: Buffer.from("stub") }),
+    } as unknown as Connection;
+
+    const adapter = new SolanaAdapter({
+      descriptor: getChain("solana-devnet"),
+      rpcUrl: "http://localhost:8899",
+      connection: stubConnection,
+    });
+
+    // A wrapped-call ts well in the past (2020-01-01T00:00:00Z, unix seconds)
+    // so it cannot collide with submit-time Date.now().
+    const eventTimestamp = 1_577_836_800n;
+    const nowSeconds = BigInt(Math.floor(Date.now() / 1000));
+
+    await expect(
+      adapter.submitSettleBatch({
+        slug: "helius",
+        signer: Keypair.generate(),
+        events: [
+          {
+            callId: "11111111222233334444555566667777",
+            agent,
+            premiumBaseUnits: 1000n,
+            outcome: "ok",
+            feeRecipientCountHint: 1,
+            latencyMs: 120,
+            eventTimestamp,
+          },
+        ],
+      }),
+    ).rejects.toThrow("__captured__");
+
+    expect(capturedTimestamp).toBe(eventTimestamp);
+    // Guard against a Date.now() regression masquerading as a pass.
+    expect(capturedTimestamp).not.toBe(nowSeconds);
   });
 });

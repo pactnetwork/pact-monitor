@@ -342,7 +342,7 @@ function makeConfig(overrides: Record<string, string> = {}): ConfigService {
 function arcMessage(
   callIdUuid: string,
   premiumLamports: bigint,
-  opts: { outcome?: string; refundLamports?: string; slug?: string } = {},
+  opts: { outcome?: string; refundLamports?: string; slug?: string; ts?: string } = {},
 ): SettleMessage {
   return {
     id: callIdUuid,
@@ -355,7 +355,7 @@ function arcMessage(
       refundLamports: opts.refundLamports ?? "0",
       latencyMs: 120,
       outcome: opts.outcome ?? "ok",
-      ts: new Date().toISOString(),
+      ts: opts.ts ?? new Date().toISOString(),
       signature: "stub",
     },
     raw: { ack: vi.fn(), nack: vi.fn() } as unknown as SettleMessage["raw"],
@@ -461,6 +461,34 @@ describe("MN-04 fix-WP T0 — Arc Testnet settle e2e acceptance gate", () => {
     expect(BigInt(event.premium as bigint)).toBe(premium);
     expect(BigInt(event.refund as bigint)).toBe(refund);
     expect(BigInt(event.refund as bigint)).not.toBe(premium);
+  });
+
+  // Rick #226 F1 — the adapter path must encode the CANONICAL wrapped-call
+  // timestamp (the queued event's `ts`, parsed via the SAME parseEventTimestamp
+  // the legacy-direct Solana path uses), NOT Date.now() synthesized at submit
+  // time. Real seam: the message ts threads through the real submitViaAdapter →
+  // real EvmAdapter → real calldata encoder, and we decode the broadcast bytes.
+  it("encodes the queued event ts as the on-chain timestamp, not the settler-exec Date.now() (F1)", async () => {
+    wireSolanaStubs();
+    const { submitter } = await buildSubmitter();
+
+    // A wrapped-call ts well in the past so it cannot collide with submit-time
+    // Date.now(); parseEventTimestamp converts ISO-8601 → unix seconds.
+    const tsIso = "2020-01-02T03:04:05.000Z";
+    const expectedTs = BigInt(Math.floor(Date.parse(tsIso) / 1000));
+    const nowSeconds = BigInt(Math.floor(Date.now() / 1000));
+
+    const uuid = "f1f1f1f1-2222-3333-4444-555555555555";
+    const batch: SettleBatch = {
+      messages: [arcMessage(uuid, 2000n, { ts: tsIso })],
+    };
+
+    await submitter.submit(batch);
+
+    const event = decodeFirstEvent(capturedCalldata!);
+    expect(BigInt(event.timestamp as bigint)).toBe(expectedTs);
+    // Guard against a Date.now() regression masquerading as a pass.
+    expect(BigInt(event.timestamp as bigint)).not.toBe(nowSeconds);
   });
 
   // Assertion 2 — ERC-20 read via the EVM adapter, not Solana PDAs.

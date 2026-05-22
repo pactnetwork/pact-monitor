@@ -1,19 +1,37 @@
-import { Injectable, OnModuleInit } from "@nestjs/common";
+import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { SecretManagerServiceClient } from "@google-cloud/secret-manager";
 import bs58 from "bs58";
 import { Keypair } from "@solana/web3.js";
 
+import { hasSolanaNetwork } from "./enabled-networks";
+
 @Injectable()
 export class SecretLoaderService implements OnModuleInit {
+  private readonly logger = new Logger(SecretLoaderService.name);
   private _keypair: Keypair | null = null;
   private readonly client: SecretManagerServiceClient;
+  private readonly solanaEnabled: boolean;
 
   constructor(private readonly config: ConfigService) {
     this.client = new SecretManagerServiceClient();
+    this.solanaEnabled = hasSolanaNetwork(
+      this.config.get<string>("PACT_ENABLED_NETWORKS"),
+    );
   }
 
   async onModuleInit() {
+    // The settlement-authority keypair is the Solana settler signer. An
+    // EVM-only settler (no solana-* enabled) settles via the per-network EVM
+    // signer from AdaptersService (PACT_SETTLER_KEYPAIR_<NETWORK>), so we skip
+    // this load entirely and boot without SETTLEMENT_AUTHORITY_KEY (multi-evm
+    // WP T5). The `keypair` getter still throws if anything tries to use it.
+    if (!this.solanaEnabled) {
+      this.logger.log(
+        "[settler] EVM-only boot — skipping Solana settlement-authority keypair load",
+      );
+      return;
+    }
     await this.load();
   }
 

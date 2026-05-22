@@ -69,6 +69,16 @@ export interface SettleBatchInput {
      * just passes it through.
      */
     latencyMs: number;
+    /**
+     * Canonical wrapped-call timestamp (unix seconds) taken from the queued
+     * settlement event's `ts` field, parsed identically to the legacy-direct
+     * path (settler `parseEventTimestamp`). The on-chain CallRecord.timestamp
+     * must record WRAPPED-CALL time, not settler-EXEC time, so both adapters
+     * encode this exact value instead of synthesizing `Date.now()` at submit
+     * time. VM-neutral, alongside refundBaseUnits. Optional for backward
+     * compat; adapters fall back to the submit-time clock when unset.
+     */
+    eventTimestamp?: bigint;
   }>;
   options?: {
     commitment?: "confirmed" | "finalized";
@@ -108,6 +118,26 @@ export interface ChainAdapter {
   readonly descriptor: ChainDescriptor;
   readEndpointConfigs(): Promise<ReadonlyArray<EndpointConfigSnapshot>>;
   /**
+   * Cursor-able variant of {@link readEndpointConfigs} for chains whose config
+   * discovery is a height-scaling log scan (EVM `EndpointRegistered`). Resumes
+   * the discovery scan from `fromBlock` (the indexer's persisted per-network
+   * cursor; cold start = the chain's `deploymentBlock`) instead of always
+   * re-walking from deployment, AND refreshes every `knownSlugs` entry (the
+   * endpoints the indexer already tracks) so mutable config changed via
+   * `update_config` — which emits no `EndpointRegistered` — stays fresh. Returns
+   * the finalized block scanned to, so the caller can persist the next cursor.
+   *
+   * Optional: chains without a height-scaling scan (Solana `getProgramAccounts`)
+   * do not implement it; the indexer falls back to {@link readEndpointConfigs}.
+   */
+  readEndpointConfigsFrom?(
+    fromBlock: bigint,
+    knownSlugs?: ReadonlyArray<string>,
+  ): Promise<{
+    snapshots: ReadonlyArray<EndpointConfigSnapshot>;
+    scannedToBlock: bigint;
+  }>;
+  /**
    * Single-slug endpoint read. Lets the settler derive an EVM endpoint's fee
    * fan-out without a full readEndpointConfigs() log-scan, and crucially
    * without ever touching Solana PDAs for a non-Solana network. Optional: the
@@ -116,6 +146,13 @@ export interface ChainAdapter {
    */
   getEndpoint?(slug: string): Promise<EndpointConfigSnapshot>;
   submitSettleBatch(input: SettleBatchInput): Promise<SettleBatchResult>;
+  /**
+   * Native gas-token balance (in the chain's smallest unit, e.g. wei) of an
+   * address — used by the settler's signer gas-balance monitor. Optional: only
+   * EVM chains implement it (Solana signer SOL balance is polled directly via
+   * the existing web3.js Connection path).
+   */
+  getNativeBalance?(address: string): Promise<bigint>;
   checkAgentEligibility(
     agent: string,
     requiredBaseUnits: bigint,
