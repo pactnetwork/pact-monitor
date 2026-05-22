@@ -513,6 +513,17 @@ export class EvmAdapter implements ChainAdapter {
   }
 
   // -------------------------------------------------------------------------
+  // getNativeBalance
+  //
+  // Native gas-token balance (wei) of an address, via the real viem public
+  // client (no hand-rolled RPC). Used by the settler's per-network EVM signer
+  // gas-balance monitor (multi-evm WP T4).
+  // -------------------------------------------------------------------------
+  async getNativeBalance(address: string): Promise<bigint> {
+    return this.publicClient.getBalance({ address: address as Address });
+  }
+
+  // -------------------------------------------------------------------------
   // checkAgentEligibility
   //
   // ERC-20 balanceOf + allowance via multicall. EVM never returns 'no_account'

@@ -136,6 +136,13 @@ export interface ChainAdapter {
    */
   getEndpoint?(slug: string): Promise<EndpointConfigSnapshot>;
   submitSettleBatch(input: SettleBatchInput): Promise<SettleBatchResult>;
+  /**
+   * Native gas-token balance (in the chain's smallest unit, e.g. wei) of an
+   * address — used by the settler's signer gas-balance monitor. Optional: only
+   * EVM chains implement it (Solana signer SOL balance is polled directly via
+   * the existing web3.js Connection path).
+   */
+  getNativeBalance?(address: string): Promise<bigint>;
   checkAgentEligibility(
     agent: string,
     requiredBaseUnits: bigint,

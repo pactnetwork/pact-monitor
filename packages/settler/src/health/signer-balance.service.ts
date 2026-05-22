@@ -37,9 +37,31 @@ import { Connection, PublicKey } from "@solana/web3.js";
 import { Gauge, register } from "prom-client";
 
 import { SecretLoaderService } from "../config/secret-loader.service";
+import { AdaptersService } from "../adapters/adapters.service";
 
 /** 1 SOL = 1e9 lamports. */
 export const LAMPORTS_PER_SOL = 1_000_000_000;
+
+/** 1 native gas token (e.g. 1 ETH) = 1e18 wei. */
+export const WEI_PER_NATIVE = 1_000_000_000_000_000_000n;
+
+/**
+ * EVM signer gas-balance thresholds (multi-evm WP T4), in wei. Parallel to the
+ * SOL thresholds: WARN at 0.01 native token, CRIT at 0.003. Overridable per
+ * chain via env (see resolveEvmGasThreshold). Native gas is monitored as a
+ * warn/alert signal (log + gauge); it does NOT gate the settler /health probe
+ * (one underfunded EVM chain must not deroute the whole settler).
+ */
+export const EVM_GAS_WARN_WEI = 10_000_000_000_000_000n; // 0.01 native token
+export const EVM_GAS_CRIT_WEI = 3_000_000_000_000_000n; // 0.003 native token
+
+export type EvmSignerStatus = "ok" | "warn" | "crit";
+
+export interface EvmSignerState {
+  /** Native gas-token balance in wei. */
+  wei: bigint;
+  status: EvmSignerStatus;
+}
 
 /** WARN threshold: 0.01 SOL ~= 1000 settles. */
 export const WARN_THRESHOLD_LAMPORTS = 10_000_000;
@@ -58,13 +80,17 @@ export class SignerBalanceService implements OnModuleInit {
   private readonly logger = new Logger(SignerBalanceService.name);
   private readonly connection: Connection;
   private readonly balanceGauge: Gauge;
+  private readonly evmGasGauge: Gauge<"network">;
   private _lamports: number = UNKNOWN_BALANCE;
   private _lastPolledAt: number | null = null;
   private _lastError: string | null = null;
+  /** Last observed EVM signer gas balance + status, keyed by network. */
+  private readonly _evm = new Map<string, EvmSignerState>();
 
   constructor(
     private readonly config: ConfigService,
     private readonly secrets: SecretLoaderService,
+    private readonly adapters: AdaptersService,
   ) {
     const rpc = this.config.getOrThrow<string>("SOLANA_RPC_URL");
     this.connection = new Connection(rpc, "confirmed");
@@ -78,6 +104,17 @@ export class SignerBalanceService implements OnModuleInit {
       new Gauge({
         name: "settler_signer_sol_lamports",
         help: "SettlementAuthority signer SOL balance, in lamports. Drives signer-low-sol alert. -1 = unknown (RPC failure).",
+      });
+
+    const existingEvm = register.getSingleMetric(
+      "settler_evm_signer_gas_native",
+    );
+    this.evmGasGauge =
+      (existingEvm as Gauge<"network"> | undefined) ??
+      new Gauge({
+        name: "settler_evm_signer_gas_native",
+        help: "EVM settler signer native gas-token balance, per network (1 = 1 native token, e.g. 1 ETH). Drives the EVM signer-low-gas alert.",
+        labelNames: ["network"] as const,
       });
   }
 
@@ -99,9 +136,18 @@ export class SignerBalanceService implements OnModuleInit {
   }
 
   /**
-   * Public for tests + first-pass at boot. Idempotent.
+   * Public for tests + first-pass at boot. Idempotent. Runs the Solana signer
+   * check (unchanged) AND the per-network EVM signer gas-balance check. The two
+   * are independent: an EVM RPC failure does not affect the Solana result, and
+   * a missing Solana keypair (EVM-only deploy) does not skip the EVM checks.
    */
   async poll(): Promise<void> {
+    await this.pollSolana();
+    await this.pollEvmSigners();
+  }
+
+  /** Solana SettlementAuthority signer SOL-balance poll (unchanged). */
+  private async pollSolana(): Promise<void> {
     let signer: PublicKey;
     try {
       signer = this.secrets.keypair.publicKey;
@@ -150,6 +196,118 @@ export class SignerBalanceService implements OnModuleInit {
         `signer balance poll failed: ${this._lastError} (gauge unchanged)`,
       );
     }
+  }
+
+  /**
+   * Poll the native gas-token balance of each ENABLED EVM signer (multi-evm WP
+   * T4). Per-network isolated: a network with no loaded signer (read-only
+   * deploy) or an RPC failure is logged and skipped, never thrown — one chain's
+   * problem must not abort the others or the Solana check.
+   */
+  private async pollEvmSigners(): Promise<void> {
+    let networks: string[];
+    try {
+      networks = this.adapters.listEnabledNetworks();
+    } catch {
+      // Adapters not bootstrapped yet (cold-boot race) — the cron will retry.
+      return;
+    }
+
+    for (const network of networks) {
+      let adapter;
+      try {
+        adapter = this.adapters.getAdapter(network);
+      } catch {
+        continue;
+      }
+      if (adapter.descriptor.vm !== "evm") continue;
+      if (typeof adapter.getNativeBalance !== "function") continue;
+
+      let account: { address: string };
+      try {
+        account = this.adapters.getEvmAccount(network);
+      } catch {
+        // Read-only deploy (no EVM signer loaded) — nothing to monitor.
+        this.logger.debug(
+          `[evm-gas] no signer loaded for ${network}; skipping gas-balance poll`,
+        );
+        continue;
+      }
+
+      try {
+        const wei = await adapter.getNativeBalance(account.address);
+        const warnWei = this.resolveEvmGasThreshold(network, "WARN");
+        const critWei = this.resolveEvmGasThreshold(network, "CRIT");
+        const status: EvmSignerStatus =
+          wei < critWei ? "crit" : wei < warnWei ? "warn" : "ok";
+        this._evm.set(network, { wei, status });
+
+        const native = Number(wei) / Number(WEI_PER_NATIVE);
+        this.evmGasGauge.set({ network }, native);
+
+        const detail = `${native.toFixed(6)} native (wei=${wei})`;
+        if (status === "crit") {
+          this.logger.error(
+            `[evm-gas] ${network} signer ${account.address} CRITICAL: ${detail} — below ${critWei} wei`,
+          );
+        } else if (status === "warn") {
+          this.logger.warn(
+            `[evm-gas] ${network} signer ${account.address} LOW: ${detail} — below ${warnWei} wei`,
+          );
+        } else {
+          this.logger.log(
+            `[evm-gas] ${network} signer ${account.address} balance: ${detail}`,
+          );
+        }
+      } catch (err) {
+        // RPC failure for this chain — log and continue; the gauge keeps its
+        // last value and alerts use an evaluation window.
+        this.logger.warn(
+          `[evm-gas] balance poll failed for ${network}: ${
+            (err as Error).message ?? String(err)
+          }`,
+        );
+      }
+    }
+  }
+
+  /**
+   * Resolve an EVM gas-balance threshold (wei) for a network. Precedence:
+   *   1. per-chain env  PACT_EVM_GAS_<WARN|CRIT>_WEI_<NETWORK_UPPER>
+   *   2. global env     PACT_EVM_GAS_<WARN|CRIT>_WEI
+   *   3. baked default  EVM_GAS_WARN_WEI / EVM_GAS_CRIT_WEI
+   * where NETWORK_UPPER = network.replace(/-/g, "_").toUpperCase() (matching the
+   * chain-scoped env convention from WP T1).
+   */
+  private resolveEvmGasThreshold(
+    network: string,
+    kind: "WARN" | "CRIT",
+  ): bigint {
+    const suffix = network.replace(/-/g, "_").toUpperCase();
+    const globalKey = `PACT_EVM_GAS_${kind}_WEI`;
+    const raw =
+      this.config.get<string>(`${globalKey}_${suffix}`) ??
+      this.config.get<string>(globalKey);
+    if (raw) {
+      try {
+        return BigInt(raw);
+      } catch {
+        this.logger.warn(
+          `[evm-gas] invalid ${globalKey}_${suffix}/${globalKey}="${raw}"; using default`,
+        );
+      }
+    }
+    return kind === "WARN" ? EVM_GAS_WARN_WEI : EVM_GAS_CRIT_WEI;
+  }
+
+  /** Last observed EVM signer gas state for a network, or undefined if untracked. */
+  getEvmSignerState(network: string): EvmSignerState | undefined {
+    return this._evm.get(network);
+  }
+
+  /** Networks for which an EVM signer gas balance has been recorded. */
+  listEvmSignerNetworks(): string[] {
+    return [...this._evm.keys()];
   }
 
   /** Last observed balance, in lamports. -1 if never successfully polled. */
