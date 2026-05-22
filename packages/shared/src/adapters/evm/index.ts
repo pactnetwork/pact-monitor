@@ -369,7 +369,10 @@ export class EvmAdapter implements ChainAdapter {
       agent: e.agent as Address,
       endpointSlug: input.slug,
       premium: e.premiumBaseUnits,
-      refund: e.outcome === "breach" ? e.premiumBaseUnits : 0n,
+      // Encode the exact refund supplied by the wrap classifier (finding 6),
+      // not the premium. Mirrors the on-chain handler, which pays the wire
+      // refund value verbatim. Defaults to 0 when unset (e.g. a clean call).
+      refund: e.refundBaseUnits ?? 0n,
       latencyMs: e.latencyMs,
       breach: e.outcome === "breach",
       feeRecipientCountHint: e.feeRecipientCountHint,

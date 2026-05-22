@@ -52,6 +52,15 @@ export interface SettleBatchInput {
     agent: string;
     premiumBaseUnits: bigint;
     outcome: "ok" | "breach";
+    /**
+     * Exact refund (base units) supplied by the wrap classifier. The on-chain
+     * handler pays this value verbatim (Solana settle_batch.rs uses the wire
+     * `refund_lamports` field directly, clamped only by the exposure cap and
+     * pool balance — it is NOT derived from premium or gated by breach). Both
+     * adapters MUST encode this exact value. Optional for backward compat;
+     * defaults to 0 (e.g. a successful call refunds nothing).
+     */
+    refundBaseUnits?: bigint;
     feeRecipientCountHint: number;
     /**
      * Per-call latency in ms. Written verbatim into the on-chain CallRecord.

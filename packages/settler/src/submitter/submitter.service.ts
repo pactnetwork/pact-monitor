@@ -242,6 +242,13 @@ export class SubmitterService implements OnModuleInit {
           agent: String(d["agentPubkey"] ?? ""),
           premiumBaseUnits: BigInt(d["premiumLamports"] as string | number),
           outcome: breachFromOutcome(outcome) ? ("breach" as const) : ("ok" as const),
+          // Thread the exact refund from the wire (finding 6). The adapters
+          // previously encoded refund = premium on breach, which is wrong on
+          // both counts vs. the on-chain handler (which pays the supplied
+          // refund verbatim, not the premium).
+          refundBaseUnits: BigInt(
+            (d["refundLamports"] as string | number | undefined) ?? "0",
+          ),
           feeRecipientCountHint: feeConfig.feeRecipientCount,
           latencyMs: Number(d["latencyMs"] ?? 0),
         };
