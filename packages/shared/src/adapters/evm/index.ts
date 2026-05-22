@@ -294,22 +294,31 @@ export class EvmAdapter implements ChainAdapter {
       feeRecipients: ReadonlyArray<{ kind: number; destination: Address; bps: number }>;
     }>;
 
-    // 5. Project to EndpointConfigSnapshot
-    const snapshots = configs.map((c, i) => ({
-      slug: slugs[i],
-      // Protocol-wide authority on EVM (no per-endpoint authority field)
-      authority: authorityAddr,
-      // EVM has no per-endpoint maxTotalFeeBps field; compute from feeRecipients sum.
-      // This is the actual total bps allocated, which serves as a conservative bound.
-      maxTotalFeeBps: c.feeRecipients.reduce((s, f) => s + Number(f.bps), 0),
-      feeRecipients: c.feeRecipients.map((f) => ({
-        recipient: f.destination,
-        bps: Number(f.bps),
-        kind: Number(f.kind),
-      })),
-      paused: c.paused,
-      raw: c,
-    }));
+    // 5. Project to EndpointConfigSnapshot. Slice feeRecipients to the on-chain
+    //    feeRecipientCount first so the zero-padded FeeRecipient[8] tail is
+    //    dropped (the contract only pays the first feeRecipientCount entries),
+    //    mirroring getEndpoint() — otherwise maxTotalFeeBps would be summed over
+    //    padding the settler never pays (review #226 F4).
+    const snapshots = configs.map((c, i) => {
+      const count = Number(c.feeRecipientCount);
+      const recipients = c.feeRecipients.slice(0, count);
+      return {
+        slug: slugs[i],
+        // Protocol-wide authority on EVM (no per-endpoint authority field)
+        authority: authorityAddr,
+        // EVM has no per-endpoint maxTotalFeeBps field; compute from the paid
+        // feeRecipients sum. This is the actual total bps allocated, which
+        // serves as a conservative bound.
+        maxTotalFeeBps: recipients.reduce((s, f) => s + Number(f.bps), 0),
+        feeRecipients: recipients.map((f) => ({
+          recipient: f.destination,
+          bps: Number(f.bps),
+          kind: Number(f.kind),
+        })),
+        paused: c.paused,
+        raw: c,
+      };
+    });
     return { snapshots, scannedToBlock: finalizedNumber };
   }
 

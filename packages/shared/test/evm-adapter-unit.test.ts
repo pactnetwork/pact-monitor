@@ -505,4 +505,50 @@ describe("EvmAdapter.readEndpointConfigsFrom (multi-evm WP T3)", () => {
     );
     expect(res.snapshots).toHaveLength(2);
   });
+
+  // Review #226 F4: readEndpointConfigsFrom must slice feeRecipients to the
+  // on-chain feeRecipientCount before projecting, exactly like getEndpoint
+  // does — otherwise the zero-padded FeeRecipient[8] tail leaks into the
+  // snapshot and maxTotalFeeBps is computed over entries the settler never
+  // pays. The padded tail is given NON-zero bps here so a missing slice
+  // corrupts BOTH the recipient count AND the maxTotalFeeBps sum.
+  it("slices feeRecipients to feeRecipientCount, dropping the padded [8] tail (F4)", async () => {
+    const adapter = new EvmAdapter({ ...BASE_OPTS, deploymentBlock: 0n });
+    mockReadContract.mockResolvedValue(AUTHORITY);
+    mockGetBlock.mockResolvedValue({ number: 5_000n });
+    mockGetContractEvents.mockResolvedValue([{ args: { slug: NEW_SLUG } }]);
+
+    const paddedCfg = {
+      ...cfg,
+      feeRecipientCount: 2,
+      feeRecipients: [
+        {
+          kind: 0,
+          destination:
+            "0xTreasuryAddr000000000000000000000000001" as `0x${string}`,
+          bps: 300,
+        },
+        {
+          kind: 1,
+          destination:
+            "0xAffiliateAddr00000000000000000000000001" as `0x${string}`,
+          bps: 200,
+        },
+        ...Array.from({ length: 6 }, () => ({
+          kind: 0,
+          destination:
+            "0x0000000000000000000000000000000000000000" as `0x${string}`,
+          bps: 100,
+        })),
+      ],
+    };
+    mockMulticall.mockResolvedValue([paddedCfg]);
+
+    const res = await adapter.readEndpointConfigsFrom!(0n);
+
+    expect(res.snapshots).toHaveLength(1);
+    expect(res.snapshots[0].feeRecipients).toHaveLength(2);
+    // sum of the first 2 (300 + 200), NOT 300 + 200 + 6*100 = 1100
+    expect(res.snapshots[0].maxTotalFeeBps).toBe(500);
+  });
 });
