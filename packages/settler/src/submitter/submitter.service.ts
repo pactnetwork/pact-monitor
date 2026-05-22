@@ -231,10 +231,7 @@ export class SubmitterService implements OnModuleInit {
       signer,
       events: batch.messages.map((m) => {
         const d = m.data as Record<string, unknown>;
-        const callId = parseCallId(String(d["callId"] ?? "")).reduce(
-          (acc, b) => acc + b.toString(16).padStart(2, "0"),
-          "",
-        );
+        const callId = formatAdapterCallId(vm, String(d["callId"] ?? ""));
         const outcome = String(d["outcome"] ?? "ok");
         return {
           callId,
@@ -626,6 +623,22 @@ function sleep(ms: number): Promise<void> {
  */
 function breachFromOutcome(outcome: string): boolean {
   return outcome !== "ok";
+}
+
+/**
+ * Format a wire call id for the adapter path. Both VMs derive the canonical
+ * 16-byte hex from the UUID/hex call id. The EVM calldata encoder
+ * (`encodeSettleBatch` -> `asBytes16`) requires a `0x`-prefixed bytes16, while
+ * the Solana adapter consumes raw hex (`Buffer.from(callId, "hex")`). Emitting
+ * raw hex on the EVM path was finding 2 — every adapter-path EVM settle threw
+ * in the encoder before gas estimation.
+ */
+function formatAdapterCallId(vm: "solana" | "evm", callId: string): string {
+  const hex = parseCallId(callId).reduce(
+    (acc, b) => acc + b.toString(16).padStart(2, "0"),
+    "",
+  );
+  return vm === "evm" ? `0x${hex}` : hex;
 }
 
 /**

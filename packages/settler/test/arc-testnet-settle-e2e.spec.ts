@@ -123,7 +123,10 @@ async function fakeEvmRequest(args: {
     case "eth_chainId":
       return toHexQty(5042002n);
     case "eth_blockNumber":
-      return toHexQty(1000n);
+      // Far enough ahead of the settle receipt block (1000) that the
+      // EvmAdapter finality wait-loop sees depth >= finalityBlocks and returns
+      // on the first poll instead of spinning.
+      return toHexQty(1_000_000n);
     case "eth_getBlockByNumber":
       return {
         number: toHexQty(1000n),
