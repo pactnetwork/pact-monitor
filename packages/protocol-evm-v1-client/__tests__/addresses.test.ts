@@ -27,9 +27,9 @@ describe("addresses — per-chain deployment registry (D-B)", () => {
     expect(() => getDeployment(999999)).toThrow();
   });
 
-  it("resolveDeployment overlays env-provided contract addresses", () => {
+  it("resolveDeployment overlays env-provided contract addresses (legacy global keys)", () => {
     const addr = "0x1111111111111111111111111111111111111111";
-    const r = resolveDeployment(ARC_TESTNET, {
+    const r = resolveDeployment(ARC_TESTNET, "arc-testnet", {
       PACT_EVM_REGISTRY: addr,
       PACT_EVM_POOL: addr,
       PACT_EVM_SETTLER: addr,
@@ -44,7 +44,70 @@ describe("addresses — per-chain deployment registry (D-B)", () => {
 
   it("resolveDeployment rejects a malformed env address", () => {
     expect(() =>
-      resolveDeployment(ARC_TESTNET, { PACT_EVM_REGISTRY: "not-an-address" }),
+      resolveDeployment(ARC_TESTNET, "arc-testnet", {
+        PACT_EVM_REGISTRY: "not-an-address",
+      }),
     ).toThrow();
+  });
+});
+
+// Multi-EVM WP T1: deployment env keys are chain-scoped so two EVM chains in
+// one fleet can carry distinct overrides. Precedence per kind:
+//   1. per-chain key  PACT_EVM_<KIND>_<NETWORK_UPPER>
+//   2. legacy global  PACT_EVM_<KIND>
+//   3. baked DEPLOYMENTS value
+// where NETWORK_UPPER = network.replace(/-/g, "_").toUpperCase() (matches the
+// adapters.service.ts keypair/rpc convention).
+describe("resolveDeployment — chain-scoped env overlay (multi-evm WP T1)", () => {
+  const PER_CHAIN = "0x1111111111111111111111111111111111111111";
+  const GLOBAL = "0x2222222222222222222222222222222222222222";
+  // Baked Arc Testnet WP-07 addresses (checksummed in DEPLOYMENTS).
+  const BAKED_REGISTRY = "0x056BAC33546b5b51B8CF6f332379651f715B889C";
+  const BAKED_POOL = "0xa6135d9C6BFA0F256B9DeBa10d76C7698329aFdE";
+  const BAKED_SETTLER = "0xe461CE50ef53BFC10945B101FB94b11Ec5eB591f";
+
+  it("(a) per-chain key wins over the legacy global key", () => {
+    const r = resolveDeployment(ARC_TESTNET, "arc-testnet", {
+      PACT_EVM_REGISTRY_ARC_TESTNET: PER_CHAIN,
+      PACT_EVM_REGISTRY: GLOBAL,
+    });
+    expect(r.registry).toBe(PER_CHAIN);
+  });
+
+  it("(b) legacy global key still applies when no per-chain key is set", () => {
+    const r = resolveDeployment(ARC_TESTNET, "arc-testnet", {
+      PACT_EVM_REGISTRY: GLOBAL,
+      PACT_EVM_POOL: GLOBAL,
+      PACT_EVM_SETTLER: GLOBAL,
+    });
+    expect(r.registry).toBe(GLOBAL);
+    expect(r.pool).toBe(GLOBAL);
+    expect(r.settler).toBe(GLOBAL);
+  });
+
+  it("(c) baked DEPLOYMENTS value used when neither per-chain nor global key is set", () => {
+    const r = resolveDeployment(ARC_TESTNET, "arc-testnet", {});
+    expect(r.registry).toBe(BAKED_REGISTRY);
+    expect(r.pool).toBe(BAKED_POOL);
+    expect(r.settler).toBe(BAKED_SETTLER);
+  });
+
+  it("scopes the suffix by network name (dashes -> underscores, uppercased)", () => {
+    const r = resolveDeployment(ARC_TESTNET, "arc-testnet", {
+      // Wrong-suffix key must be ignored; only the correctly-derived suffix wins.
+      PACT_EVM_REGISTRY_ARCTESTNET: GLOBAL,
+      PACT_EVM_REGISTRY_ARC_TESTNET: PER_CHAIN,
+    });
+    expect(r.registry).toBe(PER_CHAIN);
+  });
+
+  it("resolves per-kind independently (per-chain registry + global pool + baked settler)", () => {
+    const r = resolveDeployment(ARC_TESTNET, "arc-testnet", {
+      PACT_EVM_REGISTRY_ARC_TESTNET: PER_CHAIN,
+      PACT_EVM_POOL: GLOBAL,
+    });
+    expect(r.registry).toBe(PER_CHAIN);
+    expect(r.pool).toBe(GLOBAL);
+    expect(r.settler).toBe(BAKED_SETTLER);
   });
 });
