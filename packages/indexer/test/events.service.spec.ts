@@ -28,16 +28,23 @@ interface PrismaMockOptions {
 function makePrismaMock(opts: PrismaMockOptions = {}): any {
   const captured: CapturedCall[] = [];
   const callRows = new Map<string, any>();
+  // Fake Postgres store for SettlementRecipientShare rows so the
+  // network-scoped idempotency check (review #226 F3) is observable: a
+  // same-signature batch on a different network must NOT find the first
+  // network's rows.
+  const recipientShareRows: any[] = [];
 
   const mock: any = {
     captured,
     callRows,
+    recipientShareRows,
     // EventsService runs everything inside a transaction. Our mock
     // immediately invokes the callback with `tx === self`. If the callback
     // throws, the captured ops are cleared to model rollback semantics.
     $transaction: jest.fn(async (cb: (tx: any) => Promise<any>) => {
       const snapshot = captured.length;
       const callsSnapshot = new Map(callRows);
+      const shareRowsSnapshot = recipientShareRows.length;
       try {
         return await cb(mock);
       } catch (e) {
@@ -45,6 +52,7 @@ function makePrismaMock(opts: PrismaMockOptions = {}): any {
         captured.length = snapshot;
         callRows.clear();
         for (const [k, v] of callsSnapshot.entries()) callRows.set(k, v);
+        recipientShareRows.length = shareRowsSnapshot;
         throw e;
       }
     }),
@@ -56,13 +64,20 @@ function makePrismaMock(opts: PrismaMockOptions = {}): any {
       }),
     },
     settlementRecipientShare: {
+      // count honors the `where` filter against stored rows so network-scoped
+      // idempotency (F3) is observable. A stored row matches when EVERY field
+      // in `where` equals the row's value — so a sig-only filter matches
+      // across networks (the bug), while a (network, sig) filter does not.
       count: jest.fn(async (args: any) => {
         captured.push({
           table: "settlementRecipientShare",
           op: "count",
           args,
         });
-        return 0; // pretend we have not stored shares yet
+        const where = args.where ?? {};
+        return recipientShareRows.filter((r) =>
+          Object.entries(where).every(([k, v]) => r[k] === v),
+        ).length;
       }),
       createMany: jest.fn(async (args: any) => {
         captured.push({
@@ -70,6 +85,7 @@ function makePrismaMock(opts: PrismaMockOptions = {}): any {
           op: "createMany",
           args,
         });
+        for (const row of args.data) recipientShareRows.push(row);
         return { count: args.data.length };
       }),
     },
@@ -1076,6 +1092,145 @@ describe("EventsService", () => {
     const res = await svc.ingest(dto);
     expect(res.accepted).toBe(1);
     assertAllRowsUnderNetwork(prisma, "solana-devnet");
+  });
+
+  // Finding F2 (review #226) — dto.network and per-call call.network must not
+  // diverge. The batch resolves ONE network = dto.network ?? calls[0].network
+  // ?? solana-devnet; any call that explicitly resolves to a DIFFERENT network
+  // is a malformed/replayed payload that would split a single settlement's
+  // accounting across two networks. It must 400 with zero rows written.
+  it("F2: a call whose network diverges from dto.network is rejected 400 with no rows", async () => {
+    const dto = {
+      signature: "sigDiverge",
+      network: "solana-devnet",
+      batchSize: 1,
+      totalPremiumsLamports: "1000",
+      totalRefundsLamports: "0",
+      ts: new Date().toISOString(),
+      calls: [
+        {
+          callId: "diverge-1",
+          network: "arc-testnet", // diverges from dto.network
+          agentPubkey: "AgentP11111111111111111111111111111111111111",
+          endpointSlug: "helius",
+          premiumLamports: "1000",
+          refundLamports: "0",
+          latencyMs: 100,
+          outcome: "ok",
+          ts: new Date().toISOString(),
+          settledAt: new Date().toISOString(),
+          signature: "sigDiverge",
+          shares: [],
+        },
+      ],
+    } as SettlementEventDto;
+
+    await expect(svc.ingest(dto)).rejects.toBeInstanceOf(BadRequestException);
+
+    // Rejection happens before the transaction opens — NO rows of any kind.
+    expect(prisma.captured).toHaveLength(0);
+  });
+
+  // Finding F2 consistency: dto.network set, call.network omitted. The call
+  // must INHERIT the resolved batch network so the Call row lands under the
+  // same network as the aggregates. Previously the Call row defaulted to
+  // solana-devnet while aggregates landed under dto.network (the "vice versa"
+  // split in the finding).
+  it("F2: a call with no explicit network inherits the resolved batch network for every row", async () => {
+    const dto: SettlementEventDto = {
+      signature: "sigInherit",
+      network: "arc-testnet",
+      batchSize: 1,
+      totalPremiumsLamports: "1000",
+      totalRefundsLamports: "0",
+      ts: new Date().toISOString(),
+      calls: [
+        {
+          callId: "inherit-1",
+          // network omitted on purpose -> must inherit arc-testnet
+          agentPubkey: "0xAgent000000000000000000000000000000000001",
+          endpointSlug: "helius",
+          premiumLamports: "1000",
+          refundLamports: "0",
+          latencyMs: 100,
+          outcome: "ok",
+          ts: new Date().toISOString(),
+          settledAt: new Date().toISOString(),
+          signature: "sigInherit",
+          shares: [
+            {
+              kind: 0,
+              pubkey: "0xTreasury0000000000000000000000000000000001",
+              amountLamports: "100",
+            },
+          ],
+        },
+      ],
+    };
+
+    const res = await svc.ingest(dto);
+    expect(res.accepted).toBe(1);
+    assertAllRowsUnderNetwork(prisma, "arc-testnet");
+  });
+
+  // Finding F3 (review #226) — SettlementRecipientShare idempotency must be
+  // scoped by (network, settlementSig), not signature alone. The same tx/hash
+  // string can legitimately appear on two networks; each must create its OWN
+  // recipient-share + earnings rows instead of the second network's rows being
+  // skipped because the first network already used that signature.
+  it("F3: same signature on two networks creates recipient shares + earnings for BOTH networks", async () => {
+    const makeDto = (network: string, callId: string): SettlementEventDto => ({
+      signature: "sigSharedAcrossNets",
+      network,
+      batchSize: 1,
+      totalPremiumsLamports: "1000",
+      totalRefundsLamports: "0",
+      ts: new Date().toISOString(),
+      calls: [
+        {
+          callId,
+          network,
+          agentPubkey: "AgentP11111111111111111111111111111111111111",
+          endpointSlug: "helius",
+          premiumLamports: "1000",
+          refundLamports: "0",
+          latencyMs: 100,
+          outcome: "ok",
+          ts: new Date().toISOString(),
+          settledAt: new Date().toISOString(),
+          signature: "sigSharedAcrossNets",
+          shares: [
+            {
+              kind: 0,
+              pubkey: "TreasuryPubkey11111111111111111111111111111",
+              amountLamports: "100",
+            },
+          ],
+        },
+      ],
+    });
+
+    const r1 = await svc.ingest(makeDto("solana-devnet", "shared-sol"));
+    expect(r1.accepted).toBe(1);
+    const r2 = await svc.ingest(makeDto("arc-testnet", "shared-arc"));
+    expect(r2.accepted).toBe(1);
+
+    // Each network created its OWN SettlementRecipientShare batch.
+    const shareNetworks = prisma.captured
+      .filter(
+        (c: CapturedCall) =>
+          c.table === "settlementRecipientShare" && c.op === "createMany",
+      )
+      .flatMap((c: CapturedCall) => c.args.data.map((d: any) => d.network))
+      .sort();
+    expect(shareNetworks).toEqual(["arc-testnet", "solana-devnet"]);
+
+    // Each network created its OWN RecipientEarnings row.
+    const earningsNetworks = prisma.captured
+      .filter((c: CapturedCall) => c.table === "recipientEarnings")
+      .map((c: CapturedCall) => c.args.create.network)
+      .sort();
+    expect(earningsNetworks).toEqual(["arc-testnet", "solana-devnet"]);
   });
 });
 

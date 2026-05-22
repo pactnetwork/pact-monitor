@@ -77,6 +77,27 @@ export class EventsService {
       }
     }
 
+    // Finding F2 (review #226): resolve ONE network for the whole batch and
+    // reject the payload if any call explicitly resolves to a different
+    // network. dto.network and per-call call.network were previously allowed
+    // to diverge, which could split a single settlement's accounting across
+    // two networks (Call under one network, the Settlement / Endpoint /
+    // PoolState / SettlementRecipientShare / RecipientEarnings aggregates under
+    // another). We resolve from dto.network, falling back to the first call's
+    // network then solana-devnet, and use this single value for EVERY row.
+    const batchNetwork =
+      dto.network ?? dto.calls[0]?.network ?? "solana-devnet";
+    for (const call of dto.calls) {
+      const callNetwork = call.network ?? batchNetwork;
+      if (callNetwork !== batchNetwork) {
+        throw new BadRequestException(
+          `Batch network is ${batchNetwork} but call ${call.callId} resolves ` +
+            `to ${callNetwork}; a single batch must settle under one network ` +
+            `(review #226 F2). See events.service.ts.`,
+        );
+      }
+    }
+
     // Deduplicate + lex-sort all FK targets touched by this batch. Sorting is
     // load-bearing: it gives concurrent ingest transactions a deterministic
     // lock-acquisition order, so two settlers writing the same Agent / Endpoint
@@ -123,12 +144,9 @@ export class EventsService {
         });
       }
 
-      // WP-MN-03a: network is stamped per-call; the batch-level network is the
-      // fallback for FK targets (Endpoint, PoolState) which are keyed on
-      // (network, slug). Use the batch's resolved network for all FK-prep
-      // upserts — individual call rows carry their own per-call network.
-      const batchNetwork = dto.network ?? "solana-devnet";
-
+      // `batchNetwork` is the single F2-resolved network for this batch
+      // (computed + divergence-checked above). FK targets (Endpoint, PoolState)
+      // are keyed on (network, slug); every row below uses this one value.
       for (const slug of sortedEndpointSlugs) {
         // Lazy-create with paused=true + zeroed business fields. Admin must
         // overwrite these via on-chain endpoint registration ingestion before
@@ -160,7 +178,7 @@ export class EventsService {
       // silently. Only successfully-inserted calls drive aggregate updates.
       const insertedCalls: WrapCallEventDto[] = [];
       for (const call of dto.calls) {
-        const inserted = await this.tryInsertCall(tx, call);
+        const inserted = await this.tryInsertCall(tx, call, batchNetwork);
         if (inserted) insertedCalls.push(call);
       }
 
@@ -267,8 +285,12 @@ export class EventsService {
       // SettlementRecipientShare is keyed at the batch level (per-batch row
       // per recipient) — we sum each (kind, pubkey) across the batch's calls.
       const aggregatedShares = Array.from(perRecipient.values());
+      // Finding F3 (review #226): scope the idempotency check by network too.
+      // Settlement + recipient-share rows are network-scoped, so the same
+      // tx/hash string can legitimately appear on two networks — checking
+      // settlementSig alone would skip the second network's shares + earnings.
       const existingShares = await tx.settlementRecipientShare.count({
-        where: { settlementSig: dto.signature },
+        where: { network: batchNetwork, settlementSig: dto.signature },
       });
       if (existingShares === 0 && aggregatedShares.length > 0) {
         await tx.settlementRecipientShare.createMany({
@@ -346,14 +368,16 @@ export class EventsService {
   private async tryInsertCall(
     tx: Prisma.TransactionClient,
     call: WrapCallEventDto,
+    network: string,
   ): Promise<boolean> {
     const { breach, breachReason } = outcomeToBreach(call.outcome);
-    const callNetwork = call.network ?? "solana-devnet";
+    // F2: the Call row uses the single batch-resolved network passed in, not
+    // a per-call default — the caller has already rejected any divergence.
     try {
       await tx.call.create({
         data: {
           callId: call.callId,
-          network: callNetwork,
+          network,
           agentPubkey: call.agentPubkey,
           endpointSlug: call.endpointSlug,
           premiumLamports: BigInt(call.premiumLamports),
