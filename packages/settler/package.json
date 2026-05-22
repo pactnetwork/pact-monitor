@@ -43,6 +43,7 @@
     "@nestjs/testing": "^10.4.0",
     "@swc/core": "^1.7.26",
     "@types/node": "^22.0.0",
+    "hono": "^4.7.0",
     "ts-node": "^10.9.2",
     "tsconfig-paths": "^4.2.0",
     "typescript": "^5.7.3",
