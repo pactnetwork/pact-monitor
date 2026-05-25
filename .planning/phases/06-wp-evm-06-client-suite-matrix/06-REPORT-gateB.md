@@ -66,7 +66,7 @@ with no installed node_modules in this environment — **PRE-EXISTING and
 unrelated to WP-EVM-06**: `git log fd18f4d..HEAD -- packages/dummy-upstream`
 = 0 commits (no WP-06 commit touched it). The new
 `@pact-network/protocol-evm-v1-client` builds clean (exit 0) and the sibling
-`@pact-network/protocol-v1-client` still builds clean; `pnpm install`
+`@q3labs/pact-protocol-v1-client` still builds clean; `pnpm install`
 recognized the new workspace member. Workspace integration for the WP-06
 deliverable is intact; the dummy-upstream gap is not a regression and not in
 scope to fix here.

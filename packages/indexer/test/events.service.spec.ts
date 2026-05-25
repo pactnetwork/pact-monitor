@@ -3,6 +3,9 @@ import { BadRequestException } from "@nestjs/common";
 import { Prisma } from "@pact-network/db";
 import { EventsService } from "../src/events/events.service";
 import { PrismaService } from "../src/prisma/prisma.service";
+import { RefundDeliveryService } from "../src/refund-delivery/refund-delivery.service";
+
+const deliveryMock = { enqueue: jest.fn() };
 import {
   outcomeToBreach,
   SettlementEventDto,
@@ -191,6 +194,7 @@ describe("EventsService", () => {
       providers: [
         EventsService,
         { provide: PrismaService, useValue: prisma },
+        { provide: RefundDeliveryService, useValue: deliveryMock },
       ],
     }).compile();
     svc = mod.get(EventsService);
@@ -596,6 +600,7 @@ describe("EventsService", () => {
       providers: [
         EventsService,
         { provide: PrismaService, useValue: failingPrisma },
+        { provide: RefundDeliveryService, useValue: deliveryMock },
       ],
     }).compile();
     const failingSvc = mod.get(EventsService);
@@ -1280,6 +1285,7 @@ describe("EventsService.ingest — (network, callId) dedup regression for EVM re
       providers: [
         EventsService,
         { provide: PrismaService, useValue: prisma },
+        { provide: RefundDeliveryService, useValue: deliveryMock },
       ],
     }).compile();
     svc = mod.get(EventsService);

@@ -1,5 +1,5 @@
 /**
- * SolanaAdapter — passthrough wrapper over @pact-network/protocol-v1-client
+ * SolanaAdapter — passthrough wrapper over @q3labs/pact-protocol-v1-client
  * + @pact-network/wrap. Byte-identical behavior to direct calls (proven by
  * the parity test suite in Task 4).
  *
@@ -23,7 +23,7 @@ import {
   getTreasuryPda,
   PROGRAM_ID,
   slugBytes,
-} from "@pact-network/protocol-v1-client";
+} from "@q3labs/pact-protocol-v1-client";
 import {
   createDefaultBalanceCheck,
   type BalanceCheck,

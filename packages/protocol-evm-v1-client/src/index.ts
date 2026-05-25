@@ -2,7 +2,7 @@
  * `@pact-network/protocol-evm-v1-client` — TypeScript client (viem) for the
  * Pact Network EVM v1 protocol contracts on Circle Arc.
  *
- * Sibling to `@pact-network/protocol-v1-client` (Solana); mirrors its module
+ * Sibling to `@q3labs/pact-protocol-v1-client` (Solana); mirrors its module
  * map (design spec §5):
  * - PDA derivers -> deployed addresses per chain (`addresses.ts`)
  * - instruction builders -> viem calldata builders (`encode.ts`)

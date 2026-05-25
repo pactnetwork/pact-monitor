@@ -5,7 +5,7 @@
  *
  * EVM chains are sourced from `program-evm/protocol-evm-v1/config/chains.json`
  * (WP-MN-01's single source of truth). Solana entries are hand-coded from
- * `@pact-network/protocol-v1-client` constants.
+ * `@q3labs/pact-protocol-v1-client` constants.
  */
 
 import { readFileSync } from "node:fs";
@@ -13,7 +13,7 @@ import { join } from "node:path";
 import {
   USDC_MINT_DEVNET,
   USDC_MINT_MAINNET,
-} from "@pact-network/protocol-v1-client";
+} from "@q3labs/pact-protocol-v1-client";
 import type { ChainDescriptor } from "./chain-adapter";
 
 const _evmChainsPath = join(

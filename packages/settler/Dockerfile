@@ -11,7 +11,7 @@ COPY packages/wrap/package.json packages/wrap/
 # Install all workspace deps for settler + its workspace deps
 RUN pnpm install --frozen-lockfile \
   --filter @pact-network/settler \
-  --filter @pact-network/protocol-v1-client \
+  --filter @q3labs/pact-protocol-v1-client \
   --filter @pact-network/wrap
 
 # tsconfig.base.json — required because packages/wrap/tsconfig.json
@@ -21,7 +21,7 @@ COPY tsconfig.base.json ./
 
 # Build protocol-v1-client first (settler depends on it), then wrap, then settler
 COPY packages/protocol-v1-client packages/protocol-v1-client
-RUN pnpm --filter @pact-network/protocol-v1-client build
+RUN pnpm --filter @q3labs/pact-protocol-v1-client build
 
 COPY packages/wrap packages/wrap
 RUN pnpm --filter @pact-network/wrap build
@@ -45,7 +45,7 @@ COPY packages/protocol-v1-client/package.json packages/protocol-v1-client/
 COPY packages/wrap/package.json packages/wrap/
 RUN pnpm install --frozen-lockfile --prod \
   --filter @pact-network/settler \
-  --filter @pact-network/protocol-v1-client \
+  --filter @q3labs/pact-protocol-v1-client \
   --filter @pact-network/wrap
 
 COPY --from=builder /app/packages/protocol-v1-client/dist packages/protocol-v1-client/dist

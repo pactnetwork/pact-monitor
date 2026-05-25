@@ -23,7 +23,7 @@
     "@nestjs/platform-express": "^10.4.0",
     "@nestjs/schedule": "^4.1.0",
     "@pact-network/protocol-evm-v1-client": "workspace:*",
-    "@pact-network/protocol-v1-client": "workspace:*",
+    "@q3labs/pact-protocol-v1-client": "workspace:*",
     "@pact-network/shared": "workspace:*",
     "@pact-network/wrap": "workspace:*",
     "@solana/kit": "^2.1.0",

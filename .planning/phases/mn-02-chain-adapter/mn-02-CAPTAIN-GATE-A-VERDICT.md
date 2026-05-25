@@ -8,9 +8,9 @@
 
 ## What captain-proxy checked
 
-1. **R1 sanity — service-side `@pact-network/protocol-v1-client` import-site re-grep.**
+1. **R1 sanity — service-side `@q3labs/pact-protocol-v1-client` import-site re-grep.**
    ```bash
-   grep -rln "from ['\"]@pact-network/protocol-v1-client['\"]" packages/{settler,indexer,market-proxy,wrap,sdk,facilitator,cli}/src/
+   grep -rln "from ['\"]@q3labs/pact-protocol-v1-client['\"]" packages/{settler,indexer,market-proxy,wrap,sdk,facilitator,cli}/src/
    ```
    Returned **9 files**:
 
@@ -33,7 +33,7 @@
 
 2. **R2 sanity — no legacy Anchor crate references in service code.** `grep -rn "pact-insurance" packages/{settler,indexer,market-proxy,wrap,sdk}/src/` returned empty. ✓
 
-3. **R3 sanity — workspace dep direction.** Confirmed: `@pact-network/protocol-v1-client` and `@pact-network/wrap` do NOT depend on `@pact-network/shared`. Adding shared → both as a workspace dep creates no cycle.
+3. **R3 sanity — workspace dep direction.** Confirmed: `@q3labs/pact-protocol-v1-client` and `@pact-network/wrap` do NOT depend on `@pact-network/shared`. Adding shared → both as a workspace dep creates no cycle.
 
 4. **§4.1 interface shape — REV1 compliance.** Confirmed: no `watch()` method, `readEndpointConfigs()` + optional `tailSettlementEvents?()` present, matches arch §3 L2 post-REV1.
 

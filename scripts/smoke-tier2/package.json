@@ -16,7 +16,7 @@
   },
   "dependencies": {
     "@google-cloud/pubsub": "^4.0.0",
-    "@pact-network/protocol-v1-client": "workspace:*",
+    "@q3labs/pact-protocol-v1-client": "workspace:*",
     "@solana/web3.js": "^1.95.0",
     "bs58": "^6.0.0",
     "pg": "^8.13.0"

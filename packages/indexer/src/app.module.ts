@@ -9,6 +9,7 @@ import { OpsModule } from "./ops/ops.module";
 import { SyncModule } from "./sync/sync.module";
 import { AdaptersModule } from "./adapters/adapters.module";
 import { ReorgModule } from "./reorg/reorg.module";
+import { RefundDeliveryModule } from "./refund-delivery/refund-delivery.module";
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { ReorgModule } from "./reorg/reorg.module";
     SyncModule,
     AdaptersModule,
     ReorgModule,
+    RefundDeliveryModule,
   ],
 })
 export class AppModule {}

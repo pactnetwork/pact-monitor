@@ -7,7 +7,7 @@ import {
 import {
   buildPauseProtocolIx,
   getProtocolConfigPda,
-} from "@pact-network/protocol-v1-client";
+} from "@q3labs/pact-protocol-v1-client";
 import { resolveClusterConfig } from "../lib/solana.ts";
 import { parseSecretKeyInput } from "../lib/wallet.ts";
 import type { Envelope } from "../lib/envelope.ts";

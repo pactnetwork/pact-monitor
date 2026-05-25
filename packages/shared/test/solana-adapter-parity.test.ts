@@ -3,7 +3,7 @@ import { Connection, Keypair } from "@solana/web3.js";
 import {
   ENDPOINT_CONFIG_LEN,
   FeeRecipientKind,
-} from "@pact-network/protocol-v1-client";
+} from "@q3labs/pact-protocol-v1-client";
 import type { BalanceCheck } from "@pact-network/wrap";
 import { SolanaAdapter, getChain } from "../src";
 import type { SettleBatchInput } from "../src/chain-adapter";
@@ -18,9 +18,9 @@ const decodeEndpointConfigMock = vi.fn();
 const decodeCoveragePoolMock = vi.fn();
 const decodeTreasuryMock = vi.fn();
 
-vi.mock("@pact-network/protocol-v1-client", async (importOriginal) => {
+vi.mock("@q3labs/pact-protocol-v1-client", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("@pact-network/protocol-v1-client")>();
+    await importOriginal<typeof import("@q3labs/pact-protocol-v1-client")>();
   return {
     ...actual,
     buildSettleBatchIx: (...a: unknown[]) => buildSettleBatchIxMock(...a),

@@ -34,7 +34,7 @@ import {
   TOKEN_PROGRAM_ID,
   deriveAssociatedTokenAccount,
   slugBytes,
-} from "@pact-network/protocol-v1-client";
+} from "@q3labs/pact-protocol-v1-client";
 
 import {
   AGENT_KEYPAIR,

@@ -1,6 +1,6 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { ConfigService } from "@nestjs/config";
-import { ENDPOINT_CONFIG_LEN } from "@pact-network/protocol-v1-client";
+import { ENDPOINT_CONFIG_LEN } from "@q3labs/pact-protocol-v1-client";
 import { PublicKey } from "@solana/web3.js";
 import {
   OnChainSyncService,

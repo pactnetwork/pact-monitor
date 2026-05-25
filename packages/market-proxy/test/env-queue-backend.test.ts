@@ -58,7 +58,7 @@ describe("env schema — redis-streams backend", () => {
     PG_URL: "postgresql://user:pass@host:5432/db",
     RPC_URL: "https://api.devnet.solana.com",
     PROGRAM_ID: "5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5",
-    USDC_MINT: "Gh9ZwEmdLJ8DscKNTkTqPbNwLNNBjuSzaG9Vp2KGtKJr",
+    USDC_MINT: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
     QUEUE_BACKEND: "redis-streams",
     REDIS_URL: "redis://default:secret@redis.railway.internal:6379",
     REDIS_STREAM: "pact-settle-events",

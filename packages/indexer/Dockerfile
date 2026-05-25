@@ -32,7 +32,7 @@ COPY packages/indexer/ ./packages/indexer/
 # Generate Prisma client + build db + build protocol-v1-client (chain-sync
 # imports from its dist/), then build indexer.
 RUN pnpm --filter @pact-network/db build
-RUN pnpm --filter @pact-network/protocol-v1-client build
+RUN pnpm --filter @q3labs/pact-protocol-v1-client build
 RUN pnpm --filter @pact-network/indexer build
 
 FROM node:22-slim
@@ -54,6 +54,11 @@ COPY packages/indexer/package.json ./packages/indexer/
 RUN pnpm install --frozen-lockfile --prod
 
 COPY --from=builder /app/packages/db/dist ./packages/db/dist
+# Prisma schema is needed at runtime ONLY when `prisma migrate deploy` is
+# invoked (devnet on Railway uses a preDeployCommand to run migrations on
+# each deploy; mainnet's Cloud Run CMD never invokes the prisma binary and
+# this directory is dead weight there — additive change, no runtime cost).
+COPY --from=builder /app/packages/db/prisma ./packages/db/prisma
 COPY --from=builder /app/packages/protocol-v1-client/dist ./packages/protocol-v1-client/dist
 COPY --from=builder /app/packages/indexer/dist ./packages/indexer/dist
 # Prisma engine for runtime

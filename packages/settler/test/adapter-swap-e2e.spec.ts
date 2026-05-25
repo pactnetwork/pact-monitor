@@ -23,7 +23,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Keypair, PublicKey } from "@solana/web3.js";
-import { FeeRecipientKind, type EndpointConfig, type CoveragePool, type Treasury } from "@pact-network/protocol-v1-client";
+import { FeeRecipientKind, type EndpointConfig, type CoveragePool, type Treasury } from "@q3labs/pact-protocol-v1-client";
 import { SubmitterService } from "../src/submitter/submitter.service.js";
 import type { AdaptersService } from "../src/adapters/adapters.service.js";
 import type { ConfigService } from "@nestjs/config";
@@ -53,8 +53,8 @@ const decodeCoveragePoolMock = vi.fn();
 const decodeTreasuryMock = vi.fn();
 const buildSettleBatchIxMock = vi.fn();
 
-vi.mock("@pact-network/protocol-v1-client", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@pact-network/protocol-v1-client")>();
+vi.mock("@q3labs/pact-protocol-v1-client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@q3labs/pact-protocol-v1-client")>();
   return {
     ...actual,
     buildSettleBatchIx: (...args: unknown[]) => buildSettleBatchIxMock(...args),
@@ -177,7 +177,7 @@ async function wireStubs(): Promise<{
 }> {
   const programId = new PublicKey("5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5");
   const { getEndpointConfigPda, getCoveragePoolPda, getTreasuryPda, slugBytes } =
-    await import("@pact-network/protocol-v1-client");
+    await import("@q3labs/pact-protocol-v1-client");
   const [heliusEpPda] = getEndpointConfigPda(programId, slugBytes("helius"));
   const [heliusPoolPda] = getCoveragePoolPda(programId, slugBytes("helius"));
   const [treasuryPda] = getTreasuryPda(programId);

@@ -23,7 +23,7 @@ From off-chain spec §5 (REV1): the indexer's `on-chain-sync` module is **only**
 
 ### 2.1 `packages/settler/src/submitter/submitter.service.ts`
 
-`@pact-network/protocol-v1-client` imports at lines 49–69 (per `grep`):
+`@q3labs/pact-protocol-v1-client` imports at lines 49–69 (per `grep`):
 - `sendAndConfirmTransaction` from `@solana/web3.js` (not the client, but the broadcast primitive)
 - `buildSettleBatchIx` — settle-batch instruction builder
 - `decodeCoveragePool`, `decodeEndpointConfig` — state decoders
@@ -45,7 +45,7 @@ Concrete call sites the adapter must subsume:
 
 ### 2.2 `packages/indexer/src/sync/on-chain-sync.service.ts`
 
-`@pact-network/protocol-v1-client` imports at L9–12:
+`@q3labs/pact-protocol-v1-client` imports at L9–12:
 - `decodeEndpointConfig`, `EndpointConfig` (type), `ENDPOINT_CONFIG_LEN`, `PROGRAM_ID`.
 
 Concrete call sites:
@@ -54,7 +54,7 @@ Concrete call sites:
 
 ### 2.3 `packages/market-proxy/src/lib/balance.ts`
 
-**Does NOT depend on `@pact-network/protocol-v1-client`.** Uses `@pact-network/wrap` `createDefaultBalanceCheck` (from `packages/wrap/src/balanceCheck.ts`) which speaks plain Solana JSON-RPC via `fetch` (no SDK dep in the hot path). A lazy production resolver in `balance.ts:58–69` uses `@solana/web3.js` + `@solana/spl-token` to compute the ATA.
+**Does NOT depend on `@q3labs/pact-protocol-v1-client`.** Uses `@pact-network/wrap` `createDefaultBalanceCheck` (from `packages/wrap/src/balanceCheck.ts`) which speaks plain Solana JSON-RPC via `fetch` (no SDK dep in the hot path). A lazy production resolver in `balance.ts:58–69` uses `@solana/web3.js` + `@solana/spl-token` to compute the ATA.
 
 The `BalanceCheckResult` shape (`packages/wrap/src/balanceCheck.ts:18–25`) is `{ eligible: true, ataBalance, allowance } | { eligible: false, reason, ataBalance?, allowance? }` with reasons `insufficient_balance | insufficient_allowance | no_ata`.
 
@@ -62,7 +62,7 @@ The `BalanceCheckResult` shape (`packages/wrap/src/balanceCheck.ts:18–25`) is 
 
 - `packages/wrap/src/*` — wrap is the cross-VM HTTP-wrap library; it stays VM-agnostic by design. The adapter consumes wrap's `BalanceCheck` interface, not the other way around.
 - `packages/sdk/src/*` — uses `protocol-v1-client` indirectly via the API endpoints exposed by the proxy/indexer; no direct chain touch.
-- `packages/cli/src/*` — has `@pact-network/protocol-v1-client` dep but it's an admin CLI, out of WP-MN-02 scope (services first; CLI follows in a later WP if needed).
+- `packages/cli/src/*` — has `@q3labs/pact-protocol-v1-client` dep but it's an admin CLI, out of WP-MN-02 scope (services first; CLI follows in a later WP if needed).
 - `packages/market-dashboard/src/*` — Next.js client, uses `@solana/wallet-adapter-react`; dashboard is §5a (out of WP-MN-02 scope).
 
 ---
@@ -72,7 +72,7 @@ The `BalanceCheckResult` shape (`packages/wrap/src/balanceCheck.ts:18–25`) is 
 | Package | Depends on | Depended on by |
 |---|---|---|
 | `@pact-network/shared` | (none currently — only `typescript` devDep) | **none currently** |
-| `@pact-network/protocol-v1-client` | `@solana/web3.js` | `cli`, `indexer`, `market-dashboard`, `settler` |
+| `@q3labs/pact-protocol-v1-client` | `@solana/web3.js` | `cli`, `indexer`, `market-dashboard`, `settler` |
 | `@pact-network/wrap` | (none — peerDep only on `@google-cloud/pubsub`) | `facilitator`, `market-proxy`, `settler` |
 | `@solana/web3.js` (3rd-party) | — | `protocol-v1-client`, `market-proxy` (lazy via balance.ts) |
 | `@solana/spl-token` (3rd-party) | — | `market-proxy` (lazy via balance.ts) |
@@ -208,7 +208,7 @@ WP-MN-04's EvmAdapter does NOT implement `tailSettlementEvents` (Arc has a settl
 - D2 says "shared owns the registry; the SDK consumes it" — putting adapters in shared makes shared the central hub for VM-agnostic concerns.
 - Avoids creating a new `@pact-network/chain-adapters` package — the WP-EVM precedent is to grow within existing packages rather than spawn new ones casually.
 
-**Considered and rejected:** putting SolanaAdapter in `@pact-network/protocol-v1-client/src/adapter.ts`. Rejected because (a) it creates a circular concept (the client is wrapped BY the adapter, the adapter shouldn't live IN the client), and (b) symmetry with EvmAdapter would force EvmAdapter into `protocol-evm-v1-client`, splitting the per-VM adapter implementations across two packages instead of one.
+**Considered and rejected:** putting SolanaAdapter in `@q3labs/pact-protocol-v1-client/src/adapter.ts`. Rejected because (a) it creates a circular concept (the client is wrapped BY the adapter, the adapter shouldn't live IN the client), and (b) symmetry with EvmAdapter would force EvmAdapter into `protocol-evm-v1-client`, splitting the per-VM adapter implementations across two packages instead of one.
 
 ### 5.2 Dep direction
 
@@ -216,7 +216,7 @@ WP-MN-04's EvmAdapter does NOT implement `tailSettlementEvents` (Arc has a settl
 
 ```json
 "dependencies": {
-  "@pact-network/protocol-v1-client": "workspace:*",
+  "@q3labs/pact-protocol-v1-client": "workspace:*",
   "@pact-network/wrap": "workspace:*",
   "@solana/web3.js": "^1.95.8",
   "@solana/spl-token": "^0.4.0"
@@ -236,7 +236,7 @@ No cycle: protocol-v1-client + wrap do not depend on shared.
 import evmChains from "../../program-evm/protocol-evm-v1/config/chains.json" with { type: "json" };
 // Fallback for ts/test envs: readFileSync (same pattern as protocol-evm-v1-client/src/constants.ts post-WP-MN-01 T2).
 
-import { USDC_MINT_DEVNET, USDC_MINT_MAINNET } from "@pact-network/protocol-v1-client";
+import { USDC_MINT_DEVNET, USDC_MINT_MAINNET } from "@q3labs/pact-protocol-v1-client";
 
 const solanaChains: Record<string, ChainDescriptor> = {
   "solana-devnet": {
@@ -301,7 +301,7 @@ WP-MN-04's EvmAdapter re-runs the same suite (parameterized by adapter instance)
 | PLAN | Title | Files touched | Tests |
 |---|---|---|---|
 | `mn-02-01-PLAN.md` | Interface + types | Create `packages/shared/src/chain-adapter.ts` (interface + 6 types). Update `packages/shared/src/index.ts` to re-export. | Type-check passes; new interface compiles in isolation. |
-| `mn-02-02-PLAN.md` | chains.ts registry (D2 owner) | Create `packages/shared/src/chains.ts`. Update package.json: add `@pact-network/protocol-v1-client` workspace dep (registry consumes USDC_MINT_DEVNET/MAINNET). Re-export from index.ts. | New unit test asserts arc-testnet entry resolves from chains.json + solana-devnet entry resolves from hand-coded source + getChain throws on unknown. |
+| `mn-02-02-PLAN.md` | chains.ts registry (D2 owner) | Create `packages/shared/src/chains.ts`. Update package.json: add `@q3labs/pact-protocol-v1-client` workspace dep (registry consumes USDC_MINT_DEVNET/MAINNET). Re-export from index.ts. | New unit test asserts arc-testnet entry resolves from chains.json + solana-devnet entry resolves from hand-coded source + getChain throws on unknown. |
 | `mn-02-03-PLAN.md` | SolanaAdapter passthrough impl | Create `packages/shared/src/adapters/solana/index.ts` with `SolanaAdapter implements ChainAdapter`. Update package.json: add `@pact-network/wrap` workspace dep + `@solana/web3.js` + `@solana/spl-token`. Re-export from index.ts. | SolanaAdapter compiles; smoke test constructs an instance with stub Connection + stub fetch. |
 | `mn-02-04-PLAN.md` | Parity tests + contract test | Create `packages/shared/test/solana-adapter-parity.test.ts` (4 methods × byte-identical diff). Create `packages/shared/test/chain-adapter-contract.test.ts` (interface-shape). Add `vitest.config.ts` to shared if missing. | Both test files green. |
 
@@ -315,7 +315,7 @@ Each PLAN is ≈5–8 atomic steps.
 |---|---|---|
 | R1 | A service-side call site WP-MN-03b needs is missing from the adapter interface | The mapping table in §2 enumerates every grepped call site; PLAN `mn-02-04` parity tests force each method to be exercised with real-shape inputs. If a missing method is discovered in WP-MN-03b, it can be additively ADDED to the interface (no reshape). |
 | R2 | The `signer: unknown` type sacrifices type safety at the interface boundary | Acceptable per §4.2 rationale: signer shape is irreducibly VM-specific. The adapter impl narrows the type internally; the service caller types are unchanged (still hold `Keypair`). |
-| R3 | The hand-coded Solana entry in chains.ts could drift from the production constants in protocol-v1-client | The entry sources `USDC_MINT_DEVNET`/`MAINNET` from `@pact-network/protocol-v1-client` constants — single source of truth. Drift impossible by construction. |
+| R3 | The hand-coded Solana entry in chains.ts could drift from the production constants in protocol-v1-client | The entry sources `USDC_MINT_DEVNET`/`MAINNET` from `@q3labs/pact-protocol-v1-client` constants — single source of truth. Drift impossible by construction. |
 | R4 | shared's transitive @solana/web3.js dep will increase bundle size for any web consumer of shared | No web consumer of shared exists today. When Ken's SDK (WP-MN-05) consumes shared, it'll already need @solana/web3.js for Solana calls. EVM-only consumers (TBD) can tree-shake — `@solana/web3.js` is ESM and tree-shakable. |
 | R5 | The Foundry `chains.json` import attribute in chains.ts may fail under some TS configs (same risk as WP-MN-01 T2 had with constants.ts) | Same mitigation: fallback to `readFileSync` per the T2 precedent. |
 | R6 | Existing service tests may break if shared's new deps create version conflicts | Mitigation: PLAN `mn-02-03` Step 1 = run `pnpm install` after adding deps, then run `pnpm -r typecheck` and `pnpm -r test` to confirm green BEFORE proceeding to adapter impl. |

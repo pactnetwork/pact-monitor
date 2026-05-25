@@ -42,6 +42,15 @@ model Agent {
   callCount             BigInt     @default(0)
   lastCallAt            DateTime?
   createdAt             DateTime
+  // Optional per-agent refund-push webhook. The indexer POSTs settled calls
+  // here (signed ed25519 with the indexer's key; the agent verifies a pinned
+  // pubkey — NO shared secret column). Registered via the bs58-ed25519
+  // signed POST /api/agents/:pubkey/webhook. All nullable/defaulted →
+  // additive, non-breaking migration.
+  webhookUrl            String?
+  webhookRegisteredAt   DateTime?
+  webhookFailCount      Int        @default(0)
+  webhookLastDeliveryAt DateTime?
   calls                 Call[]
 }
 

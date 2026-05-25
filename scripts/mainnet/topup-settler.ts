@@ -20,7 +20,7 @@
  *   FUNDING_WALLET_KEY  base58 secret key OR path to a JSON keypair file. Source
  *                     of the SOL transfer. NEVER pass the SettlementAuthority
  *                     key as the funding wallet.
- *   PROGRAM_ID        defaults to mainnet program 5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5
+ *   PROGRAM_ID        defaults to mainnet program 5bCJcdWdKLJ7arrMVMFh3z99rQDxV785fnD9XGcr3xwc
  *
  * Behavior:
  *   1. Loads the funding wallet keypair from FUNDING_WALLET_KEY.
@@ -57,9 +57,12 @@ import bs58 from "bs58";
 import {
   decodeSettlementAuthority,
   getSettlementAuthorityPda,
-} from "@pact-network/protocol-v1-client";
+} from "@q3labs/pact-protocol-v1-client";
 
-const DEFAULT_PROGRAM_ID = "5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5";
+// MAINNET program ID (this is a scripts/mainnet/ ops tool — see header). The
+// devnet program is 5jBQb7fL… and must never be the default here; an operator
+// who omits PROGRAM_ID must derive the *mainnet* SettlementAuthority PDA.
+const DEFAULT_PROGRAM_ID = "5bCJcdWdKLJ7arrMVMFh3z99rQDxV785fnD9XGcr3xwc";
 const DEFAULT_RECIPIENT = "FuT7kRVwHbGgLNMULyhxU57VvDVtPMk7UqZT5DDK2ST1";
 /** Fee buffer above the actual transfer amount that we require on the source. */
 const FEE_BUFFER_LAMPORTS = 50_000;

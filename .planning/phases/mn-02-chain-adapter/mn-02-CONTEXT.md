@@ -9,7 +9,7 @@
 
 Introduce **one chain-touch seam** so all service code (`settler`, `indexer`, `market-proxy`, and Ken's SDK in WP-MN-05) can swap between Solana and EVM via a single interface — without leaking VM-specific imports through the codebase.
 
-This WP defines the interface and lands its first implementation (`SolanaAdapter`) as a **pure passthrough** over `@pact-network/protocol-v1-client` + `@pact-network/wrap`. **No service swap happens here** — that's WP-MN-03b. The adapter exists as a sidecar; nothing imports it yet except the parity test that proves byte-identical behavior against the underlying client.
+This WP defines the interface and lands its first implementation (`SolanaAdapter`) as a **pure passthrough** over `@q3labs/pact-protocol-v1-client` + `@pact-network/wrap`. **No service swap happens here** — that's WP-MN-03b. The adapter exists as a sidecar; nothing imports it yet except the parity test that proves byte-identical behavior against the underlying client.
 
 ## Upstream artifacts (READ FIRST)
 
@@ -22,8 +22,8 @@ This WP defines the interface and lands its first implementation (`SolanaAdapter
 - Define `ChainAdapter` interface in `packages/shared/src/chain-adapter.ts` per arch §3 L2 + REV1 corrections.
 - Define supporting types: `ChainDescriptor`, `EndpointConfigSnapshot`, `SettleBatchInput`, `SettleBatchResult`, `EligibilityCheckResult`.
 - Define `chains.ts` registry helpers (`getChain(name)`, `listChains()`) in `packages/shared/src/chains.ts` — D2-locked owner of the network registry. Sources from `packages/program-evm/protocol-evm-v1/config/chains.json` plus a hand-coded Solana entry.
-- Implement `SolanaAdapter` in `packages/shared/src/adapters/solana/` — passthrough wrapper over `@pact-network/protocol-v1-client` (for endpoint configs, settle-batch building, PDA derivation) and `@pact-network/wrap` (for eligibility checks).
-- Wire `@pact-network/shared` to depend on `@pact-network/protocol-v1-client` and `@pact-network/wrap`.
+- Implement `SolanaAdapter` in `packages/shared/src/adapters/solana/` — passthrough wrapper over `@q3labs/pact-protocol-v1-client` (for endpoint configs, settle-batch building, PDA derivation) and `@pact-network/wrap` (for eligibility checks).
+- Wire `@pact-network/shared` to depend on `@q3labs/pact-protocol-v1-client` and `@pact-network/wrap`.
 - Add parity tests proving `SolanaAdapter` outputs byte-identical results to direct client calls for every method, using recorded fixtures (offline).
 - Add interface-shape contract test that any `ChainAdapter` implementer must pass — WP-MN-04's `EvmAdapter` re-runs the same test.
 
@@ -48,7 +48,7 @@ This WP defines the interface and lands its first implementation (`SolanaAdapter
 Satisfied by this CONTEXT + the companion `mn-02-RESEARCH.md`:
 
 - Architecture spec §3 (L2) + §11 D2 read.
-- RESEARCH enumerates every public method of `@pact-network/protocol-v1-client` used by `settler`, `indexer`, `market-proxy`; maps each to the proposed ChainAdapter method (or marks out-of-scope).
+- RESEARCH enumerates every public method of `@q3labs/pact-protocol-v1-client` used by `settler`, `indexer`, `market-proxy`; maps each to the proposed ChainAdapter method (or marks out-of-scope).
 - RESEARCH locks the adapter location, interface shape, dep direction, and test-fixture strategy.
 - Captain VERDICT APPROVED — pending.
 
@@ -57,7 +57,7 @@ Satisfied by this CONTEXT + the companion `mn-02-RESEARCH.md`:
 Captain (or captain-proxy) reads `mn-02-RESEARCH.md` and confirms:
 - The mapping of every service-side client call to an adapter method is complete (no surprises in WP-MN-03b when services swap).
 - The interface shape is forward-compatible with EvmAdapter (WP-MN-04 will not need to reshape the interface).
-- The dep direction (`@pact-network/shared` depends on `@pact-network/protocol-v1-client` + `@pact-network/wrap`) does not create cycles.
+- The dep direction (`@pact-network/shared` depends on `@q3labs/pact-protocol-v1-client` + `@pact-network/wrap`) does not create cycles.
 - The parity-test strategy is feasible offline (no live RPC required at test time).
 
 If APPROVED: captain writes `mn-02-CAPTAIN-GATE-A-VERDICT.md`, implementer unblocked to author PLAN files via `superpowers:writing-plans`. If REJECTED: gaps enumerated, RESEARCH revised.

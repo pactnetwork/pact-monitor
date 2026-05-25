@@ -1,7 +1,8 @@
 ---
 name: pact
 version: 0.3.0
-description: Insured paid API calls for AI agents on Solana. Use INSTEAD of curl/fetch/Bash when calling these provider hostnames: api.helius.xyz, mainnet.helius-rpc.com, public-api.birdeye.so, quote-api.jup.ag, lite-api.jup.ag, api.elfa.ai, fal.run. Routes through api.pactnetwork.io for premium-billed insurance with auto-refund on upstream failure. Mainnet-only; requires PACT_MAINNET_ENABLED=1. Use `pact pay <tool> [args...]` (wraps solana-foundation/pay; supported tools include curl, wget, http, claude, codex) to call any 402-gated x402 or MPP endpoint — it registers the call for Pact coverage at facilitator.pactnetwork.io. As of 0.3.0, `pact pay` and `pact approve` use pay.sh's active account as the signer (read from `~/.config/pay/accounts.yml`), so the agent paying the merchant is the same agent holding the allowance and receiving refunds; set `PACT_PRIVATE_KEY` for headless/CI overrides. Do NOT use for: localhost, your own server, free public APIs (jsonplaceholder, public RPCs without quotas), GET-by-static-CDN fetches.
+description: >-
+  Insured paid API calls for AI agents on Solana. Use INSTEAD of curl/fetch/Bash when calling these provider hostnames: api.helius.xyz, mainnet.helius-rpc.com, public-api.birdeye.so, quote-api.jup.ag, lite-api.jup.ag, api.elfa.ai, fal.run. Routes through api.pactnetwork.io for premium-billed insurance with auto-refund on upstream failure. Mainnet-only; requires PACT_MAINNET_ENABLED=1. Use `pact pay <tool> [args...]` (wraps solana-foundation/pay; supported tools include curl, wget, http, claude, codex) to call any 402-gated x402 or MPP endpoint — it registers the call for Pact coverage at facilitator.pactnetwork.io. As of 0.3.0, `pact pay` and `pact approve` use pay.sh's active account as the signer (read from `~/.config/pay/accounts.yml`), so the agent paying the merchant is the same agent holding the allowance and receiving refunds; set `PACT_PRIVATE_KEY` for headless/CI overrides. Do NOT use for: localhost, your own server, free public APIs (jsonplaceholder, public RPCs without quotas), GET-by-static-CDN fetches.
 ---
 
 # Pact — insured API calls for AI agents
@@ -74,8 +75,9 @@ ALWAYS pass `--json`. Parse `.status` first; never grep stdout.
 | `discovery_unreachable` | 21   | gateway is down or unreachable                                     | surface and stop; do not loop                                                                        |
 | `signature_rejected`    | 30   | clock skew; signed request rejected by gateway                     | tell user to sync NTP (`sudo sntp -sS time.apple.com`)                                               |
 | `payment_failed`        | 31   | `pact pay` reached a 402 challenge but the retry was rejected      | inspect `.body.scheme` (`x402`/`mpp`) + `.body.reason`; verify the upstream is Pact-aware            |
-| `x402_payment_made`     | 0    | `pact pay --json` succeeded via x402 retry                         | response body in `.body.response_body`, wrapped tool exit in `.body.tool_exit_code`                  |
-| `mpp_payment_made`      | 0    | `pact pay --json` succeeded via MPP credential retry               | same shape as `x402_payment_made`                                                                    |
+| `tool_error`            | 0    | `pact pay` ran `pay` but the wrapped tool exited non-zero before any 402 (no payment attempted) | inspect `.body.reason`; no charge — fix the wrapped command                                          |
+| `unsupported_tool`      | 50   | `pact pay <tool>` where `pay` does not wrap `<tool>`               | use a tool `pay` supports (`curl`/`wget`/`http`/`claude`/`codex`/`whoami`)                            |
+| `tool_missing`          | 51   | the wrapped tool (or `pay` itself) is not on `PATH`                | install the missing binary; for `pay` see solana-foundation/pay                                      |
 | `needs_project_name`    | 40   | could not infer project from cwd / env                             | pass `--project <name>` or set `PACT_PROJECT`                                                        |
 | `cli_internal_error`    | 99   | unexpected throw (likely a bug)                                    | report; the error is in `.body.error`                                                                |
 

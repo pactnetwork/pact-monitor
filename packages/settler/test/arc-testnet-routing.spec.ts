@@ -27,7 +27,7 @@ import {
   type EndpointConfig,
   type CoveragePool,
   type Treasury,
-} from "@pact-network/protocol-v1-client";
+} from "@q3labs/pact-protocol-v1-client";
 import { SubmitterService } from "../src/submitter/submitter.service.js";
 import type { AdaptersService } from "../src/adapters/adapters.service.js";
 import type { ConfigService } from "@nestjs/config";
@@ -57,8 +57,8 @@ const decodeEndpointConfigMock = vi.fn();
 const decodeCoveragePoolMock = vi.fn();
 const decodeTreasuryMock = vi.fn();
 
-vi.mock("@pact-network/protocol-v1-client", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@pact-network/protocol-v1-client")>();
+vi.mock("@q3labs/pact-protocol-v1-client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@q3labs/pact-protocol-v1-client")>();
   return {
     ...actual,
     decodeEndpointConfig: (...args: unknown[]) => decodeEndpointConfigMock(...args),

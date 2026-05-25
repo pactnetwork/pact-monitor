@@ -7,7 +7,7 @@
 #
 # Pattern: mirrors packages/indexer/Dockerfile (debian-slim + openssl +
 # corepack pnpm + workspace manifests + filtered build). Builds workspace
-# dep @pact-network/protocol-v1-client first because the dashboard imports
+# dep @q3labs/pact-protocol-v1-client first because the dashboard imports
 # from it (lib/solana.ts).
 # -----------------------------------------------------------------------------
 FROM node:22-slim AS builder
@@ -28,7 +28,7 @@ COPY packages/protocol-v1-client/package.json ./packages/protocol-v1-client/
 # Install deps for dashboard + workspace deps it pulls in
 RUN pnpm install --frozen-lockfile \
   --filter @pact-network/market-dashboard \
-  --filter @pact-network/protocol-v1-client
+  --filter @q3labs/pact-protocol-v1-client
 
 # tsconfig.base.json — required because protocol-v1-client/tsconfig.json
 # extends it. (Same pattern as packages/indexer/Dockerfile.)
@@ -36,7 +36,7 @@ COPY tsconfig.base.json ./
 
 # Build protocol-v1-client first so the dashboard can import from its dist/
 COPY packages/protocol-v1-client/ ./packages/protocol-v1-client/
-RUN pnpm --filter @pact-network/protocol-v1-client build
+RUN pnpm --filter @q3labs/pact-protocol-v1-client build
 
 # Now the dashboard sources + the actual Next build
 COPY packages/market-dashboard/ ./packages/market-dashboard/

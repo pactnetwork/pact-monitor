@@ -6,10 +6,10 @@
 
 **Architecture:** Three artifacts in `packages/shared/src/`:
 1. `chain-adapter.ts` — pure-type interface + 6 supporting types (ChainDescriptor, EndpointConfigSnapshot, SettleBatchInput/Result, EligibilityCheckResult, TailOptions).
-2. `chains.ts` — D2-locked registry; sources EVM chains from `program-evm/protocol-evm-v1/config/chains.json` and hand-codes Solana entries from `@pact-network/protocol-v1-client` constants.
-3. `adapters/solana/index.ts` — `SolanaAdapter implements ChainAdapter` wrapping `@pact-network/protocol-v1-client` + `@pact-network/wrap`; byte-identical to direct calls.
+2. `chains.ts` — D2-locked registry; sources EVM chains from `program-evm/protocol-evm-v1/config/chains.json` and hand-codes Solana entries from `@q3labs/pact-protocol-v1-client` constants.
+3. `adapters/solana/index.ts` — `SolanaAdapter implements ChainAdapter` wrapping `@q3labs/pact-protocol-v1-client` + `@pact-network/wrap`; byte-identical to direct calls.
 
-**Tech Stack:** TypeScript / Vitest / pnpm workspaces. Adds deps in `@pact-network/shared`: workspace `@pact-network/protocol-v1-client` + `@pact-network/wrap`; third-party `@solana/web3.js@^1.95.8` + `@solana/spl-token@^0.4.0` (versions matching protocol-v1-client + market-proxy).
+**Tech Stack:** TypeScript / Vitest / pnpm workspaces. Adds deps in `@pact-network/shared`: workspace `@q3labs/pact-protocol-v1-client` + `@pact-network/wrap`; third-party `@solana/web3.js@^1.95.8` + `@solana/spl-token@^0.4.0` (versions matching protocol-v1-client + market-proxy).
 
 **Branch:** `feat/multi-network-02-chain-adapter` (off `feat/multi-network@5a35c02` post WP-MN-01 merge).
 
@@ -111,7 +111,7 @@ export interface EndpointConfigSnapshot {
   paused: boolean;
   /**
    * VM-specific opaque blob. SolanaAdapter populates with the decoded
-   * `EndpointConfig` struct from `@pact-network/protocol-v1-client`;
+   * `EndpointConfig` struct from `@q3labs/pact-protocol-v1-client`;
    * EvmAdapter (WP-MN-04) populates with its decoded equivalent.
    * Consumers should prefer the projected fields above; use `raw`
    * only for VM-specific fields not in the projection.
@@ -270,7 +270,7 @@ PUSH; readEndpointConfigs covers the 5-min refresh; tailSettlement-
 Events is optional for chains lacking a settler push.
 
 No service code touched. No new deps in shared yet (Task 2 adds
-@pact-network/protocol-v1-client; Task 3 adds wrap + web3.js +
+@q3labs/pact-protocol-v1-client; Task 3 adds wrap + web3.js +
 spl-token)."
 ```
 
@@ -278,10 +278,10 @@ spl-token)."
 
 ## Task 2: `chains.ts` registry (D2-locked owner)
 
-**Goal:** Land `chains.ts` in `@pact-network/shared` exposing `getChain(name)` + `listChains()`. EVM chains come from `program-evm/protocol-evm-v1/config/chains.json` (the WP-MN-01 source of truth). Solana entries are hand-coded from `@pact-network/protocol-v1-client`'s `USDC_MINT_DEVNET` / `USDC_MINT_MAINNET` constants.
+**Goal:** Land `chains.ts` in `@pact-network/shared` exposing `getChain(name)` + `listChains()`. EVM chains come from `program-evm/protocol-evm-v1/config/chains.json` (the WP-MN-01 source of truth). Solana entries are hand-coded from `@q3labs/pact-protocol-v1-client`'s `USDC_MINT_DEVNET` / `USDC_MINT_MAINNET` constants.
 
 **Files:**
-- Modify: `packages/shared/package.json` (add `@pact-network/protocol-v1-client` workspace dep)
+- Modify: `packages/shared/package.json` (add `@q3labs/pact-protocol-v1-client` workspace dep)
 - Create: `packages/shared/src/chains.ts`
 - Modify: `packages/shared/src/index.ts`
 - Create: `packages/shared/test/chains.test.ts`
@@ -312,7 +312,7 @@ Edit the file. Add a `dependencies` block (currently absent):
     "test": "vitest run"
   },
   "dependencies": {
-    "@pact-network/protocol-v1-client": "workspace:*"
+    "@q3labs/pact-protocol-v1-client": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",
@@ -436,7 +436,7 @@ Then create `packages/shared/src/chains.ts`:
  *
  * EVM chains are sourced from `program-evm/protocol-evm-v1/config/chains.json`
  * (WP-MN-01's single source of truth). Solana entries are hand-coded from
- * `@pact-network/protocol-v1-client` constants.
+ * `@q3labs/pact-protocol-v1-client` constants.
  */
 
 import { readFileSync } from "node:fs";
@@ -444,7 +444,7 @@ import { join } from "node:path";
 import {
   USDC_MINT_DEVNET,
   USDC_MINT_MAINNET,
-} from "@pact-network/protocol-v1-client";
+} from "@q3labs/pact-protocol-v1-client";
 import type { ChainDescriptor } from "./chain-adapter";
 
 // EVM chains: load from the program-evm config/chains.json.
@@ -549,10 +549,10 @@ registry. getChain(name) + listChains() helpers.
 
 Sources:
 - EVM chains: program-evm/protocol-evm-v1/config/chains.json (WP-MN-01)
-- Solana chains: hand-coded from @pact-network/protocol-v1-client
+- Solana chains: hand-coded from @q3labs/pact-protocol-v1-client
   USDC_MINT_DEVNET + USDC_MINT_MAINNET (single source of truth)
 
-shared now has runtime dep on @pact-network/protocol-v1-client.
+shared now has runtime dep on @q3labs/pact-protocol-v1-client.
 No cycle: protocol-v1-client doesn't depend on shared.
 
 Test count: +6 in @pact-network/shared (new test/chains.test.ts)."
@@ -562,7 +562,7 @@ Test count: +6 in @pact-network/shared (new test/chains.test.ts)."
 
 ## Task 3: SolanaAdapter passthrough implementation
 
-**Goal:** Implement `SolanaAdapter` in `packages/shared/src/adapters/solana/index.ts`. Pure passthrough — internally calls `@pact-network/protocol-v1-client` + `@pact-network/wrap`. No new logic; just routes through the existing functions so service code can hold `adapter: ChainAdapter` instead of `connection: Connection` (the actual swap is WP-MN-03b).
+**Goal:** Implement `SolanaAdapter` in `packages/shared/src/adapters/solana/index.ts`. Pure passthrough — internally calls `@q3labs/pact-protocol-v1-client` + `@pact-network/wrap`. No new logic; just routes through the existing functions so service code can hold `adapter: ChainAdapter` instead of `connection: Connection` (the actual swap is WP-MN-03b).
 
 **Files:**
 - Modify: `packages/shared/package.json` (add `@pact-network/wrap`, `@solana/web3.js`, `@solana/spl-token`)
@@ -575,7 +575,7 @@ Edit the `dependencies` block to:
 
 ```json
 "dependencies": {
-  "@pact-network/protocol-v1-client": "workspace:*",
+  "@q3labs/pact-protocol-v1-client": "workspace:*",
   "@pact-network/wrap": "workspace:*",
   "@solana/spl-token": "^0.4.0",
   "@solana/web3.js": "^1.95.8"
@@ -603,7 +603,7 @@ Create `packages/shared/src/adapters/solana/index.ts`:
 
 ```typescript
 /**
- * SolanaAdapter — passthrough wrapper over @pact-network/protocol-v1-client
+ * SolanaAdapter — passthrough wrapper over @q3labs/pact-protocol-v1-client
  * + @pact-network/wrap. Byte-identical behavior to direct calls (proven by
  * the parity test suite in Task 4).
  *
@@ -624,7 +624,7 @@ import {
   getTreasuryPda,
   PROGRAM_ID,
   slugBytes,
-} from "@pact-network/protocol-v1-client";
+} from "@q3labs/pact-protocol-v1-client";
 import {
   createDefaultBalanceCheck,
   type BalanceCheck,
@@ -870,7 +870,7 @@ git add -A packages/shared/ pnpm-lock.yaml
 git commit -m "feat(shared): SolanaAdapter passthrough implementation (WP-MN-02 T3)
 
 SolanaAdapter implements ChainAdapter as a pure passthrough over
-@pact-network/protocol-v1-client + @pact-network/wrap. Sidecar
+@q3labs/pact-protocol-v1-client + @pact-network/wrap. Sidecar
 landing — no service swap yet (that's WP-MN-03b).
 
 Three methods implemented:
@@ -911,7 +911,7 @@ import {
   decodeEndpointConfig,
   ENDPOINT_CONFIG_LEN,
   PROGRAM_ID,
-} from "@pact-network/protocol-v1-client";
+} from "@q3labs/pact-protocol-v1-client";
 import {
   createDefaultBalanceCheck,
   type BalanceCheck,

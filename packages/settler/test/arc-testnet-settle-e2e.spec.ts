@@ -54,7 +54,7 @@ import {
   PactRegistryAbi,
   PactSettlerAbi,
 } from "@pact-network/protocol-evm-v1-client";
-import { FeeRecipientKind } from "@pact-network/protocol-v1-client";
+import { FeeRecipientKind } from "@q3labs/pact-protocol-v1-client";
 
 import { AdaptersService } from "../src/adapters/adapters.service.js";
 import {
@@ -253,9 +253,9 @@ vi.mock("@solana/web3.js", async (importOriginal) => {
   };
 });
 
-vi.mock("@pact-network/protocol-v1-client", async (importOriginal) => {
+vi.mock("@q3labs/pact-protocol-v1-client", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("@pact-network/protocol-v1-client")>();
+    await importOriginal<typeof import("@q3labs/pact-protocol-v1-client")>();
   return {
     ...actual,
     decodeEndpointConfig: (...a: unknown[]) => decodeEndpointConfigMock(...a),
@@ -597,7 +597,11 @@ describe("MN-04 fix-WP T0 — Arc Testnet settle e2e acceptance gate", () => {
       $transaction: (cb: (t: typeof tx) => Promise<unknown>) => cb(tx),
     };
 
-    const svc = new EventsService(fakePrisma as never);
+    // EventsService gained a RefundDeliveryService dependency (develop merge);
+    // delivery is fire-and-forget after commit and irrelevant to this test's
+    // network-propagation assertions, so a no-op enqueue stub suffices.
+    const fakeDelivery = { enqueue: () => {} };
+    const svc = new EventsService(fakePrisma as never, fakeDelivery as never);
     await svc.ingest(body as never);
 
     const aggregateTables = recorded.filter((r) => r.table !== "agent");

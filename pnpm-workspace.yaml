@@ -1,6 +1,8 @@
 packages:
   - "packages/*"
+  - "packages/program/programs-pinocchio/pact-network-v2-pinocchio"
   - "samples/demo"
   - "scripts/smoke-tier2"
   - "scripts/mainnet"
   - "scripts/mainnet-smoke"
+  - "scripts/devnet"

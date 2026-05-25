@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, Logger } from "@nestjs/common";
 import { Prisma } from "@pact-network/db";
 import { PrismaService } from "../prisma/prisma.service";
+import { RefundDeliveryService } from "../refund-delivery/refund-delivery.service";
 import {
   SettlementEventDto,
   WrapCallEventDto,
@@ -21,7 +22,10 @@ interface PoolDelta {
 export class EventsService {
   private readonly logger = new Logger(EventsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly delivery: RefundDeliveryService,
+  ) {}
 
   /**
    * Ingest a batch settlement event from the settler.
@@ -118,7 +122,7 @@ export class EventsService {
       new Set(dto.calls.map((c) => c.endpointSlug)),
     ).sort();
 
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       // === FK PREP (B11) ===
       // Upsert all referenced Agent and Endpoint rows in deterministic lex
       // order BEFORE any Call.create. This ensures:
@@ -187,7 +191,7 @@ export class EventsService {
       // above are also no-ops in that case (update: {}), so total work is
       // exactly that — no double-counting.
       if (insertedCalls.length === 0) {
-        return { accepted: 0 };
+        return { accepted: 0, insertedCalls };
       }
 
       // Settlement record — idempotent by (network, signature). Only created
@@ -354,8 +358,15 @@ export class EventsService {
         });
       }
 
-      return { accepted: insertedCalls.length };
+      return { accepted: insertedCalls.length, insertedCalls };
     });
+
+    // Fire webhook delivery AFTER the tx commits — never inside it, never
+    // awaited, never able to throw into ingest. Only committed (brand-new)
+    // calls are delivered; the SDK poller remains the durable backstop.
+    this.delivery.enqueue(result.insertedCalls);
+
+    return { accepted: result.accepted };
   }
 
   /**

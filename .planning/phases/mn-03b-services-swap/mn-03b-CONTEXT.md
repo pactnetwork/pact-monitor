@@ -7,7 +7,7 @@
 
 ## Purpose
 
-Swap the three chain-touching service modules from direct `@pact-network/protocol-v1-client` + `@pact-network/wrap` usage to the `SolanaAdapter` interface (from `@pact-network/shared`, WP-MN-02). At the same time, restructure each service to hold a **`Map<network, ChainAdapter>` instead of a single adapter**, per the locked **multi-network-per-service topology** (decided 2026-05-20, supersedes off-chain spec §7's original fleet-per-network framing).
+Swap the three chain-touching service modules from direct `@q3labs/pact-protocol-v1-client` + `@pact-network/wrap` usage to the `SolanaAdapter` interface (from `@pact-network/shared`, WP-MN-02). At the same time, restructure each service to hold a **`Map<network, ChainAdapter>` instead of a single adapter**, per the locked **multi-network-per-service topology** (decided 2026-05-20, supersedes off-chain spec §7's original fleet-per-network framing).
 
 This is the only WP that touches live Solana settlement code. The Gate B headline artifact is the **adapter-swap e2e diff**: with `network='solana-devnet'`, running the pipeline on the legacy direct path (via the new `PACT_LEGACY_DIRECT_SOLANA=true` env flag) must produce **byte-identical** Settlement transactions, indexer rows, and fee fan-out as running on the adapter path. Any non-empty diff is a Gate B BLOCKER.
 

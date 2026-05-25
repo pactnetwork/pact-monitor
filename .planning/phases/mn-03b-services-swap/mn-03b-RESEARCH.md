@@ -59,7 +59,7 @@ The off-chain spec §7 originally framed "fleet-per-network." Tu's 2026-05-20 de
 
 - `SolanaAdapter` itself in `@pact-network/shared` — locked by WP-MN-02.
 - `@pact-network/wrap` — its interface stays; only its consumer (the proxy) routes through the adapter.
-- `@pact-network/protocol-v1-client` — stays as the dep of the adapter; services no longer import it directly post-WP-MN-03b (except for type imports of `FeeRecipientKind`, etc., that are wire-format types, not chain-touch).
+- `@q3labs/pact-protocol-v1-client` — stays as the dep of the adapter; services no longer import it directly post-WP-MN-03b (except for type imports of `FeeRecipientKind`, etc., that are wire-format types, not chain-touch).
 - Legacy Anchor crate — frozen.
 
 ---
