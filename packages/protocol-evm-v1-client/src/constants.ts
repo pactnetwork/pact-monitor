@@ -38,6 +38,18 @@ export const ARC_TESTNET_CHAIN_ID = _chainsJson["arc-testnet"].chainId;
 export const ARC_TESTNET_USDC: Address = _chainsJson["arc-testnet"]
   .usdcAddress as Address;
 
+/** Base Sepolia EVM chain id (sourced from chains.json["base-sepolia"].chainId). */
+export const BASE_SEPOLIA_CHAIN_ID = _chainsJson["base-sepolia"].chainId;
+
+/** Base Sepolia USDC token (sourced from chains.json["base-sepolia"].usdcAddress). */
+export const BASE_SEPOLIA_USDC: Address = _chainsJson["base-sepolia"].usdcAddress as Address;
+
+/** Base Mainnet EVM chain id (sourced from chains.json["base-mainnet"].chainId). */
+export const BASE_MAINNET_CHAIN_ID = _chainsJson["base-mainnet"].chainId;
+
+/** Base Mainnet USDC token (sourced from chains.json["base-mainnet"].usdcAddress). */
+export const BASE_MAINNET_USDC: Address = _chainsJson["base-mainnet"].usdcAddress as Address;
+
 /**
  * USDC decimals Pact's premium math assumes (Solana 6-decimal parity). The
  * live `IERC20(USDC).decimals() == 6` assertion is enforced on-chain in the

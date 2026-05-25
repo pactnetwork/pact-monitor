@@ -7,6 +7,29 @@
     "rpcUrl": "https://rpc.testnet.arc.network",
     "blockTimeMs": 500,
     "finalityBlocks": 64,
+    "finalityBlockTag": "finalized",
     "deploymentBlock": 42953139
+  },
+  "base-sepolia": {
+    "chainId": 84532,
+    "name": "base-sepolia",
+    "usdcAddress": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+    "usdcDecimals": 6,
+    "rpcUrl": "https://sepolia.base.org",
+    "blockTimeMs": 2000,
+    "finalityBlocks": 1,
+    "finalityBlockTag": "safe",
+    "deploymentBlock": null
+  },
+  "base-mainnet": {
+    "chainId": 8453,
+    "name": "base-mainnet",
+    "usdcAddress": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "usdcDecimals": 6,
+    "rpcUrl": "https://mainnet.base.org",
+    "blockTimeMs": 2000,
+    "finalityBlocks": 1,
+    "finalityBlockTag": "safe",
+    "deploymentBlock": null
   }
 }

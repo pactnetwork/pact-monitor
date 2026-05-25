@@ -5,7 +5,14 @@ import {
   getDeployment,
   resolveDeployment,
 } from "../src/addresses.js";
-import { ARC_TESTNET_CHAIN_ID, ARC_TESTNET_USDC } from "../src/constants.js";
+import {
+  ARC_TESTNET_CHAIN_ID,
+  ARC_TESTNET_USDC,
+  BASE_SEPOLIA_CHAIN_ID,
+  BASE_SEPOLIA_USDC,
+  BASE_MAINNET_CHAIN_ID,
+  BASE_MAINNET_USDC,
+} from "../src/constants.js";
 
 // Spec §5: addresses.ts is the EVM analogue of pda.ts — "deployed addresses
 // per chain — no PDAs" (§4 #2). WP-EVM-07 COMPLETE: the Arc Testnet protocol
@@ -109,5 +116,27 @@ describe("resolveDeployment — chain-scoped env overlay (multi-evm WP T1)", () 
     expect(r.registry).toBe(PER_CHAIN);
     expect(r.pool).toBe(GLOBAL);
     expect(r.settler).toBe(BAKED_SETTLER);
+  });
+});
+
+describe("addresses — Base chain DEPLOYMENTS (pre-deploy placeholders)", () => {
+  it("Base Sepolia entry exists with null contract addresses", () => {
+    const d = DEPLOYMENTS[84532];
+    expect(d).toBeDefined();
+    expect(d.chainId).toBe(84532);
+    expect(d.usdc).toBe("0x036CbD53842c5426634e7929541eC2318f3dCF7e");
+    expect(d.registry).toBeNull();
+    expect(d.pool).toBeNull();
+    expect(d.settler).toBeNull();
+  });
+
+  it("Base Mainnet entry exists with null contract addresses", () => {
+    const d = DEPLOYMENTS[8453];
+    expect(d).toBeDefined();
+    expect(d.chainId).toBe(8453);
+    expect(d.usdc).toBe("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913");
+    expect(d.registry).toBeNull();
+    expect(d.pool).toBeNull();
+    expect(d.settler).toBeNull();
   });
 });
