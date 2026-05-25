@@ -59,6 +59,15 @@ export class IndexerPusherService {
     const { signature, perEventShares } = outcome;
     const settledAt = new Date().toISOString();
 
+    // Batch-level network (finding 5). The batcher partitions pending by
+    // (network, slug) before flush, so every batch is single-network — we
+    // resolve one network for the whole batch and the indexer stamps it on
+    // the Settlement / Endpoint-FK / PoolState / recipient-share aggregate
+    // rows (which are keyed on network). Without this the indexer fell back
+    // to its solana-devnet default and Arc aggregates landed under Solana.
+    const network = this.resolveBatchNetwork(batch);
+    this.assertSingleSlug(batch);
+
     const calls = batch.messages.map((m, idx) => {
       const d = m.data as Record<string, unknown>;
       const shares: RecipientShare[] = perEventShares[idx] ?? [];
@@ -92,6 +101,7 @@ export class IndexerPusherService {
 
     const body = {
       signature,
+      network,
       batchSize: batch.messages.length,
       totalPremiumsLamports: String(
         calls.reduce((sum, c) => sum + BigInt(c.premiumLamports), 0n),
@@ -104,6 +114,59 @@ export class IndexerPusherService {
     };
 
     await this.postWithRetry(body, 3);
+  }
+
+  /**
+   * Resolve the single network for a batch and enforce the single-network
+   * invariant the batcher guarantees (it partitions pending by (network, slug)
+   * before flush). A mixed-network batch reaching the pusher means the
+   * partitioning regressed — fail loud rather than silently mis-attributing
+   * aggregate rows to the wrong network. Legacy unstamped events default to
+   * solana-devnet (consistent with the indexer fallback).
+   */
+  private resolveBatchNetwork(batch: SettleBatch): string {
+    const networkOf = (m: SettleBatch["messages"][number]): string => {
+      const n = (m.data as Record<string, unknown>)["network"];
+      return typeof n === "string" ? n : "solana-devnet";
+    };
+    const network = batch.messages[0] ? networkOf(batch.messages[0]) : "solana-devnet";
+    for (const m of batch.messages) {
+      const mn = networkOf(m);
+      if (mn !== network) {
+        throw new Error(
+          `indexer push received a mixed-network batch (${network} vs ${mn}); ` +
+            `the batcher must partition by network before flush`,
+        );
+      }
+    }
+    return network;
+  }
+
+  /**
+   * Enforce the single-slug invariant the batcher guarantees (it partitions
+   * pending by (network, slug) before flush). The submitter routes the whole
+   * adapter batch by the first message's slug and resolves that one endpoint's
+   * fee config; a mixed-slug batch reaching the pusher means a direct caller or
+   * a batcher regression — fail loud rather than silently indexing the batch
+   * under the wrong endpoint (review #226 F5). Mirrors resolveBatchNetwork.
+   */
+  private assertSingleSlug(batch: SettleBatch): void {
+    const slugOf = (m: SettleBatch["messages"][number]): string => {
+      const s = (m.data as Record<string, unknown>)["endpointSlug"];
+      return typeof s === "string" ? s : "";
+    };
+    const first = batch.messages[0];
+    if (!first) return;
+    const slug = slugOf(first);
+    for (const m of batch.messages) {
+      const ms = slugOf(m);
+      if (ms !== slug) {
+        throw new Error(
+          `indexer push received a mixed-slug batch (${slug} vs ${ms}); ` +
+            `the batcher must partition by slug before flush`,
+        );
+      }
+    }
   }
 
   private async postWithRetry(

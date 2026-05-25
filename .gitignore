@@ -25,6 +25,17 @@ packages/program/node_modules/
 
 # Claude Code local-only
 .claude/settings.local.json
+.claude/scheduled_tasks.lock
+.claude/pr-reviews/
+
+# Next.js build output
+.next/
+
+# Stray TS build output emitted into src (this package builds to ./dist)
+packages/protocol-v1-client/src/*.js
+packages/protocol-v1-client/src/*.js.map
+packages/protocol-v1-client/src/*.d.ts
+packages/protocol-v1-client/src/*.d.ts.map
 
 # Tier-2 smoke harness — generated keypairs + run state
 scripts/smoke-tier2/.smoke-keys/

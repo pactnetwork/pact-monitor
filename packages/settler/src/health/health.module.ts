@@ -5,6 +5,7 @@ import { HealthController } from "./health.controller";
 import { SignerBalanceService } from "./signer-balance.service";
 import { PipelineModule } from "../pipeline/pipeline.module";
 import { AppConfigModule } from "../config/config.module";
+import { AdaptersModule } from "../adapters/adapters.module";
 
 @Module({
   imports: [
@@ -14,6 +15,8 @@ import { AppConfigModule } from "../config/config.module";
     ScheduleModule.forRoot(),
     PipelineModule,
     AppConfigModule,
+    // EVM signer gas-balance monitoring (multi-evm WP T4) needs the adapters.
+    AdaptersModule,
   ],
   controllers: [HealthController],
   providers: [SignerBalanceService],

@@ -18,6 +18,15 @@ import { createHash } from "node:crypto";
 import type { Context, MiddlewareHandler } from "hono";
 import bs58 from "bs58";
 import nacl from "tweetnacl";
+import { isAddress, verifyMessage } from "viem";
+
+/** Auth VM family inferred from the agent key format / endpoint network. */
+type AuthVm = "evm" | "solana";
+
+/** Map a network id to its VM family (solana-* → solana; everything else → evm). */
+function networkToVm(network: string): AuthVm {
+  return network.startsWith("solana") ? "solana" : "evm";
+}
 
 export const PACT_AUTH_HEADERS = [
   "x-pact-agent",
@@ -67,6 +76,18 @@ export interface VerifyPactSignatureOptions {
   replayTtlMs?: number;
   replayCache?: ReplayCache;
   now?: () => number;
+  /**
+   * Optional endpoint-network resolver. When it returns a network, the auth
+   * mode is cross-checked against the endpoint's VM: an agent whose key type
+   * (evm vs solana) does not match the endpoint network is rejected
+   * (cross-mode guard). When omitted, or it returns undefined, the auth mode
+   * is selected purely by the agent key format. Wire this once the proxy
+   * registry carries EVM endpoints, so a 0x agent cannot authenticate against
+   * a Solana endpoint (and vice-versa).
+   */
+  getEndpointNetwork?: (
+    c: Context,
+  ) => string | undefined | Promise<string | undefined>;
 }
 
 export function verifyPactSignature(
@@ -76,6 +97,7 @@ export function verifyPactSignature(
   const replayTtlMs = opts.replayTtlMs ?? DEFAULT_REPLAY_TTL_MS;
   const now = opts.now ?? (() => Date.now());
   const replay = opts.replayCache ?? createInMemoryReplayCache(replayTtlMs);
+  const getEndpointNetwork = opts.getEndpointNetwork;
 
   return async function pactSignatureMiddleware(c, next) {
     const agent = c.req.header("x-pact-agent");
@@ -127,27 +149,63 @@ export function verifyPactSignature(
       bodyHash,
     });
 
-    let pubkey: Uint8Array;
-    let sig: Uint8Array;
-    try {
-      pubkey = bs58.decode(agent);
-      sig = bs58.decode(signature);
-    } catch {
-      return reject(c, "pact_auth_bad_sig", "malformed signature or pubkey");
-    }
-    if (pubkey.length !== 32 || sig.length !== 64) {
-      return reject(c, "pact_auth_bad_sig", "wrong signature or pubkey length");
+    // Auth mode is selected by the agent key format: a 0x EVM address uses
+    // secp256k1 / EIP-191 (personal_sign); anything else is treated as a
+    // Solana bs58 pubkey + Ed25519. This is what lets an EVM agent
+    // authenticate (finding 3) — the middleware was previously Ed25519-only.
+    const agentVm: AuthVm = isAddress(agent) ? "evm" : "solana";
+
+    // Cross-mode guard: when the endpoint's network is known, reject an agent
+    // whose VM does not match the endpoint (0x agent on a Solana endpoint, or
+    // an Ed25519 agent on an EVM endpoint).
+    const endpointNetwork = getEndpointNetwork
+      ? await getEndpointNetwork(c)
+      : undefined;
+    if (endpointNetwork && networkToVm(endpointNetwork) !== agentVm) {
+      return reject(
+        c,
+        "pact_auth_bad_sig",
+        `agent key type (${agentVm}) does not match endpoint network ${endpointNetwork}`,
+      );
     }
 
     let verified = false;
-    try {
-      verified = nacl.sign.detached.verify(
-        new TextEncoder().encode(payload),
-        sig,
-        pubkey,
-      );
-    } catch {
-      verified = false;
+    if (agentVm === "evm") {
+      // EVM: EIP-191 personal_sign. The agent header is the claimed 0x
+      // address and the signature is 0x-hex (65 bytes); viem recovers the
+      // signer and verifies it matches the claimed address. We do NOT
+      // hand-roll secp256k1.
+      try {
+        verified = await verifyMessage({
+          address: agent as `0x${string}`,
+          message: payload,
+          signature: signature as `0x${string}`,
+        });
+      } catch {
+        verified = false;
+      }
+    } else {
+      // Solana: Ed25519/bs58 path — unchanged from the original middleware.
+      let pubkey: Uint8Array;
+      let sig: Uint8Array;
+      try {
+        pubkey = bs58.decode(agent);
+        sig = bs58.decode(signature);
+      } catch {
+        return reject(c, "pact_auth_bad_sig", "malformed signature or pubkey");
+      }
+      if (pubkey.length !== 32 || sig.length !== 64) {
+        return reject(c, "pact_auth_bad_sig", "wrong signature or pubkey length");
+      }
+      try {
+        verified = nacl.sign.detached.verify(
+          new TextEncoder().encode(payload),
+          sig,
+          pubkey,
+        );
+      } catch {
+        verified = false;
+      }
     }
     if (!verified) {
       return reject(c, "pact_auth_bad_sig", "signature verification failed");

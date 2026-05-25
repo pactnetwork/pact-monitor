@@ -39,6 +39,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import {
   encodeSettleBatch,
   getDeployment,
+  slugToBytes16,
   tryExtractPactError,
   decodePactEventLog,
   PactRegistryAbi,
@@ -187,9 +188,33 @@ export class EvmAdapter implements ChainAdapter {
   //    - feeRecipients: map FeeRecipient{kind,destination,bps} -> {recipient,bps,kind}
   // -------------------------------------------------------------------------
   async readEndpointConfigs(): Promise<ReadonlyArray<EndpointConfigSnapshot>> {
+    // Full sweep: discover from deploymentBlock with no pre-seeded known set.
+    // Delegates to the cursor-able path so both share one implementation.
+    return (await this.readEndpointConfigsFrom(this.deploymentBlock)).snapshots;
+  }
+
+  // -------------------------------------------------------------------------
+  // readEndpointConfigsFrom (multi-evm WP T3)
+  //
+  // Cursor-able config sync. Resumes the EndpointRegistered discovery scan from
+  // `fromBlock` (the indexer's persisted cursor; cold start = deploymentBlock)
+  // instead of always re-walking from deployment — the discovery scan is what
+  // scales with chain height. Refreshes the FULL set = newly-discovered slugs
+  // UNIONed with `knownSlugs` (the endpoints the indexer already tracks), so a
+  // config change made via update_config (which emits no EndpointRegistered)
+  // still gets re-read on every tick. Returns the finalized block scanned to so
+  // the caller can persist the next cursor.
+  // -------------------------------------------------------------------------
+  async readEndpointConfigsFrom(
+    fromBlock: bigint,
+    knownSlugs: ReadonlyArray<string> = [],
+  ): Promise<{
+    snapshots: ReadonlyArray<EndpointConfigSnapshot>;
+    scannedToBlock: bigint;
+  }> {
     if (!this.deployment.registry) {
       throw new Error(
-        `EvmAdapter.readEndpointConfigs: no registry address for chain ${this.deployment.chainId}`,
+        `EvmAdapter.readEndpointConfigsFrom: no registry address for chain ${this.deployment.chainId}`,
       );
     }
     const registryAddr = this.deployment.registry;
@@ -201,18 +226,22 @@ export class EvmAdapter implements ChainAdapter {
       functionName: "authority",
     }) as Address;
 
-    // 2. Fetch all EndpointRegistered events since deployment. Chunked into
-    //    LOG_RANGE_CHUNK windows because Arc Testnet (and many public RPCs)
-    //    enforce a 10k-block range cap on eth_getLogs. We resolve "finalized"
-    //    to a concrete block number first so every chunk has a stable upper
-    //    bound, and harvest slugs per-chunk so we never hold all logs at once.
+    // 2. Resolve "finalized" to a concrete block first so every chunk has a
+    //    stable upper bound (and so we can persist it as the next cursor).
     const finalizedBlock = await this.publicClient.getBlock({
       blockTag: "finalized",
     });
     const finalizedNumber = finalizedBlock.number;
+
+    // 3. Seed the refresh set with the indexer's KNOWN slugs (so endpoints
+    //    registered before `fromBlock` still get their mutable config re-read),
+    //    then scan [fromBlock..finalized] in LOG_RANGE_CHUNK windows for any
+    //    NEW EndpointRegistered slugs (Arc + many public RPCs cap eth_getLogs
+    //    at 10k blocks; we harvest per-chunk so we never hold all logs at once).
     const slugSet = new Set<Hex>();
+    for (const k of knownSlugs) slugSet.add(k.toLowerCase() as Hex);
     for (
-      let from = this.deploymentBlock;
+      let from = fromBlock;
       from <= finalizedNumber;
       from += LOG_RANGE_CHUNK
     ) {
@@ -233,12 +262,12 @@ export class EvmAdapter implements ChainAdapter {
       }
     }
 
-    if (slugSet.size === 0) return [];
+    if (slugSet.size === 0) {
+      return { snapshots: [], scannedToBlock: finalizedNumber };
+    }
     const slugs = Array.from(slugSet);
 
-    if (slugs.length === 0) return [];
-
-    // 4. Multicall getEndpoint for each slug
+    // 4. Multicall getEndpoint for the full refresh set
     const configs = await this.publicClient.multicall({
       contracts: slugs.map((s) => ({
         address: registryAddr,
@@ -265,22 +294,76 @@ export class EvmAdapter implements ChainAdapter {
       feeRecipients: ReadonlyArray<{ kind: number; destination: Address; bps: number }>;
     }>;
 
-    // 5. Project to EndpointConfigSnapshot
-    return configs.map((c, i) => ({
-      slug: slugs[i],
-      // Protocol-wide authority on EVM (no per-endpoint authority field)
-      authority: authorityAddr,
-      // EVM has no per-endpoint maxTotalFeeBps field; compute from feeRecipients sum.
-      // This is the actual total bps allocated, which serves as a conservative bound.
-      maxTotalFeeBps: c.feeRecipients.reduce((s, f) => s + Number(f.bps), 0),
-      feeRecipients: c.feeRecipients.map((f) => ({
+    // 5. Project to EndpointConfigSnapshot. Slice feeRecipients to the on-chain
+    //    feeRecipientCount first so the zero-padded FeeRecipient[8] tail is
+    //    dropped (the contract only pays the first feeRecipientCount entries),
+    //    mirroring getEndpoint() — otherwise maxTotalFeeBps would be summed over
+    //    padding the settler never pays (review #226 F4).
+    const snapshots = configs.map((c, i) => {
+      const count = Number(c.feeRecipientCount);
+      const recipients = c.feeRecipients.slice(0, count);
+      return {
+        slug: slugs[i],
+        // Protocol-wide authority on EVM (no per-endpoint authority field)
+        authority: authorityAddr,
+        // EVM has no per-endpoint maxTotalFeeBps field; compute from the paid
+        // feeRecipients sum. This is the actual total bps allocated, which
+        // serves as a conservative bound.
+        maxTotalFeeBps: recipients.reduce((s, f) => s + Number(f.bps), 0),
+        feeRecipients: recipients.map((f) => ({
+          recipient: f.destination,
+          bps: Number(f.bps),
+          kind: Number(f.kind),
+        })),
+        paused: c.paused,
+        raw: c,
+      };
+    });
+    return { snapshots, scannedToBlock: finalizedNumber };
+  }
+
+  // -------------------------------------------------------------------------
+  // getEndpoint
+  //
+  // Single-slug endpoint read via one getEndpoint() view call (no log scan).
+  // Used by the settler to derive an EVM endpoint's fee fan-out at submit time
+  // without ever reading Solana PDAs. feeRecipients is sliced to the on-chain
+  // feeRecipientCount so the zero-padded FeeRecipient[8] tail is dropped (the
+  // contract only pays the first feeRecipientCount entries).
+  // -------------------------------------------------------------------------
+  async getEndpoint(slug: string): Promise<EndpointConfigSnapshot> {
+    if (!this.deployment.registry) {
+      throw new Error(
+        `EvmAdapter.getEndpoint: no registry address for chain ${this.deployment.chainId}`,
+      );
+    }
+    const slugHex = slugToBytes16(slug);
+    const c = (await this.publicClient.readContract({
+      address: this.deployment.registry,
+      abi: PactRegistryAbi,
+      functionName: "getEndpoint",
+      args: [slugHex],
+    })) as {
+      paused: boolean;
+      feeRecipientCount: number;
+      feeRecipients: ReadonlyArray<{ kind: number; destination: Address; bps: number }>;
+    };
+
+    const count = Number(c.feeRecipientCount);
+    const recipients = c.feeRecipients.slice(0, count);
+    return {
+      slug: slugHex,
+      // No per-endpoint authority on EVM; surface the registry address.
+      authority: this.deployment.registry,
+      maxTotalFeeBps: recipients.reduce((s, f) => s + Number(f.bps), 0),
+      feeRecipients: recipients.map((f) => ({
         recipient: f.destination,
         bps: Number(f.bps),
         kind: Number(f.kind),
       })),
       paused: c.paused,
       raw: c,
-    }));
+    };
   }
 
   // -------------------------------------------------------------------------
@@ -318,17 +401,25 @@ export class EvmAdapter implements ChainAdapter {
     const settlerAddr = this.deployment.settler;
 
     // Map SettleBatchInput events -> SettlementEventInput[]
+    // Fallback clock for events that carry no canonical timestamp (backward
+    // compat); the supplied eventTimestamp takes precedence below.
     const now = BigInt(Math.floor(Date.now() / 1000));
     const eventsWire: SettlementEventInput[] = input.events.map((e) => ({
       callId: e.callId,
       agent: e.agent as Address,
       endpointSlug: input.slug,
       premium: e.premiumBaseUnits,
-      refund: e.outcome === "breach" ? e.premiumBaseUnits : 0n,
+      // Encode the exact refund supplied by the wrap classifier (finding 6),
+      // not the premium. Mirrors the on-chain handler, which pays the wire
+      // refund value verbatim. Defaults to 0 when unset (e.g. a clean call).
+      refund: e.refundBaseUnits ?? 0n,
       latencyMs: e.latencyMs,
       breach: e.outcome === "breach",
       feeRecipientCountHint: e.feeRecipientCountHint,
-      timestamp: now,
+      // Encode the canonical wrapped-call timestamp supplied by the settler
+      // (Rick #226 F1), NOT submit-time Date.now(). Falls back to `now` only
+      // when the caller omits it.
+      timestamp: e.eventTimestamp ?? now,
     }));
 
     const calldata = encodeSettleBatch(eventsWire);
@@ -433,6 +524,17 @@ export class EvmAdapter implements ChainAdapter {
 
       await sleep(this.blockTimeMs);
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // getNativeBalance
+  //
+  // Native gas-token balance (wei) of an address, via the real viem public
+  // client (no hand-rolled RPC). Used by the settler's per-network EVM signer
+  // gas-balance monitor (multi-evm WP T4).
+  // -------------------------------------------------------------------------
+  async getNativeBalance(address: string): Promise<bigint> {
+    return this.publicClient.getBalance({ address: address as Address });
   }
 
   // -------------------------------------------------------------------------

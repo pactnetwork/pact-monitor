@@ -18,7 +18,7 @@ import {
 } from "@solana/web3.js";
 import { PrismaService } from "../prisma/prisma.service";
 import { AdaptersService } from "../adapters/adapters.service";
-import type { EndpointConfigSnapshot } from "@pact-network/shared";
+import { getChain, type EndpointConfigSnapshot } from "@pact-network/shared";
 
 const DEFAULT_RPC_URL = "https://api.mainnet-beta.solana.com";
 const DEFAULT_PROGRAM_ID = PROGRAM_ID.toBase58();
@@ -111,21 +111,51 @@ export class OnChainSyncService implements OnModuleInit {
    */
   @Cron(CronExpression.EVERY_5_MINUTES)
   async refreshAllNetworks(): Promise<void> {
-    for (const network of this.adaptersService.listEnabledNetworks()) {
-      if (this.adaptersService.legacyDirectSolana && network.startsWith("solana-")) {
-        await this.refreshLegacyDirect();
-      } else {
-        await this.refreshViaAdapter(network);
+    const networks = this.adaptersService.listEnabledNetworks();
+    // Refresh every network CONCURRENTLY so one slow/failing chain's sync does
+    // not delay or abort the others. Each per-network refresh has its own
+    // try/catch isolation (refreshViaAdapter swallows + logs adapter errors;
+    // refreshLegacyDirect's syncEndpointsFromChain catches internally); the
+    // allSettled backstop surfaces anything that still escapes.
+    const results = await Promise.allSettled(
+      networks.map((network) => this.refreshNetwork(network)),
+    );
+    for (let i = 0; i < results.length; i++) {
+      const r = results[i];
+      if (r.status === "rejected") {
+        this.logger.error(
+          `[chain-sync] refresh failed for ${networks[i]} (isolated): ${r.reason}`,
+        );
       }
     }
   }
 
+  /** Route one network to the legacy-direct or adapter path. */
+  private async refreshNetwork(network: string): Promise<void> {
+    if (this.adaptersService.legacyDirectSolana && network.startsWith("solana-")) {
+      await this.refreshLegacyDirect();
+    } else {
+      await this.refreshViaAdapter(network);
+    }
+  }
+
   /**
-   * Adapter path — calls adapter.readEndpointConfigs() and upserts each
-   * snapshot via the generic upsert path.
+   * Adapter path — refreshes a network's EndpointConfigs and upserts each
+   * snapshot. Chains whose adapter exposes the cursor-able
+   * `readEndpointConfigsFrom` (EVM) resume their EndpointRegistered discovery
+   * scan from a persisted per-network cursor instead of re-walking from
+   * `deploymentBlock` every tick; chains without it (Solana
+   * `getProgramAccounts`, which does not scale with chain height) take the plain
+   * `readEndpointConfigs` full-read path.
    */
   private async refreshViaAdapter(network: string): Promise<void> {
     const adapter = this.adaptersService.getAdapter(network);
+
+    if (typeof adapter.readEndpointConfigsFrom === "function") {
+      await this.refreshViaAdapterWithCursor(network, adapter);
+      return;
+    }
+
     let snapshots: ReadonlyArray<EndpointConfigSnapshot>;
     try {
       snapshots = await adapter.readEndpointConfigs();
@@ -143,6 +173,69 @@ export class OnChainSyncService implements OnModuleInit {
     }
     this.logger.log(
       `[chain-sync] adapter path: upserted ${upserted} endpoints for ${network}`,
+    );
+  }
+
+  /**
+   * Cursor-able adapter path (multi-evm WP T3). Resolves the resume point:
+   *   - cold start (no SyncCursor row): the chain's `deploymentBlock`.
+   *   - warm: the persisted `lastScannedBlock + 1` (we already scanned through
+   *     `lastScannedBlock`, so resume strictly after it; finalized blocks don't
+   *     reorg, so this never misses an event).
+   * Passes the indexer's already-known slugs so the adapter refreshes their
+   * current config too (config changed via update_config emits no
+   * EndpointRegistered event). Persists the finalized block scanned to as the
+   * next cursor only after a successful pass.
+   */
+  private async refreshViaAdapterWithCursor(
+    network: string,
+    adapter: ReturnType<AdaptersService["getAdapter"]>,
+  ): Promise<void> {
+    const deploymentBlock = BigInt(getChain(network).deploymentBlock ?? 0);
+    const cursor = await this.prisma.syncCursor.findUnique({
+      where: { network },
+    });
+    const fromBlock = cursor
+      ? BigInt(cursor.lastScannedBlock) + 1n
+      : deploymentBlock;
+
+    const known = await this.prisma.endpoint.findMany({
+      where: { network },
+      select: { slug: true },
+    });
+    const knownSlugs = known.map((e) => e.slug);
+
+    let result: {
+      snapshots: ReadonlyArray<EndpointConfigSnapshot>;
+      scannedToBlock: bigint;
+    };
+    try {
+      result = await adapter.readEndpointConfigsFrom!(fromBlock, knownSlugs);
+    } catch (e) {
+      this.logger.warn(
+        `[chain-sync] adapter.readEndpointConfigsFrom failed for ${network} (fromBlock=${fromBlock}): ${e}`,
+      );
+      return;
+    }
+
+    let upserted = 0;
+    for (const s of result.snapshots) {
+      const raw = s.raw as EndpointConfig;
+      await this.upsertEndpointFromAdapter(network, s, raw);
+      upserted += 1;
+    }
+
+    // Advance the cursor only after a successful pass so a mid-sync failure
+    // re-scans the same range next tick rather than skipping it.
+    await this.prisma.syncCursor.upsert({
+      where: { network },
+      create: { network, lastScannedBlock: result.scannedToBlock },
+      update: { lastScannedBlock: result.scannedToBlock },
+    });
+
+    this.logger.log(
+      `[chain-sync] cursor path: upserted ${upserted} endpoints for ${network} ` +
+        `(from ${fromBlock} to ${result.scannedToBlock}, ${knownSlugs.length} known slugs)`,
     );
   }
 
@@ -214,10 +307,11 @@ export class OnChainSyncService implements OnModuleInit {
     const startedAt = Date.now();
 
     try {
+      const syncNetwork = this.resolveLegacySolanaNetwork();
       const accounts = await this.fetchEndpointConfigAccounts();
       let upserted = 0;
       for (const acct of accounts) {
-        const slug = await this.upsertOne(acct);
+        const slug = await this.upsertOne(acct, syncNetwork);
         if (slug) upserted += 1;
       }
       const tookMs = Date.now() - startedAt;
@@ -255,12 +349,27 @@ export class OnChainSyncService implements OnModuleInit {
   }
 
   /**
+   * Resolve the Solana network for the legacy-direct path. In legacy-direct
+   * mode exactly one Solana network is enabled (this.connection points at its
+   * RPC); use it so rows are stamped with the real network (e.g. solana-mainnet)
+   * rather than a hardcoded literal. Falls back to "solana-devnet" only if no
+   * Solana network is enabled (defensive — legacy-direct implies one is).
+   */
+  private resolveLegacySolanaNetwork(): string {
+    const solana = this.adaptersService
+      .listEnabledNetworks()
+      .find((n) => n.startsWith("solana-"));
+    return solana ?? "solana-devnet";
+  }
+
+  /**
    * Decode a single account and upsert the corresponding Endpoint row.
    * Returns the decoded slug on success, or `null` if the decode failed
    * (we log + skip — one bad account doesn't block the rest of the batch).
    */
   private async upsertOne(
     acct: GetProgramAccountsResponse[number],
+    syncNetwork: string,
   ): Promise<string | null> {
     let decoded: EndpointConfig;
     try {
@@ -295,9 +404,10 @@ export class OnChainSyncService implements OnModuleInit {
     // for upstreams that need them (e.g. Helius) are injected by the
     // proxy via env vars, NOT stored in the DB.
     const upstreamBase = DEFAULT_UPSTREAM_BASE[slug] ?? "";
-    // WP-MN-03a: on-chain sync only knows Solana for now; WP-MN-03b will
-    // swap the hardcoded string for adapter-driven network selection.
-    const syncNetwork = "solana-devnet";
+    // Stamp the resolved legacy-direct Solana network (multi-evm WP T6) — was a
+    // hardcoded "solana-devnet" literal, which mislabeled rows on a
+    // solana-mainnet legacy deploy. `syncNetwork` is resolved once per pass in
+    // syncEndpointsFromChain via resolveLegacySolanaNetwork().
     await this.prisma.endpoint.upsert({
       where: { network_slug: { network: syncNetwork, slug } },
       create: {

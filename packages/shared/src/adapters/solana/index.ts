@@ -232,10 +232,17 @@ export class SolanaAdapter implements ChainAdapter {
         poolVault,
         slug: slugBuf,
         premiumLamports: e.premiumBaseUnits,
-        refundLamports: e.outcome === "breach" ? e.premiumBaseUnits : 0n,
+        // Exact refund from the wire (finding 6), not the premium — matches
+        // settle_batch.rs, which pays `refund_lamports` verbatim, and restores
+        // parity with the legacy-direct path. Defaults to 0 when unset.
+        refundLamports: e.refundBaseUnits ?? 0n,
         latencyMs: e.latencyMs,
         breach: e.outcome === "breach",
-        timestamp: BigInt(Math.floor(Date.now() / 1000)),
+        // Encode the canonical wrapped-call timestamp supplied by the settler
+        // (Rick #226 F1), NOT submit-time Date.now() — restores parity with the
+        // legacy-direct path. Falls back to the submit-time clock only when the
+        // caller omits it.
+        timestamp: e.eventTimestamp ?? BigInt(Math.floor(Date.now() / 1000)),
         feeRecipientAtas: feeRecipientAtasShared,
       });
     }

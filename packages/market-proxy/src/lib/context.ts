@@ -52,7 +52,11 @@ export function buildAdapterMap(processEnv: NodeJS.ProcessEnv): {
         throw new Error(`evm network ${name} missing deploymentBlock`);
       }
 
-      const deployment = resolveDeployment(descriptor.chainId, processEnv as Record<string, string | undefined>);
+      const deployment = resolveDeployment(
+        descriptor.chainId,
+        name,
+        processEnv as Record<string, string | undefined>,
+      );
 
       adapters.set(
         name,

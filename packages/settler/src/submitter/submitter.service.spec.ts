@@ -605,3 +605,70 @@ describe("SubmitterService", () => {
     expect(args.events[0].coveragePool.toBase58()).toBe(heliusPoolPda.toBase58());
   });
 });
+
+// ---------------------------------------------------------------------------
+// EVM-only boot (multi-evm WP T5). The settler must bootstrap when no solana-*
+// network is enabled WITHOUT requiring SOLANA_RPC_URL or building the Solana
+// Connection/PDAs. When a Solana network IS enabled, the Solana path is built
+// exactly as today (fail-fast at construction on a missing SOLANA_RPC_URL).
+// ---------------------------------------------------------------------------
+
+describe("SubmitterService — boot without Solana (multi-evm WP T5)", () => {
+  const evmStubAdapters = {
+    legacyDirectSolana: false,
+  } as unknown as AdaptersService;
+  const solanaStubAdapters = {
+    legacyDirectSolana: true,
+  } as unknown as AdaptersService;
+
+  function makeSecretsStub(): SecretLoaderService {
+    return { keypair: Keypair.generate() } as unknown as SecretLoaderService;
+  }
+
+  it("boots EVM-only (no solana-* enabled) without requiring SOLANA_RPC_URL", async () => {
+    const env: Record<string, string | undefined> = {
+      PACT_ENABLED_NETWORKS: "arc-testnet",
+    };
+    const config = {
+      get: vi.fn((k: string) => env[k]),
+      // getOrThrow throws for EVERYTHING — proving the constructor never calls it.
+      getOrThrow: vi.fn((k: string) => {
+        throw new Error(`missing ${k}`);
+      }),
+    } as unknown as ConfigService;
+
+    const svc = new SubmitterService(config, makeSecretsStub(), evmStubAdapters);
+    await expect(svc.onModuleInit()).resolves.toBeUndefined();
+    expect(config.getOrThrow).not.toHaveBeenCalledWith("SOLANA_RPC_URL");
+  });
+
+  it("still builds the Solana path when a Solana network is enabled (default)", () => {
+    // makeConfig() sets SOLANA_RPC_URL and leaves PACT_ENABLED_NETWORKS unset,
+    // which defaults to solana-devnet -> Solana deps built exactly as today.
+    const svc = new SubmitterService(
+      makeConfig(),
+      makeSecretsStub(),
+      solanaStubAdapters,
+    );
+    expect(svc.derivedProtocolConfigPda).toBeDefined();
+    expect(svc.derivedSettlementAuthorityPda).toBeDefined();
+    expect(svc.derivedTreasuryPda).toBeDefined();
+  });
+
+  it("still fails fast at construction when Solana is enabled but SOLANA_RPC_URL is missing", () => {
+    const env: Record<string, string | undefined> = {
+      PACT_ENABLED_NETWORKS: "solana-devnet",
+    };
+    const config = {
+      get: vi.fn((k: string) => env[k]),
+      getOrThrow: vi.fn((k: string) => {
+        if (k === "SOLANA_RPC_URL") throw new Error("missing SOLANA_RPC_URL");
+        return "x";
+      }),
+    } as unknown as ConfigService;
+
+    expect(
+      () => new SubmitterService(config, makeSecretsStub(), solanaStubAdapters),
+    ).toThrow(/SOLANA_RPC_URL/);
+  });
+});
