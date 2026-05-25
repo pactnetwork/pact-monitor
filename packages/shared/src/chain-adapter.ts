@@ -29,6 +29,8 @@ export interface ChainDescriptor {
   finalityBlocks?: number;
   /** EVM only — block number where PactRegistry was deployed; `fromBlock` for EndpointRegistered log scan. */
   deploymentBlock?: number;
+  /** EVM only — block tag for finality checks. Default "finalized". Base/OP Stack chains may use "safe". */
+  finalityBlockTag?: "safe" | "finalized";
 }
 
 export interface EndpointConfigSnapshot {
