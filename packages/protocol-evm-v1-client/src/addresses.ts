@@ -46,9 +46,10 @@ export const DEPLOYMENTS: Record<number, PactDeployment> = {
   [BASE_SEPOLIA_CHAIN_ID]: {
     chainId: BASE_SEPOLIA_CHAIN_ID,
     usdc: BASE_SEPOLIA_USDC,
-    registry: null,
-    pool: null,
-    settler: null,
+    // WP-BASE T2: deployed on Base Sepolia 2026-05-25.
+    registry: "0x056BAC33546b5b51B8CF6f332379651f715B889C",
+    pool: "0xa6135d9C6BFA0F256B9DeBa10d76C7698329aFdE",
+    settler: "0xe461CE50ef53BFC10945B101FB94b11Ec5eB591f",
   },
   [BASE_MAINNET_CHAIN_ID]: {
     chainId: BASE_MAINNET_CHAIN_ID,

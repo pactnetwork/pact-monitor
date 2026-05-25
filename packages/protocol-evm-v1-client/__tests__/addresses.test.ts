@@ -119,18 +119,19 @@ describe("resolveDeployment — chain-scoped env overlay (multi-evm WP T1)", () 
   });
 });
 
-describe("addresses — Base chain DEPLOYMENTS (pre-deploy placeholders)", () => {
-  it("Base Sepolia entry exists with null contract addresses", () => {
+describe("addresses — Base chain DEPLOYMENTS (WP-BASE T2)", () => {
+  it("Base Sepolia entry has known constants and deployed addresses", () => {
     const d = DEPLOYMENTS[84532];
     expect(d).toBeDefined();
     expect(d.chainId).toBe(84532);
     expect(d.usdc).toBe("0x036CbD53842c5426634e7929541eC2318f3dCF7e");
-    expect(d.registry).toBeNull();
-    expect(d.pool).toBeNull();
-    expect(d.settler).toBeNull();
+    // WP-BASE T2: deployed on Base Sepolia 2026-05-25.
+    expect(d.registry).toBe("0x056BAC33546b5b51B8CF6f332379651f715B889C");
+    expect(d.pool).toBe("0xa6135d9C6BFA0F256B9DeBa10d76C7698329aFdE");
+    expect(d.settler).toBe("0xe461CE50ef53BFC10945B101FB94b11Ec5eB591f");
   });
 
-  it("Base Mainnet entry exists with null contract addresses", () => {
+  it("Base Mainnet entry exists with null contract addresses (pre-deploy placeholder)", () => {
     const d = DEPLOYMENTS[8453];
     expect(d).toBeDefined();
     expect(d.chainId).toBe(8453);
