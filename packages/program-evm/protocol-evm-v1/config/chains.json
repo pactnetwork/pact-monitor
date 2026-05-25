@@ -19,7 +19,7 @@
     "blockTimeMs": 2000,
     "finalityBlocks": 1,
     "finalityBlockTag": "safe",
-    "deploymentBlock": 41999988
+    "deploymentBlock": 41969204
   },
   "base-mainnet": {
     "chainId": 8453,
