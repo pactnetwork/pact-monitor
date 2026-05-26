@@ -14,6 +14,7 @@ export interface RunOpts {
   configDir: string;
   gatewayUrl: string;
   project: string;
+  network?: string;
   rpcUrl?: string;
   raw?: boolean;
   skipBalanceCheck?: boolean;
@@ -116,6 +117,7 @@ export async function runCommand(opts: RunOpts): Promise<Envelope> {
       body: opts.body,
       keypair: wallet.keypair,
       project: opts.project,
+      network: opts.network,
       timeoutMs: opts.timeoutMs,
     });
   } catch (err) {
@@ -169,6 +171,7 @@ export async function runCommand(opts: RunOpts): Promise<Envelope> {
         body: opts.body,
         keypair: wallet.keypair,
         project: opts.project,
+        network: opts.network,
         timeoutMs: opts.timeoutMs,
       });
       return buildEnvelope(retry, r2.slug);

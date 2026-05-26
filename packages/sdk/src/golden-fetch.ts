@@ -54,6 +54,7 @@ export interface GoldenFetchDeps {
   resolver: SlugResolver;
   proxyBaseUrl: string;
   project: string;
+  network?: string;
   signRequests: boolean;
   agentPubkey: string;
   /** null when the signer cannot expose a raw secret (wallet adapter). */
@@ -106,6 +107,7 @@ export async function goldenFetch(
       agentPubkey: deps.agentPubkey,
       secretKey: deps.secretKey,
       project: deps.project,
+      network: deps.network,
       now: deps.now,
     });
   } catch {

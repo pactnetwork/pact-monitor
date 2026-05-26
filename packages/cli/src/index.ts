@@ -175,7 +175,8 @@ program
   .option(
     "--wait [secs]",
     "after an insured call, poll on-chain settlement (~8s) and merge tx_signature/premium/refund into the envelope (default window 30s)",
-  );
+  )
+  .option("--network <name>", "Target network (e.g. base-sepolia, arc-testnet). Disambiguates same-slug endpoints across chains. Sent as X-Pact-Network header.");
 
 // `--keypair <path>` is sugar for PACT_PRIVATE_KEY: the wallet loader's
 // secret-key parser already accepts a file path, so feeding the flag value in
@@ -237,6 +238,7 @@ program
       project,
       rpcUrl: program.opts().rpc,
       raw: options.raw,
+      network: options.network as string | undefined,
       timeoutMs: (options.timeout as number) * 1000,
     });
     const jsonFlag = Boolean(program.opts().json);

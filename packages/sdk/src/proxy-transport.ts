@@ -9,7 +9,7 @@
  *   bodyHash = sha256(body bytes) hex, or "" for an empty body
  *   signature = bs58( nacl.sign.detached(utf8(payload), secretKey) )
  *   headers   = x-pact-agent | x-pact-timestamp | x-pact-nonce |
- *               x-pact-signature | x-pact-project
+ *               x-pact-signature | x-pact-project | x-pact-network
  *
  * The proxy enforces ±30s skew and single-use nonces. `x-pact-project` is
  * mandatory (a missing one is a hard 401). There is NO API key.
@@ -78,6 +78,7 @@ export interface AuthHeaderInput {
   agentPubkey: string;
   secretKey: Uint8Array;
   project: string;
+  network?: string;
   now?: () => number;
 }
 
@@ -110,6 +111,7 @@ export async function buildAuthHeaders(
     "x-pact-nonce": nonce,
     "x-pact-signature": bs58.encode(sig),
     "x-pact-project": input.project,
+    ...(input.network ? { "x-pact-network": input.network } : {}),
   };
 }
 
