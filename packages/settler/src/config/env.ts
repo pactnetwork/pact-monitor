@@ -19,8 +19,9 @@ import { z } from "zod";
  *     key. Same as the pre-existing SecretLoaderService contract.
  *   - USDC_MINT (optional) overrides the devnet default for mainnet runs.
  *   - QUEUE_BACKEND: "pubsub" (default — mainnet) | "redis-streams" (devnet
- *     on Railway). Each backend has its own required-field set enforced via
- *     superRefine so mainnet ENV_PROD (which has no QUEUE_BACKEND key)
+ *     on Railway) | "memory" (in-process, local dev only — no required
+ *     companion env). Each backend has its own required-field set enforced
+ *     via superRefine so mainnet ENV_PROD (which has no QUEUE_BACKEND key)
  *     parses unchanged with the existing PUBSUB_* fields required.
  */
 const envSchema = z
@@ -36,7 +37,9 @@ const envSchema = z
 
     // Queue backend selector. Default "pubsub" preserves mainnet behavior
     // byte-for-byte when QUEUE_BACKEND is unset in ENV_PROD.
-    QUEUE_BACKEND: z.enum(["pubsub", "redis-streams"]).default("pubsub"),
+    QUEUE_BACKEND: z
+      .enum(["pubsub", "redis-streams", "memory"])
+      .default("pubsub"),
 
     // Pub/Sub fields — required only when QUEUE_BACKEND is "pubsub" or
     // unset. Made optional at the type layer; the superRefine below
