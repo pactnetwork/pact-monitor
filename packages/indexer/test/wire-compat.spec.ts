@@ -26,7 +26,7 @@ jest.mock("@pact-network/shared", () => ({
 
 import { Test, TestingModule } from "@nestjs/testing";
 import { INestApplication } from "@nestjs/common";
-import * as request from "supertest";
+import request from "supertest";
 
 import { CallsController } from "../src/api/calls.controller";
 import { EndpointsController } from "../src/api/endpoints.controller";
