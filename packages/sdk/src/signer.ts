@@ -27,11 +27,17 @@ export interface WalletAdapterSigner {
 
 export type PactSigner = Keypair | WalletAdapterSigner;
 
-export function isKeypair(s: PactSigner): s is Keypair {
-  return (
-    typeof (s as Keypair).secretKey === "object" &&
-    (s as Keypair).secretKey instanceof Uint8Array
-  );
+export function isKeypair(s: unknown): s is Keypair {
+  if (s == null || typeof s !== "object") return false;
+  const sk = (s as { secretKey?: unknown }).secretKey;
+  if (sk == null || typeof sk !== "object") return false;
+  // Cross-realm-safe: `instanceof Uint8Array` returns false when the caller
+  // and the SDK have different module copies of @solana/web3.js loaded — the
+  // secretKey is then a Uint8Array from a different constructor identity.
+  // `ArrayBuffer.isView` checks the internal slot and is realm-agnostic.
+  if (!ArrayBuffer.isView(sk)) return false;
+  const length = (sk as { length?: unknown }).length;
+  return typeof length === "number" && length === 64;
 }
 
 export function signerPublicKey(s: PactSigner): string {
