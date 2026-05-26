@@ -71,6 +71,7 @@ export class EndpointsController {
  */
 function serializeEndpoint(
   row: {
+    network: string;
     slug: string;
     flatPremiumLamports: bigint;
     percentBps: number;
@@ -94,6 +95,7 @@ function serializeEndpoint(
   },
 ) {
   return {
+    network: row.network,
     slug: row.slug,
     flatPremiumLamports: row.flatPremiumLamports.toString(),
     percentBps: row.percentBps,
