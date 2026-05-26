@@ -102,3 +102,26 @@ describe("settler env schema — redis-streams backend (devnet)", () => {
     expect(env.REDIS_CONSUMER_GROUP).toBe("settler-alt");
   });
 });
+
+describe("settler env schema — memory backend (local dev)", () => {
+  const memoryEnvSnapshot: Record<string, string> = {
+    SOLANA_RPC_URL: "https://devnet.helius-rpc.com/?api-key=redacted",
+    SETTLEMENT_AUTHORITY_KEY: "0123456789abcdef".repeat(2),
+    PROGRAM_ID: "5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5",
+    USDC_MINT: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+    INDEXER_URL: "http://localhost:8081",
+    INDEXER_PUSH_SECRET: "0123456789abcdef0123456789abcdef",
+    QUEUE_BACKEND: "memory",
+    LOG_LEVEL: "log",
+    PORT: "8080",
+  };
+
+  it("parses memory backend without PUBSUB_* or REDIS_* keys", () => {
+    const env = parseEnv(memoryEnvSnapshot);
+    expect(env.QUEUE_BACKEND).toBe("memory");
+    expect(env.PUBSUB_PROJECT).toBeUndefined();
+    expect(env.PUBSUB_SUBSCRIPTION).toBeUndefined();
+    expect(env.REDIS_URL).toBeUndefined();
+    expect(env.REDIS_STREAM).toBeUndefined();
+  });
+});
