@@ -58,6 +58,7 @@ export function createApp(deps: CreateAppDeps): Hono {
     "/v1/:slug/*",
     verifyPactSignature({
       getEndpointNetwork: async (c) =>
+        c.req.header("x-pact-network") ??
         (await deps.registry.get(c.req.param("slug") ?? ""))?.network,
     }),
   );

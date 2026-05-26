@@ -25,11 +25,25 @@ import { adapterToBalanceCheck } from "../lib/balance.js";
 
 export async function proxyRoute(c: Context): Promise<Response> {
   const slug = c.req.param("slug") ?? "";
+  const network = c.req.header("x-pact-network");
   const { registry, demoAllowlist, balanceCheck: legacyBalanceCheck, sink, adapters, legacyDirectSolana } = getContext();
 
-  const endpoint = await registry.get(slug);
+  const endpoint = await registry.get(slug, network);
   if (!endpoint) {
-    return c.json({ error: "endpoint not found" }, 404);
+    const available = await registry.getNetworksForSlug(slug);
+    if (available.length === 0) {
+      return c.json({ error: "endpoint not found" }, 404);
+    }
+    if (network) {
+      return c.json({
+        error: "endpoint_not_found",
+        message: `endpoint "${slug}" not found on network "${network}". Available networks: ${available.join(", ")}`,
+      }, 404);
+    }
+    return c.json({
+      error: "endpoint_ambiguous",
+      message: `Set X-Pact-Network header to disambiguate: ${available.join(", ")}`,
+    }, 404);
   }
   if (endpoint.paused) {
     return c.json({ error: "endpoint paused" }, 503);
