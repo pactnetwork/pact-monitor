@@ -8,7 +8,7 @@ import { Cron, CronExpression } from "@nestjs/schedule";
 import {
   decodeEndpointConfig,
   ENDPOINT_CONFIG_LEN,
-  EndpointConfig,
+  type EndpointConfig,
   PROGRAM_ID,
 } from "@q3labs/pact-protocol-v1-client";
 import {
@@ -182,8 +182,7 @@ export class OnChainSyncService implements OnModuleInit {
     }
     let upserted = 0;
     for (const s of snapshots) {
-      const raw = s.raw as EndpointConfig;
-      await this.upsertEndpointFromAdapter(network, s, raw);
+      await this.upsertEndpointFromAdapter(network, s);
       upserted += 1;
     }
     this.logger.log(
@@ -235,8 +234,7 @@ export class OnChainSyncService implements OnModuleInit {
 
     let upserted = 0;
     for (const s of result.snapshots) {
-      const raw = s.raw as EndpointConfig;
-      await this.upsertEndpointFromAdapter(network, s, raw);
+      await this.upsertEndpointFromAdapter(network, s);
       upserted += 1;
     }
 
@@ -255,17 +253,21 @@ export class OnChainSyncService implements OnModuleInit {
   }
 
   /**
-   * Upsert a single endpoint from the adapter snapshot + the raw decoded
-   * EndpointConfig. Mirrors upsertOne() but takes the network as a parameter
-   * (rather than the hardcoded "solana-devnet" sentinel).
+   * Upsert a single endpoint from the adapter snapshot. VM-neutral: handles
+   * both Solana snapshots (slug = human string, raw.flatPremiumLamports etc.)
+   * and EVM snapshots (slug = bytes16 hex like 0x68656c69757300..., raw.flatPremium
+   * etc., the bare-EVM ABI names). The DB schema uses the Solana-derived field
+   * names (flatPremiumLamports/imputedCostLamports/exposureCapPerHourLamports)
+   * because it predates multi-VM; we keep those column names and map EVM raw
+   * fields onto them here.
    */
   private async upsertEndpointFromAdapter(
     network: string,
     snapshot: EndpointConfigSnapshot,
-    decoded: EndpointConfig,
   ): Promise<void> {
-    const slug = snapshot.slug;
+    const slug = normalizeSnapshotSlug(snapshot.slug);
     if (!slug || slug.length === 0) return;
+    const cfg = normalizeRawConfig(snapshot.raw);
     const now = new Date();
     const upstreamBase = DEFAULT_UPSTREAM_BASE[slug] ?? "";
     await this.prisma.endpoint.upsert({
@@ -273,24 +275,24 @@ export class OnChainSyncService implements OnModuleInit {
       create: {
         network,
         slug,
-        flatPremiumLamports: BigInt(decoded.flatPremiumLamports),
-        percentBps: decoded.percentBps,
-        slaLatencyMs: decoded.slaLatencyMs,
-        imputedCostLamports: BigInt(decoded.imputedCostLamports),
-        exposureCapPerHourLamports: BigInt(decoded.exposureCapPerHourLamports),
-        paused: decoded.paused,
+        flatPremiumLamports: cfg.flatPremium,
+        percentBps: cfg.percentBps,
+        slaLatencyMs: cfg.slaLatencyMs,
+        imputedCostLamports: cfg.imputedCost,
+        exposureCapPerHourLamports: cfg.exposureCapPerHour,
+        paused: cfg.paused,
         upstreamBase,
         displayName: slug,
         registeredAt: now,
         lastUpdated: now,
       },
       update: {
-        flatPremiumLamports: BigInt(decoded.flatPremiumLamports),
-        percentBps: decoded.percentBps,
-        slaLatencyMs: decoded.slaLatencyMs,
-        imputedCostLamports: BigInt(decoded.imputedCostLamports),
-        exposureCapPerHourLamports: BigInt(decoded.exposureCapPerHourLamports),
-        paused: decoded.paused,
+        flatPremiumLamports: cfg.flatPremium,
+        percentBps: cfg.percentBps,
+        slaLatencyMs: cfg.slaLatencyMs,
+        imputedCostLamports: cfg.imputedCost,
+        exposureCapPerHourLamports: cfg.exposureCapPerHour,
+        paused: cfg.paused,
         lastUpdated: now,
       },
     });
@@ -471,4 +473,60 @@ export function slugBytesToString(bytes: Uint8Array): string {
   return new TextDecoder("utf-8", { fatal: false }).decode(
     bytes.subarray(0, end),
   );
+}
+
+const BYTES16_HEX_RE = /^0x[0-9a-fA-F]{32}$/;
+
+/**
+ * Adapter snapshots return slugs in one of two shapes: Solana decodes its
+ * own EndpointConfig and yields the already-decoded human slug ("helius");
+ * EVM's `EndpointRegistered` log carries the bytes16 hex
+ * ("0x68656c69757300000000000000000000") and the adapter passes that through
+ * verbatim. Normalize both into the human slug the DB stores.
+ */
+export function normalizeSnapshotSlug(slug: string): string {
+  if (!BYTES16_HEX_RE.test(slug)) return slug;
+  const bytes = new Uint8Array(16);
+  for (let i = 0; i < 16; i++) {
+    bytes[i] = parseInt(slug.slice(2 + i * 2, 2 + i * 2 + 2), 16);
+  }
+  return slugBytesToString(bytes);
+}
+
+interface NormalizedEndpointConfig {
+  flatPremium: bigint;
+  percentBps: number;
+  slaLatencyMs: number;
+  imputedCost: bigint;
+  exposureCapPerHour: bigint;
+  paused: boolean;
+}
+
+/**
+ * VM-neutral projection of an `EndpointConfigSnapshot.raw`. Solana raw is the
+ * decoded Pinocchio `EndpointConfig` (fields suffixed `Lamports`); EVM raw is
+ * the viem-decoded `getEndpoint` tuple (bare ABI names: `flatPremium`,
+ * `imputedCost`, `exposureCapPerHour`). Read both and emit a single shape so
+ * the upsert path doesn't have to branch.
+ */
+export function normalizeRawConfig(raw: unknown): NormalizedEndpointConfig {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  const pick = (...keys: string[]): bigint => {
+    for (const k of keys) {
+      const v = r[k];
+      if (v != null) return BigInt(v as string | number | bigint);
+    }
+    return 0n;
+  };
+  return {
+    paused: Boolean(r.paused),
+    percentBps: Number(r.percentBps ?? 0),
+    slaLatencyMs: Number(r.slaLatencyMs ?? 0),
+    flatPremium: pick("flatPremiumLamports", "flatPremium"),
+    imputedCost: pick("imputedCostLamports", "imputedCost"),
+    exposureCapPerHour: pick(
+      "exposureCapPerHourLamports",
+      "exposureCapPerHour",
+    ),
+  };
 }

@@ -108,4 +108,85 @@ describe("OnChainSyncService — per-network sync cursor (multi-evm WP T3)", () 
     });
     expect(readEndpointConfigsFrom.mock.calls[0][1]).toEqual(["0xabc", "0xdef"]);
   });
+
+  // Multi-network smoke G-? fix: the EVM adapter yields snapshots with
+  // bytes16 hex slugs (e.g. 0x68656c69757300000000000000000000) and EVM-named
+  // raw fields (flatPremium / imputedCost / exposureCapPerHour). The upsert
+  // path must decode the slug back to its UTF-8 string AND map the EVM raw
+  // names onto the DB's Solana-named columns; otherwise the upsert throws
+  // BigInt(undefined) and base-sepolia (or any EVM chain) never syncs.
+  it("decodes EVM bytes16 slug + maps EVM raw fields onto Solana-named DB columns", async () => {
+    syncCursorFindUnique.mockResolvedValue(null);
+    readEndpointConfigsFrom.mockResolvedValueOnce({
+      snapshots: [
+        {
+          // bytes16 hex for "helius"
+          slug: "0x68656c69757300000000000000000000",
+          authority: "0x0000000000000000000000000000000000000001",
+          maxTotalFeeBps: 200,
+          feeRecipients: [],
+          paused: false,
+          raw: {
+            paused: false,
+            flatPremium: 1000n,
+            percentBps: 200,
+            slaLatencyMs: 5000,
+            imputedCost: 0n,
+            exposureCapPerHour: 0n,
+          },
+        },
+      ],
+      scannedToBlock: SCANNED_TO,
+    });
+
+    await svc.refreshAllNetworks();
+
+    expect(endpointUpsert).toHaveBeenCalledTimes(1);
+    const args = endpointUpsert.mock.calls[0][0];
+    expect(args.where).toEqual({
+      network_slug: { network: "arc-testnet", slug: "helius" },
+    });
+    expect(args.create.slug).toBe("helius");
+    expect(args.create.flatPremiumLamports).toBe(1000n);
+    expect(args.create.percentBps).toBe(200);
+    expect(args.create.slaLatencyMs).toBe(5000);
+    expect(args.create.imputedCostLamports).toBe(0n);
+    expect(args.create.exposureCapPerHourLamports).toBe(0n);
+    expect(args.create.paused).toBe(false);
+    expect(args.update.flatPremiumLamports).toBe(1000n);
+  });
+
+  it("still upserts a Solana-shaped snapshot unchanged (slug already decoded, raw uses *Lamports suffix)", async () => {
+    syncCursorFindUnique.mockResolvedValue(null);
+    readEndpointConfigsFrom.mockResolvedValueOnce({
+      snapshots: [
+        {
+          slug: "helius",
+          authority: "11111111111111111111111111111111",
+          maxTotalFeeBps: 250,
+          feeRecipients: [],
+          paused: true,
+          raw: {
+            paused: true,
+            flatPremiumLamports: 1234n,
+            percentBps: 250,
+            slaLatencyMs: 800,
+            imputedCostLamports: 5_000n,
+            exposureCapPerHourLamports: 10_000_000n,
+          },
+        },
+      ],
+      scannedToBlock: SCANNED_TO,
+    });
+
+    await svc.refreshAllNetworks();
+
+    expect(endpointUpsert).toHaveBeenCalledTimes(1);
+    const args = endpointUpsert.mock.calls[0][0];
+    expect(args.create.slug).toBe("helius");
+    expect(args.create.flatPremiumLamports).toBe(1234n);
+    expect(args.create.imputedCostLamports).toBe(5_000n);
+    expect(args.create.exposureCapPerHourLamports).toBe(10_000_000n);
+    expect(args.create.paused).toBe(true);
+  });
 });
