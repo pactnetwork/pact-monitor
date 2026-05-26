@@ -240,6 +240,12 @@ program
       raw: options.raw,
       network: options.network as string | undefined,
       timeoutMs: (options.timeout as number) * 1000,
+      // The global --keypair flag is also forwarded to the EVM wallet loader
+      // so a single CLI invocation can override both code paths. Solana side
+      // already consumes the same value via the preAction hook that mirrors
+      // it into PACT_PRIVATE_KEY; here we hand the raw flag value to the EVM
+      // loader so it wins over PACT_EVM_PRIVATE_KEY / disk on EVM calls too.
+      evmKeypairPath: program.opts().keypair as string | undefined,
     });
     const jsonFlag = Boolean(program.opts().json);
     const quietFlag = Boolean(program.opts().quiet);
