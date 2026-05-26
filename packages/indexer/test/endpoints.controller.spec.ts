@@ -16,6 +16,7 @@ const makePoolState = (overrides: Partial<Record<string, unknown>> = {}) => ({
 });
 
 const makeEndpoint = (overrides: Partial<Record<string, unknown>> = {}) => ({
+  network: "solana-devnet",
   slug: "helius",
   flatPremiumLamports: 1000n,
   percentBps: 50,
@@ -39,9 +40,11 @@ const makePrisma = () => ({
       .mockResolvedValue([
         makeEndpoint(),
         makeEndpoint({
-          slug: "birdeye",
-          displayName: "Birdeye",
-          // No PoolState yet for this endpoint (lazy-create on first ingest).
+          network: "arc-testnet",
+          slug: "helius",
+          displayName: "Helius (Arc)",
+          // Same slug on a different network — exercises the disambiguation
+          // case from G-8 (multi-network smoke combined report).
           poolState: null,
         }),
       ]),
@@ -78,6 +81,9 @@ describe("EndpointsController", () => {
     expect(res.body).toHaveLength(2);
     const helius = res.body[0];
     expect(helius.slug).toBe("helius");
+    // G-8: network field must be included so clients can disambiguate
+    // same-slug rows across chains. Endpoint PK is (network, slug).
+    expect(helius.network).toBe("solana-devnet");
     // BigInts are emitted as decimal strings.
     expect(helius.flatPremiumLamports).toBe("1000");
     expect(helius.pool).toEqual(
@@ -100,10 +106,24 @@ describe("EndpointsController", () => {
     const res = await request(app.getHttpServer())
       .get("/api/endpoints")
       .expect(200);
-    const birdeye = res.body[1];
-    expect(birdeye.slug).toBe("birdeye");
-    expect(birdeye.pool).toBeNull();
-    expect(birdeye.feeRecipients).toEqual([]);
+    const second = res.body[1];
+    expect(second.slug).toBe("helius");
+    // G-8: network distinguishes this row from the solana-devnet helius row.
+    expect(second.network).toBe("arc-testnet");
+    expect(second.pool).toBeNull();
+    expect(second.feeRecipients).toEqual([]);
+  });
+
+  it("GET /api/endpoints disambiguates same-slug rows across networks (G-8)", async () => {
+    const res = await request(app.getHttpServer())
+      .get("/api/endpoints")
+      .expect(200);
+    const networks = res.body.map((r: { network: string }) => r.network);
+    expect(networks).toEqual(["solana-devnet", "arc-testnet"]);
+    // Both rows share slug=helius — the (network, slug) tuple is what
+    // makes them distinct.
+    const slugs = res.body.map((r: { slug: string }) => r.slug);
+    expect(slugs).toEqual(["helius", "helius"]);
   });
 
   it("GET /api/endpoints/:slug includes pool aggregates", async () => {
@@ -111,6 +131,8 @@ describe("EndpointsController", () => {
       .get("/api/endpoints/helius")
       .expect(200);
     expect(res.body.slug).toBe("helius");
+    // G-8: single-row endpoint response must also expose network.
+    expect(res.body.network).toBe("solana-devnet");
     expect(res.body.pool.totalPremiumsLamports).toBe("4000");
     expect(res.body.feeRecipients).toEqual([]);
     const args = prisma.endpoint.findUnique.mock.calls[0][0];
