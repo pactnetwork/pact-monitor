@@ -1,17 +1,20 @@
-// Verifies the ed25519 signature the pact-cli attaches to every request
-// (see packages/cli/src/lib/transport.ts:36-78). Only enforced when the
-// caller presents an `x-pact-agent` header — the dashboard demo path
-// using `?pact_wallet=…` is unaffected and remains unauthenticated.
+// Verifies the signature the pact-cli / SDK attaches to every request.
+// Only enforced when the caller presents an `x-pact-agent` header — the
+// dashboard demo path using `?pact_wallet=…` is unaffected and remains
+// unauthenticated.
 //
-// Canonical payload (UTF-8) — MUST match the CLI byte-for-byte:
+// Canonical payload (UTF-8) — two formats accepted during the one-release
+// compat window (see docs/superpowers/.../sdk-evm-signing.md §9):
 //
-//   v1\nMETHOD\nPATH\nTIMESTAMP\nNONCE\nBODY_HASH
+//   v2\nMETHOD\nPATH\nNETWORK\nTIMESTAMP\nNONCE\nBODY_HASH   (SDK ≥ G-5)
+//   v1\nMETHOD\nPATH\nTIMESTAMP\nNONCE\nBODY_HASH            (legacy CLI)
 //
 // where:
 //   - METHOD     is uppercase ("GET", "POST", ...)
 //   - PATH       is pathname + search exactly as sent
+//   - NETWORK    is `x-pact-network` header value, or "" when absent (v2 only)
 //   - TIMESTAMP  is milliseconds since epoch as a decimal string
-//   - NONCE      is the bs58-encoded random nonce from the CLI
+//   - NONCE      is the bs58-encoded random nonce from the signer
 //   - BODY_HASH  is sha256(body bytes) as a hex string, or "" for empty body
 
 import { createHash } from "node:crypto";
@@ -141,7 +144,19 @@ export function verifyPactSignature(
     const url = new URL(c.req.url);
     const path = url.pathname + url.search;
     const bodyHash = bodyBytes.length === 0 ? "" : sha256Hex(bodyBytes);
-    const payload = buildSignaturePayload({
+    // The signed bytes contain `x-pact-network` (or "" when absent). v2 bytes
+    // are tried first; v1 (no network field) is accepted for one release while
+    // the CLI catches up — see §9 of the spec.
+    const networkHeader = c.req.header("x-pact-network") ?? "";
+    const payloadV2 = buildSignaturePayload({
+      method: c.req.method,
+      path,
+      timestampMs: tsMs,
+      nonce,
+      bodyHash,
+      network: networkHeader,
+    });
+    const payloadV1 = buildSignaturePayload({
       method: c.req.method,
       path,
       timestampMs: tsMs,
@@ -174,18 +189,21 @@ export function verifyPactSignature(
       // EVM: EIP-191 personal_sign. The agent header is the claimed 0x
       // address and the signature is 0x-hex (65 bytes); viem recovers the
       // signer and verifies it matches the claimed address. We do NOT
-      // hand-roll secp256k1.
-      try {
-        verified = await verifyMessage({
-          address: agent as `0x${string}`,
-          message: payload,
-          signature: signature as `0x${string}`,
-        });
-      } catch {
-        verified = false;
+      // hand-roll secp256k1. Try v2 first, fall back to v1 (compat window).
+      for (const payload of [payloadV2, payloadV1]) {
+        try {
+          verified = await verifyMessage({
+            address: agent as `0x${string}`,
+            message: payload,
+            signature: signature as `0x${string}`,
+          });
+        } catch {
+          verified = false;
+        }
+        if (verified) break;
       }
     } else {
-      // Solana: Ed25519/bs58 path — unchanged from the original middleware.
+      // Solana: Ed25519/bs58 path. Try v2 first, fall back to v1.
       let pubkey: Uint8Array;
       let sig: Uint8Array;
       try {
@@ -197,14 +215,21 @@ export function verifyPactSignature(
       if (pubkey.length !== 32 || sig.length !== 64) {
         return reject(c, "pact_auth_bad_sig", "wrong signature or pubkey length");
       }
-      try {
-        verified = nacl.sign.detached.verify(
-          new TextEncoder().encode(payload),
-          sig,
-          pubkey,
-        );
-      } catch {
-        verified = false;
+      for (const payload of [payloadV2, payloadV1]) {
+        try {
+          if (
+            nacl.sign.detached.verify(
+              new TextEncoder().encode(payload),
+              sig,
+              pubkey,
+            )
+          ) {
+            verified = true;
+            break;
+          }
+        } catch {
+          // fall through and try the next payload
+        }
       }
     }
     if (!verified) {
@@ -219,14 +244,23 @@ export function verifyPactSignature(
   };
 }
 
+// When `network` is provided (including the empty string), produces the v2
+// payload that embeds the chain discriminator and closes the same-VM
+// cross-network replay window. When `network` is omitted, produces the
+// legacy v1 payload — kept for the one-release compat window while the CLI
+// catches up to the SDK.
 export function buildSignaturePayload(args: {
   method: string;
   path: string;
   timestampMs: number;
   nonce: string;
   bodyHash: string;
+  network?: string;
 }): string {
-  return `v1\n${args.method.toUpperCase()}\n${args.path}\n${args.timestampMs}\n${args.nonce}\n${args.bodyHash}`;
+  if (args.network === undefined) {
+    return `v1\n${args.method.toUpperCase()}\n${args.path}\n${args.timestampMs}\n${args.nonce}\n${args.bodyHash}`;
+  }
+  return `v2\n${args.method.toUpperCase()}\n${args.path}\n${args.network}\n${args.timestampMs}\n${args.nonce}\n${args.bodyHash}`;
 }
 
 function sha256Hex(bytes: Uint8Array): string {
