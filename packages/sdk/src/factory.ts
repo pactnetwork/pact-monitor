@@ -237,6 +237,7 @@ export async function createPact(config: PactConfig): Promise<PactInstance> {
     resolver,
     proxyBaseUrl: net.proxyBaseUrl,
     project: cfg.project,
+    network: cfg.endpointNetwork,
     signRequests: cfg.signRequests,
     agentPubkey,
     secretKey,

@@ -2,6 +2,10 @@ import { describe, it, expect } from "vitest";
 import {
   ARC_TESTNET_CHAIN_ID,
   ARC_TESTNET_USDC,
+  BASE_SEPOLIA_CHAIN_ID,
+  BASE_SEPOLIA_USDC,
+  BASE_MAINNET_CHAIN_ID,
+  BASE_MAINNET_USDC,
   EXPECTED_USDC_DECIMALS,
   MAX_BATCH_SIZE,
   MIN_PREMIUM,
@@ -25,6 +29,16 @@ describe("constants — parity with ProtocolInvariants.sol / constants.rs", () =
       "0x3600000000000000000000000000000000000000",
     );
     expect(EXPECTED_USDC_DECIMALS).toBe(6);
+  });
+
+  it("Base Sepolia network constants match chains.json", () => {
+    expect(BASE_SEPOLIA_CHAIN_ID).toBe(84532);
+    expect(BASE_SEPOLIA_USDC).toBe("0x036CbD53842c5426634e7929541eC2318f3dCF7e");
+  });
+
+  it("Base Mainnet network constants match chains.json", () => {
+    expect(BASE_MAINNET_CHAIN_ID).toBe(8453);
+    expect(BASE_MAINNET_USDC).toBe("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913");
   });
 
   it("protocol parity invariants match constants.rs (spec §3)", () => {

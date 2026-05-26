@@ -25,6 +25,8 @@ fs_permissions = [{ access = "read", path = "config/" }]
 # committed. Verified endpoint per design §4.8.4.
 [rpc_endpoints]
 arc_testnet = "${ARC_TESTNET_RPC_URL}"
+base_sepolia = "${BASE_SEPOLIA_RPC_URL}"
+base_mainnet = "${BASE_MAINNET_RPC_URL}"
 
 # Contract verification against arcscan: the exact flow (Etherscan-compatible
 # API vs custom) is an unconfirmed residual unknown in design §4.8.4. Wiring

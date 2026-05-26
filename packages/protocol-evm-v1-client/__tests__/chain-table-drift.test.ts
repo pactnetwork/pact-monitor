@@ -4,6 +4,10 @@ import { join } from "node:path";
 import {
   ARC_TESTNET_CHAIN_ID,
   ARC_TESTNET_USDC,
+  BASE_SEPOLIA_CHAIN_ID,
+  BASE_SEPOLIA_USDC,
+  BASE_MAINNET_CHAIN_ID,
+  BASE_MAINNET_USDC,
   EXPECTED_USDC_DECIMALS,
 } from "../src/constants.js";
 
@@ -24,6 +28,26 @@ describe("chain-table drift — chains.json vs constants.ts", () => {
   it("arc-testnet USDC address matches constants.ts export (case-insensitive)", () => {
     expect(chains["arc-testnet"].usdcAddress.toLowerCase()).toBe(
       ARC_TESTNET_USDC.toLowerCase(),
+    );
+  });
+
+  it("base-sepolia chainId matches constants.ts export", () => {
+    expect(chains["base-sepolia"].chainId).toBe(BASE_SEPOLIA_CHAIN_ID);
+  });
+
+  it("base-sepolia USDC address matches constants.ts export (case-insensitive)", () => {
+    expect(chains["base-sepolia"].usdcAddress.toLowerCase()).toBe(
+      BASE_SEPOLIA_USDC.toLowerCase(),
+    );
+  });
+
+  it("base-mainnet chainId matches constants.ts export", () => {
+    expect(chains["base-mainnet"].chainId).toBe(BASE_MAINNET_CHAIN_ID);
+  });
+
+  it("base-mainnet USDC address matches constants.ts export (case-insensitive)", () => {
+    expect(chains["base-mainnet"].usdcAddress.toLowerCase()).toBe(
+      BASE_MAINNET_USDC.toLowerCase(),
     );
   });
 

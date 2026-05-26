@@ -96,6 +96,8 @@ export interface EvmAdapterOptions {
    * honor PACT_EVM_REGISTRY / PACT_EVM_POOL / PACT_EVM_SETTLER overlays.
    */
   deployment?: PactDeployment;
+  /** Block tag for finality checks. Defaults to "finalized". */
+  finalityBlockTag?: "safe" | "finalized";
 }
 
 // ---------------------------------------------------------------------------
@@ -119,6 +121,7 @@ export class EvmAdapter implements ChainAdapter {
   private readonly blockTimeMs: number;
   private readonly deploymentBlock: bigint;
   private readonly deployment: PactDeployment;
+  private readonly finalityBlockTag: "safe" | "finalized";
 
   constructor(opts: EvmAdapterOptions) {
     if (opts.descriptor.vm !== "evm") {
@@ -133,6 +136,7 @@ export class EvmAdapter implements ChainAdapter {
     this.finalityBlocks = opts.finalityBlocks;
     this.blockTimeMs = opts.blockTimeMs;
     this.deploymentBlock = opts.deploymentBlock;
+    this.finalityBlockTag = opts.finalityBlockTag ?? "finalized";
     // Cache deployment at construction time. Caller passes `deployment`
     // (typically resolveDeployment(chainId, process.env)) to honor env
     // overlays; otherwise falls back to the baked-in DEPLOYMENTS map.
@@ -226,10 +230,10 @@ export class EvmAdapter implements ChainAdapter {
       functionName: "authority",
     }) as Address;
 
-    // 2. Resolve "finalized" to a concrete block first so every chunk has a
+    // 2. Resolve the finality blockTag to a concrete block first so every chunk has a
     //    stable upper bound (and so we can persist it as the next cursor).
     const finalizedBlock = await this.publicClient.getBlock({
-      blockTag: "finalized",
+      blockTag: this.finalityBlockTag,
     });
     const finalizedNumber = finalizedBlock.number;
 
@@ -595,9 +599,9 @@ export class EvmAdapter implements ChainAdapter {
   // -------------------------------------------------------------------------
   // tailSettlementEvents (optional)
   //
-  // Yields finalized CallSettled events for D6 §5.2 reconcile-tail consumer
-  // (WP-MN-04 T3 reorg module). Polls the 'finalized' block tag and advances
-  // fromBlock after each sweep.
+  //   Yields finalized CallSettled events for D6 §5.2 reconcile-tail consumer
+  //   (WP-MN-04 T3 reorg module). Polls the configured finality block tag and
+  //   advances fromBlock after each sweep.
   // -------------------------------------------------------------------------
   async *tailSettlementEvents(opts: TailOptions): AsyncIterable<{
     callId: string;
@@ -615,7 +619,7 @@ export class EvmAdapter implements ChainAdapter {
     const pollMs = opts.pollIntervalMs ?? 60_000;
 
     while (true) {
-      const finalized = await this.publicClient.getBlock({ blockTag: "finalized" });
+      const finalized = await this.publicClient.getBlock({ blockTag: this.finalityBlockTag });
       if (finalized.number == null) {
         await sleep(pollMs);
         continue;

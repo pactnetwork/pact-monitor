@@ -32,7 +32,7 @@ const defaultEndpoint = {
   displayName: "Helius RPC",
 };
 
-const mockRegistry = { get: vi.fn(), size: 1 };
+const mockRegistry = { get: vi.fn(), getNetworksForSlug: vi.fn().mockResolvedValue([]), size: 1 };
 const mockDemoAllowlist = { has: vi.fn() };
 const mockBalanceCheck: BalanceCheck = {
   check: vi.fn(),

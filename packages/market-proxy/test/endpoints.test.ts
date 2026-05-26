@@ -3,14 +3,15 @@ import { EndpointRegistry } from "../src/lib/endpoints.js";
 
 const mockRow = {
   slug: "helius",
-  flat_premium_lamports: "500",
-  percent_bps: 10,
-  sla_latency_ms: 1200,
-  imputed_cost_lamports: "50000",
-  exposure_cap_per_hour_lamports: "1000000",
+  network: "solana-devnet",
+  flatPremiumLamports: "500",
+  percentBps: 10,
+  slaLatencyMs: 1200,
+  imputedCostLamports: "50000",
+  exposureCapPerHourLamports: "1000000",
   paused: false,
-  upstream_base: "https://mainnet.helius-rpc.com",
-  display_name: "Helius RPC",
+  upstreamBase: "https://mainnet.helius-rpc.com",
+  displayName: "Helius RPC",
 };
 
 describe("EndpointRegistry", () => {

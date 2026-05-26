@@ -61,6 +61,8 @@ export interface PactConfig {
 
   /** Sent as the `x-pact-project` header (proxy requires it). Default "default". */
   project?: string;
+  /** Endpoint network discriminator sent as X-Pact-Network header (e.g. "base-sepolia", "arc-testnet"). Disambiguates same-slug endpoints across chains. */
+  endpointNetwork?: string;
 
   /**
    * Local durable observation buffer path (Node). Default
@@ -109,6 +111,7 @@ export interface ResolvedConfig {
   defaultAllowanceUsdc: number;
   autoTopUp?: AutoTopUpConfig;
   project: string;
+  endpointNetwork?: string;
   /** undefined in a browser (no node:fs) — selectStorage uses memory then. */
   storagePath?: string;
   storage?: PactStorage;
@@ -242,6 +245,7 @@ export function validateConfig(config: PactConfig): ResolvedConfig {
     defaultAllowanceUsdc,
     autoTopUp: config.autoTopUp,
     project: config.project ?? "default",
+    endpointNetwork: config.endpointNetwork,
     storagePath: config.storagePath ?? defaultStoragePath(),
     storage: config.storage,
     indexerPollIntervalMs,
