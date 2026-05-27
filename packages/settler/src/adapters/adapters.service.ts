@@ -5,6 +5,7 @@ import {
   EvmAdapter,
   SolanaAdapter,
   getChain,
+  listChains,
 } from "@pact-network/shared";
 import { resolveDeployment } from "@pact-network/protocol-evm-v1-client";
 import { privateKeyToAccount, type PrivateKeyAccount } from "viem/accounts";
@@ -89,6 +90,33 @@ export class AdaptersService implements OnModuleInit {
     this.logger.log(
       `[settler] adapters bootstrapped: ${enabled.join(", ")} | legacyDirectSolana=${this.legacyDirectSolana}`,
     );
+
+    // Orphan-signer guard (smoke F3 / feedback_di_boot_test.md).
+    // A PACT_SETTLER_KEYPAIR_<NETWORK> env set for a network NOT in
+    // PACT_ENABLED_NETWORKS is almost always a silent-degradation bug:
+    // operator wired the signer but forgot to enable the network, so the
+    // settler boots without the adapter and nothing surfaces the mismatch
+    // until a settlement event for that network arrives. The smoke caught
+    // this exact shape — settler .env had PACT_SETTLER_KEYPAIR_{ARC,BASE}
+    // but no PACT_ENABLED_NETWORKS, so only solana-devnet booted. Warn
+    // loudly per orphan so the misconfiguration is caught at boot.
+    const enabledSet = new Set(enabled);
+    const orphans: string[] = [];
+    for (const chain of listChains()) {
+      if (enabledSet.has(chain.network)) continue;
+      const envKey = `PACT_SETTLER_KEYPAIR_${chain.network.replace(/-/g, "_").toUpperCase()}`;
+      if (this.config.get<string>(envKey)) {
+        orphans.push(`${envKey} (network "${chain.network}")`);
+      }
+    }
+    if (orphans.length > 0) {
+      this.logger.warn(
+        `[settler] orphan signer env(s) detected — keypair set but network not in ` +
+          `PACT_ENABLED_NETWORKS, so the adapter will NOT boot and any settlement ` +
+          `event for these networks will fail at submit. Either add the network to ` +
+          `PACT_ENABLED_NETWORKS or unset the env. Orphans: ${orphans.join(", ")}`,
+      );
+    }
   }
 
   getAdapter(network: string): ChainAdapter {
