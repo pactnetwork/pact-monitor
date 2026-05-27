@@ -15,12 +15,17 @@ vi.mock("@pact-network/shared", () => {
   const CHAINS: Record<string, { vm: string; network: string; usdcMint: string; usdcDecimals: number; chainId: number; rpcUrl: string; finalityBlocks: number; blockTimeMs: number; deploymentBlock: number }> = {
     "solana-devnet": { vm: "solana", network: "solana-devnet", usdcMint: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU", usdcDecimals: 6, chainId: 0, rpcUrl: "", finalityBlocks: 0, blockTimeMs: 0, deploymentBlock: 0 },
     "arc-testnet":   { vm: "evm",    network: "arc-testnet",   usdcMint: "0x0", usdcDecimals: 6, chainId: 5042002, rpcUrl: "https://rpc.testnet.arc.network", finalityBlocks: 64, blockTimeMs: 500, deploymentBlock: 42953139 },
+    "base-sepolia":  { vm: "evm",    network: "base-sepolia",  usdcMint: "0x0", usdcDecimals: 6, chainId: 84532,   rpcUrl: "https://sepolia.base.org",      finalityBlocks: 1,  blockTimeMs: 2000, deploymentBlock: 41969204 },
   };
 
   function getChain(name: string) {
     const c = CHAINS[name];
     if (!c) throw new Error(`unknown network "${name}"`);
     return { ...c };
+  }
+
+  function listChains() {
+    return Object.values(CHAINS).map((c) => ({ ...c }));
   }
 
   class SolanaAdapter {
@@ -39,7 +44,7 @@ vi.mock("@pact-network/shared", () => {
     }
   }
 
-  return { getChain, SolanaAdapter, EvmAdapter };
+  return { getChain, listChains, SolanaAdapter, EvmAdapter };
 });
 
 // ---------------------------------------------------------------------------
@@ -255,5 +260,65 @@ describe("AdaptersService (settler)", () => {
     const svc = new AdaptersService(makeConfig());
     svc.onModuleInit();
     expect(() => svc.getAdapter("solana-mainnet")).toThrow(/No adapter for network/);
+  });
+
+  // 2026-05-27 smoke F3 regression: settler .env carrying
+  // PACT_SETTLER_KEYPAIR_<NETWORK> without that network in
+  // PACT_ENABLED_NETWORKS used to silently boot only solana-devnet. The guard
+  // must emit a loud warn with the offending env key + network name.
+  it("warns loudly when PACT_SETTLER_KEYPAIR_* is set for a network not in PACT_ENABLED_NETWORKS (smoke F3)", () => {
+    const warnSpy = vi
+      .spyOn(Logger.prototype, "warn")
+      .mockImplementation(() => {});
+
+    const svc = new AdaptersService(
+      makeConfig({
+        // Default PACT_ENABLED_NETWORKS (= solana-devnet only)
+        PACT_SETTLER_KEYPAIR_ARC_TESTNET:
+          "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+        PACT_SETTLER_KEYPAIR_BASE_SEPOLIA:
+          "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+      }),
+    );
+    svc.onModuleInit();
+
+    // The warn must name both orphan env keys (so an operator grepping the
+    // boot log can locate the misconfiguration directly).
+    const warnCalls = warnSpy.mock.calls
+      .map((c) => String(c[0]))
+      .filter((m) => m.includes("orphan signer env"));
+    expect(warnCalls.length).toBe(1);
+    expect(warnCalls[0]).toMatch(/PACT_SETTLER_KEYPAIR_ARC_TESTNET/);
+    expect(warnCalls[0]).toMatch(/PACT_SETTLER_KEYPAIR_BASE_SEPOLIA/);
+    expect(warnCalls[0]).toMatch(/arc-testnet/);
+    expect(warnCalls[0]).toMatch(/base-sepolia/);
+
+    warnSpy.mockRestore();
+  });
+
+  // 2026-05-27 smoke F3 regression: when PACT_ENABLED_NETWORKS DOES include
+  // the network, no orphan warn must fire — otherwise the warn floods every
+  // healthy multi-network boot and operators learn to ignore it.
+  it("does NOT warn when PACT_SETTLER_KEYPAIR_* matches an enabled network (smoke F3)", () => {
+    const warnSpy = vi
+      .spyOn(Logger.prototype, "warn")
+      .mockImplementation(() => {});
+
+    const svc = new AdaptersService(
+      makeConfig({
+        PACT_ENABLED_NETWORKS: "solana-devnet,arc-testnet,base-sepolia",
+        PACT_SETTLER_KEYPAIR_ARC_TESTNET:
+          "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+        PACT_SETTLER_KEYPAIR_BASE_SEPOLIA:
+          "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+      }),
+    );
+    svc.onModuleInit();
+
+    const orphanWarns = warnSpy.mock.calls
+      .map((c) => String(c[0]))
+      .filter((m) => m.includes("orphan signer env"));
+    expect(orphanWarns).toEqual([]);
+    warnSpy.mockRestore();
   });
 });
