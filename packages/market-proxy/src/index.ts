@@ -1,3 +1,10 @@
+// Auto-load packages/market-proxy/.env so `pnpm start` matches the convention
+// the indexer/settler get for free via @nestjs/config (smoke F4). Without
+// this, `node dist/index.js` ignores .env and the zod env-schema crashes with
+// 5x `invalid_type ... "received": "undefined"` on local boot. No-op in
+// production (Cloud Run injects vars directly from Secret Manager and there
+// is no .env on the container).
+import "dotenv/config";
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { pathToFileURL } from "node:url";
