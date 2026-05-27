@@ -506,6 +506,139 @@ describe("EvmAdapter.readEndpointConfigsFrom (multi-evm WP T3)", () => {
     expect(res.snapshots).toHaveLength(2);
   });
 
+  // 2026-05-27 smoke F1 regression: readEndpointConfigsFrom MUST bytes16-encode
+  // human-string knownSlugs before handing them to getEndpoint(bytes16). The
+  // indexer's Postgres `Endpoint.slug` column stores "dummy" / "helius" — raw
+  // human strings — and the original cron path passed those straight through,
+  // which made viem reject the first cron tick with
+  // `ContractFunctionExecutionError: Size of bytes "dummy" (bytes5) does not
+  // match expected size (bytes16)`. This test asserts every multicall arg is
+  // canonical bytes16 hex (0x + 32 hex chars), and that the "dummy" human
+  // slug specifically encodes to the same bytes16 the on-chain
+  // EndpointRegistered topic uses (UTF-8 right-padded with zeros).
+  it("bytes16-encodes human-string knownSlugs before multicall (smoke F1)", async () => {
+    const adapter = new EvmAdapter({ ...BASE_OPTS, deploymentBlock: 0n });
+    mockReadContract.mockResolvedValue(AUTHORITY);
+    mockGetBlock.mockResolvedValue({ number: 5_000n });
+    mockGetContractEvents.mockResolvedValue([]);
+    mockMulticall.mockResolvedValue([cfg]);
+
+    // Pass human strings exactly as the indexer reads them out of Postgres.
+    await adapter.readEndpointConfigsFrom!(0n, ["dummy"]);
+
+    const calledArgs = (
+      mockMulticall.mock.calls[0][0] as {
+        contracts: Array<{ args: readonly unknown[] }>;
+      }
+    ).contracts.map((c) => c.args[0] as string);
+
+    // Every arg must satisfy bytes16 hex shape. Without F1 fix, viem rejects
+    // the call BEFORE reaching this point — so the assertion below double-
+    // guards (length AND regex) for any future regression.
+    for (const arg of calledArgs) {
+      expect(arg).toMatch(/^0x[0-9a-f]{32}$/);
+    }
+    // "dummy" = 5 bytes UTF-8 (0x64756d6d79) right-padded with 11 zero bytes
+    // = 16 bytes total = 0x + 32 hex chars.
+    expect(calledArgs).toContain("0x64756d6d790000000000000000000000");
+  });
+
+  // 2026-05-27 smoke F1 regression — mixed input: human string AND pre-encoded
+  // bytes16 hex (the discovery-scan output) MUST coexist in the same call and
+  // collapse to a single normalized bytes16 set, NOT duplicate.
+  it("normalizes mixed human-string + bytes16-hex knownSlugs without duplicating (smoke F1)", async () => {
+    const adapter = new EvmAdapter({ ...BASE_OPTS, deploymentBlock: 0n });
+    mockReadContract.mockResolvedValue(AUTHORITY);
+    mockGetBlock.mockResolvedValue({ number: 5_000n });
+    mockGetContractEvents.mockResolvedValue([]);
+    mockMulticall.mockResolvedValue([cfg]);
+
+    // "dummy" as human string AND the same slug as bytes16 hex — must dedupe.
+    const dummyHex = "0x64756d6d790000000000000000000000";
+    await adapter.readEndpointConfigsFrom!(0n, ["dummy", dummyHex]);
+
+    const calledArgs = (
+      mockMulticall.mock.calls[0][0] as {
+        contracts: Array<{ args: readonly unknown[] }>;
+      }
+    ).contracts.map((c) => c.args[0] as string);
+
+    expect(calledArgs).toHaveLength(1);
+    expect(calledArgs[0]).toBe(dummyHex);
+  });
+
+  // 2026-05-27 smoke F2 regression: the chunker MUST respect a per-chain cap
+  // smaller than the default 9 500. Public `sepolia.base.org` rejects ranges
+  // larger than 500 blocks with `InvalidParamsRpcError`; the previous code
+  // hard-coded `LOG_RANGE_CHUNK = 9_500n`, so the first cron tick after boot
+  // crashed before ever scanning any chunk. Parameterised here via the new
+  // `EvmAdapterOptions.logRangeChunk` so this single test can simulate any
+  // chain's cap (Arc 10 000 / Base 500 / Alchemy 50 000) with no fixture
+  // wiring.
+  it.each([
+    { name: "base-sepolia public RPC (500-block cap)", chunk: 500n },
+    { name: "very tight cap (100-block)", chunk: 100n },
+    { name: "exactly 1-block windows", chunk: 1n },
+  ])(
+    "chunks getContractEvents to <= per-chain logRangeChunk inclusive blocks (smoke F2, %s)",
+    async ({ chunk }) => {
+      const adapter = new EvmAdapter({
+        ...BASE_OPTS,
+        deploymentBlock: 0n,
+        logRangeChunk: chunk,
+      });
+
+      mockReadContract.mockResolvedValue(AUTHORITY);
+      // finalized = chunk * 3 + 1 — guarantees > 3 chunks regardless of value.
+      const finalized = chunk * 3n + 1n;
+      mockGetBlock.mockResolvedValue({ number: finalized });
+      mockGetContractEvents.mockResolvedValue([]);
+
+      await adapter.readEndpointConfigs();
+
+      // Every emitted [fromBlock, toBlock] window MUST satisfy
+      //   to - from + 1 <= chunk
+      // (the inclusive cap the RPC enforces). Without the fix, the constant
+      // 9_500 wins and the assertion fails for chunk=500.
+      const calls = mockGetContractEvents.mock.calls;
+      expect(calls.length).toBeGreaterThan(0);
+      for (const call of calls) {
+        const args = call[0] as { fromBlock: bigint; toBlock: bigint };
+        const inclusive = args.toBlock - args.fromBlock + 1n;
+        expect(inclusive).toBeLessThanOrEqual(chunk);
+      }
+      // And the final chunk MUST land exactly on `finalized` so we don't drop
+      // a tail block when the chain height isn't a clean multiple of `chunk`.
+      const last = calls[calls.length - 1][0] as { toBlock: bigint };
+      expect(last.toBlock).toBe(finalized);
+    },
+  );
+
+  // 2026-05-27 smoke F2 regression: the descriptor's logRangeChunk MUST flow
+  // through to the chunker when the option override is omitted (the production
+  // wiring path — AdaptersService doesn't pass `logRangeChunk` explicitly).
+  it("falls back to descriptor.logRangeChunk when option override is omitted (smoke F2)", async () => {
+    const adapter = new EvmAdapter({
+      ...BASE_OPTS,
+      deploymentBlock: 0n,
+      // Mutate descriptor inline — a chain whose chains.json sets 250.
+      descriptor: { ...descriptor, logRangeChunk: 250 },
+    });
+
+    mockReadContract.mockResolvedValue(AUTHORITY);
+    mockGetBlock.mockResolvedValue({ number: 1_000n });
+    mockGetContractEvents.mockResolvedValue([]);
+
+    await adapter.readEndpointConfigs();
+
+    const calls = mockGetContractEvents.mock.calls;
+    for (const call of calls) {
+      const args = call[0] as { fromBlock: bigint; toBlock: bigint };
+      const inclusive = args.toBlock - args.fromBlock + 1n;
+      expect(inclusive).toBeLessThanOrEqual(250n);
+    }
+  });
+
   // Review #226 F4: readEndpointConfigsFrom must slice feeRecipients to the
   // on-chain feeRecipientCount before projecting, exactly like getEndpoint
   // does — otherwise the zero-padded FeeRecipient[8] tail leaks into the

@@ -8,7 +8,8 @@
     "blockTimeMs": 500,
     "finalityBlocks": 64,
     "finalityBlockTag": "finalized",
-    "deploymentBlock": 42953139
+    "deploymentBlock": 42953139,
+    "logRangeChunk": 9500
   },
   "base-sepolia": {
     "chainId": 84532,
@@ -19,7 +20,8 @@
     "blockTimeMs": 2000,
     "finalityBlocks": 1,
     "finalityBlockTag": "safe",
-    "deploymentBlock": 41969204
+    "deploymentBlock": 41969204,
+    "logRangeChunk": 500
   },
   "base-mainnet": {
     "chainId": 8453,
@@ -30,6 +32,7 @@
     "blockTimeMs": 2000,
     "finalityBlocks": 1,
     "finalityBlockTag": "safe",
-    "deploymentBlock": null
+    "deploymentBlock": null,
+    "logRangeChunk": 500
   }
 }

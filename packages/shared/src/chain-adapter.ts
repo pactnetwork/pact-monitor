@@ -31,6 +31,15 @@ export interface ChainDescriptor {
   deploymentBlock?: number;
   /** EVM only — block tag for finality checks. Default "finalized". Base/OP Stack chains may use "safe". */
   finalityBlockTag?: "safe" | "finalized";
+  /**
+   * EVM only — inclusive `eth_getLogs` block-range size for the
+   * EndpointRegistered discovery scan. Public RPCs cap this per provider:
+   * `sepolia.base.org` rejects ranges > 500 with `InvalidParamsRpcError`;
+   * Arc Testnet accepts up to 10 000. Fed into `EvmAdapter` so the chunk loop
+   * stays inside each chain's cap. Falls back to a conservative default
+   * (`EvmAdapter.DEFAULT_LOG_RANGE_CHUNK`) when omitted.
+   */
+  logRangeChunk?: number;
 }
 
 export interface EndpointConfigSnapshot {
