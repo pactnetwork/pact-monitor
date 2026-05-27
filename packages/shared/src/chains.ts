@@ -32,6 +32,7 @@ const _evmChains = JSON.parse(readFileSync(_evmChainsPath, "utf-8")) as Record<
     finalityBlocks?: number | null;
     finalityBlockTag?: string | null;
     deploymentBlock?: number | null;
+    logRangeChunk?: number | null;
   }
 >;
 
@@ -49,6 +50,7 @@ const _evmEntries: Record<string, ChainDescriptor> = Object.fromEntries(
       ...(c.finalityBlocks != null && { finalityBlocks: c.finalityBlocks }),
       ...(c.finalityBlockTag != null && { finalityBlockTag: c.finalityBlockTag as "safe" | "finalized" }),
       ...(c.deploymentBlock != null && { deploymentBlock: c.deploymentBlock }),
+      ...(c.logRangeChunk != null && { logRangeChunk: c.logRangeChunk }),
     },
   ]),
 );

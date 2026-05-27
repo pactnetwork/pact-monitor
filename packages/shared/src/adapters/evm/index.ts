@@ -73,10 +73,18 @@ const ERC20_ABI = parseAbi([
 const MULTICALL3_ADDRESS: Address =
   "0xcA11bde05977b3631167028862bE2a173976CA11";
 
-// Arc Testnet (and many public RPCs) cap eth_getLogs at 10,000 blocks per
-// request. We use a conservative ceiling and chunk; networks with looser
-// limits also accept smaller chunks at negligible cost.
-const LOG_RANGE_CHUNK = 9_500n;
+// Default `eth_getLogs` block-range window. Arc Testnet caps inclusive ranges
+// at 10 000; Base Sepolia's public RPC (`sepolia.base.org`) caps tighter and
+// rejects > 500 with `InvalidParamsRpcError`. Per-chain overrides come from
+// `chains.json.logRangeChunk` via `EvmAdapterOptions.logRangeChunk`. The
+// default below is the looser-of-the-two so unconfigured chains stay below
+// Arc's cap; tight chains MUST set their own override.
+const DEFAULT_LOG_RANGE_CHUNK = 9_500n;
+
+// Regex matching the canonical bytes16 hex slug form (lowercase `0x` + 32 hex
+// chars). Used in `readEndpointConfigsFrom` to detect when a caller passed an
+// already-encoded slug vs. a human string that needs `slugToBytes16` first.
+const BYTES16_RE = /^0x[0-9a-fA-F]{32}$/;
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -88,6 +96,15 @@ export interface EvmAdapterOptions {
   finalityBlocks: number;
   blockTimeMs: number;
   deploymentBlock: bigint;
+  /**
+   * Inclusive `eth_getLogs` block-range window for the EndpointRegistered
+   * discovery scan. Public RPCs cap per chain (Arc 10 000; Base Sepolia 500),
+   * so each chain's value comes from `chains.json.logRangeChunk` via
+   * `ChainDescriptor.logRangeChunk` and is plumbed through here. Falls back to
+   * `DEFAULT_LOG_RANGE_CHUNK` when unset. Test parameter — overriding lets a
+   * single test fixture simulate any chain's cap.
+   */
+  logRangeChunk?: bigint;
   signer?: { privateKey: Hex } | { account: PrivateKeyAccount };
   /**
    * Pre-resolved contract addresses. If omitted, falls back to
@@ -122,6 +139,7 @@ export class EvmAdapter implements ChainAdapter {
   private readonly deploymentBlock: bigint;
   private readonly deployment: PactDeployment;
   private readonly finalityBlockTag: "safe" | "finalized";
+  private readonly logRangeChunk: bigint;
 
   constructor(opts: EvmAdapterOptions) {
     if (opts.descriptor.vm !== "evm") {
@@ -137,6 +155,16 @@ export class EvmAdapter implements ChainAdapter {
     this.blockTimeMs = opts.blockTimeMs;
     this.deploymentBlock = opts.deploymentBlock;
     this.finalityBlockTag = opts.finalityBlockTag ?? "finalized";
+    this.logRangeChunk =
+      opts.logRangeChunk ??
+      (opts.descriptor.logRangeChunk != null
+        ? BigInt(opts.descriptor.logRangeChunk)
+        : DEFAULT_LOG_RANGE_CHUNK);
+    if (this.logRangeChunk <= 0n) {
+      throw new Error(
+        `EvmAdapter: logRangeChunk must be > 0 (got ${this.logRangeChunk})`,
+      );
+    }
     // Cache deployment at construction time. Caller passes `deployment`
     // (typically resolveDeployment(chainId, process.env)) to honor env
     // overlays; otherwise falls back to the baked-in DEPLOYMENTS map.
@@ -242,17 +270,29 @@ export class EvmAdapter implements ChainAdapter {
     //    then scan [fromBlock..finalized] in LOG_RANGE_CHUNK windows for any
     //    NEW EndpointRegistered slugs (Arc + many public RPCs cap eth_getLogs
     //    at 10k blocks; we harvest per-chunk so we never hold all logs at once).
+    // knownSlugs may arrive as either human strings ("dummy" — the form the
+    // indexer's Postgres `Endpoint.slug` column stores) OR pre-encoded bytes16
+    // hex. Multicall's `getEndpoint(bytes16)` rejects raw strings with
+    // `ContractFunctionExecutionError: Size of bytes "X" (bytesN) does not
+    // match expected size (bytes16)`, so we normalize EVERY known slug to
+    // bytes16 hex before adding to the dedupe set. The on-chain
+    // EndpointRegistered topic also carries bytes16, so the merge is lossless.
     const slugSet = new Set<Hex>();
-    for (const k of knownSlugs) slugSet.add(k.toLowerCase() as Hex);
+    for (const k of knownSlugs) {
+      const hex = BYTES16_RE.test(k)
+        ? (k.toLowerCase() as Hex)
+        : slugToBytes16(k);
+      slugSet.add(hex);
+    }
     for (
       let from = fromBlock;
       from <= finalizedNumber;
-      from += LOG_RANGE_CHUNK
+      from += this.logRangeChunk
     ) {
       const to =
-        from + LOG_RANGE_CHUNK - 1n > finalizedNumber
+        from + this.logRangeChunk - 1n > finalizedNumber
           ? finalizedNumber
-          : from + LOG_RANGE_CHUNK - 1n;
+          : from + this.logRangeChunk - 1n;
       const chunkLogs = await this.publicClient.getContractEvents({
         address: registryAddr,
         abi: PactRegistryAbi,
@@ -632,12 +672,12 @@ export class EvmAdapter implements ChainAdapter {
         for (
           let from = fromBlock;
           from <= finalized.number;
-          from += LOG_RANGE_CHUNK
+          from += this.logRangeChunk
         ) {
           const to =
-            from + LOG_RANGE_CHUNK - 1n > finalized.number
+            from + this.logRangeChunk - 1n > finalized.number
               ? finalized.number
-              : from + LOG_RANGE_CHUNK - 1n;
+              : from + this.logRangeChunk - 1n;
           const logs = await this.publicClient.getContractEvents({
             address: settlerAddr,
             abi: PactEventsAbi,
