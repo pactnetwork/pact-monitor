@@ -10,7 +10,13 @@ import {
 import { resolveDeployment } from "@pact-network/protocol-evm-v1-client";
 import { privateKeyToAccount, type PrivateKeyAccount } from "viem/accounts";
 import type { Hex } from "viem";
-import { Keypair } from "@solana/web3.js";
+import { Keypair, PublicKey } from "@solana/web3.js";
+import bs58 from "bs58";
+
+// The deployed Solana program. Mirrors SubmitterService.DEFAULT_PROGRAM_ID so
+// the adapter settle path derives PDAs under the same program the legacy
+// submitter path uses; both read the PROGRAM_ID env first.
+const DEFAULT_PROGRAM_ID = "5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5";
 
 @Injectable()
 export class AdaptersService implements OnModuleInit {
@@ -38,7 +44,15 @@ export class AdaptersService implements OnModuleInit {
 
       if (descriptor.vm === "solana") {
         const rpcUrl = this.resolveRpcUrl(name);
-        const adapter = new SolanaAdapter({ descriptor, rpcUrl });
+        // FS7: without an explicit programId the SolanaAdapter falls back to the
+        // client's mainnet PROGRAM_ID constant and derives endpoint/pool PDAs
+        // under the wrong program, so devnet settle_batch can never find the
+        // on-chain accounts. Read PROGRAM_ID the same way the legacy submitter
+        // does so both paths target the deployed program.
+        const programId = new PublicKey(
+          this.config.get<string>("PROGRAM_ID") ?? DEFAULT_PROGRAM_ID,
+        );
+        const adapter = new SolanaAdapter({ descriptor, rpcUrl, programId });
         this.adapters.set(name, adapter);
 
         // Load signer (per-network env or shared PACT_SETTLER_KEYPAIR fallback)
@@ -169,13 +183,34 @@ export class AdaptersService implements OnModuleInit {
         ? this.config.get<string>("PACT_SETTLER_KEYPAIR")
         : undefined;
     const raw = perNetwork ?? fallback;
-    if (!raw) return null;
-    try {
-      return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(raw)));
-    } catch (e) {
-      this.logger.warn(`Failed to parse keypair for ${network}: ${e}`);
-      return null;
+    if (raw) {
+      try {
+        return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(raw)));
+      } catch (e) {
+        this.logger.warn(`Failed to parse keypair for ${network}: ${e}`);
+        return null;
+      }
     }
+    // FS6: share the Solana signer source with the legacy submitter path.
+    // Deployments commonly set only SETTLEMENT_AUTHORITY_KEY (the settlement
+    // authority IS the settle_batch signer); without this fallback the adapter
+    // settle path boots with no Solana signer while /health still reports one
+    // from the legacy SecretLoaderService. Mirror that service's raw-base58
+    // decode. The Secret Manager ("projects/…") form needs async access and
+    // stays on the legacy loader — adapter SM support is a follow-up.
+    if (network.startsWith("solana-")) {
+      const sa = this.config.get<string>("SETTLEMENT_AUTHORITY_KEY")?.trim();
+      if (sa && !sa.startsWith("projects/")) {
+        try {
+          return Keypair.fromSecretKey(bs58.decode(sa));
+        } catch (e) {
+          this.logger.warn(
+            `Failed to parse SETTLEMENT_AUTHORITY_KEY fallback for ${network}: ${e}`,
+          );
+        }
+      }
+    }
+    return null;
   }
 
   /**
