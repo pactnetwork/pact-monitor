@@ -38,6 +38,13 @@ const DEFAULT_UPSTREAM_BASE: Record<string, string> = {
   jupiter: "https://api.jup.ag",
   elfa: "https://api.elfa.ai",
   fal: "https://queue.fal.run",
+  // Moralis Web3 Data API. Auth via `X-API-KEY` header (caller passthrough);
+  // callers append the versioned path (e.g. `/api/v2.2/...`).
+  moralis: "https://deep-index.moralis.io",
+  // Covalent (now GoldRush) unified blockchain API. Auth via
+  // `Authorization: Bearer <key>` (caller passthrough); callers append the
+  // `/v1/...` path. `api.covalenthq.com` remains the canonical base post-rebrand.
+  covalent: "https://api.covalenthq.com",
   // Demo upstream — `pact-dummy-upstream` behind https://dummy.pactnetwork.io.
   // Used by the premium-coverage MVP; see docs/premium-coverage-mvp.md.
   dummy: "https://dummy.pactnetwork.io",
