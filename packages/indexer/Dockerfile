@@ -16,6 +16,9 @@ RUN corepack enable && corepack prepare pnpm@latest --activate
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
 COPY packages/db/package.json ./packages/db/
 COPY packages/protocol-v1-client/package.json ./packages/protocol-v1-client/
+COPY packages/protocol-evm-v1-client/package.json ./packages/protocol-evm-v1-client/
+COPY packages/shared/package.json ./packages/shared/
+COPY packages/wrap/package.json ./packages/wrap/
 COPY packages/indexer/package.json ./packages/indexer/
 
 # Install all workspace deps (frozen)
@@ -27,12 +30,21 @@ RUN pnpm install --frozen-lockfile
 COPY tsconfig.base.json ./
 COPY packages/db/ ./packages/db/
 COPY packages/protocol-v1-client/ ./packages/protocol-v1-client/
+COPY packages/protocol-evm-v1-client/ ./packages/protocol-evm-v1-client/
+COPY packages/shared/ ./packages/shared/
+COPY packages/wrap/ ./packages/wrap/
 COPY packages/indexer/ ./packages/indexer/
 
 # Generate Prisma client + build db + build protocol-v1-client (chain-sync
-# imports from its dist/), then build indexer.
+# imports from its dist/). The indexer now also imports @pact-network/shared
+# and @pact-network/protocol-evm-v1-client (multi-network adapters); shared
+# depends on {protocol-v1-client, protocol-evm-v1-client, wrap} so it builds
+# last before indexer.
 RUN pnpm --filter @pact-network/db build
 RUN pnpm --filter @q3labs/pact-protocol-v1-client build
+RUN pnpm --filter @pact-network/protocol-evm-v1-client build
+RUN pnpm --filter @pact-network/wrap build
+RUN pnpm --filter @pact-network/shared build
 RUN pnpm --filter @pact-network/indexer build
 
 FROM node:22-slim
@@ -49,6 +61,9 @@ RUN corepack enable && corepack prepare pnpm@latest --activate
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
 COPY packages/db/package.json ./packages/db/
 COPY packages/protocol-v1-client/package.json ./packages/protocol-v1-client/
+COPY packages/protocol-evm-v1-client/package.json ./packages/protocol-evm-v1-client/
+COPY packages/shared/package.json ./packages/shared/
+COPY packages/wrap/package.json ./packages/wrap/
 COPY packages/indexer/package.json ./packages/indexer/
 
 RUN pnpm install --frozen-lockfile --prod
@@ -60,6 +75,9 @@ COPY --from=builder /app/packages/db/dist ./packages/db/dist
 # this directory is dead weight there — additive change, no runtime cost).
 COPY --from=builder /app/packages/db/prisma ./packages/db/prisma
 COPY --from=builder /app/packages/protocol-v1-client/dist ./packages/protocol-v1-client/dist
+COPY --from=builder /app/packages/protocol-evm-v1-client/dist ./packages/protocol-evm-v1-client/dist
+COPY --from=builder /app/packages/wrap/dist ./packages/wrap/dist
+COPY --from=builder /app/packages/shared/dist ./packages/shared/dist
 COPY --from=builder /app/packages/indexer/dist ./packages/indexer/dist
 # Prisma engine for runtime
 COPY --from=builder /app/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/.prisma ./node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/.prisma
