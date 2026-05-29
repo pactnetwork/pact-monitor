@@ -417,7 +417,40 @@ describe("verifyPactSignature — EVM (secp256k1 / EIP-191) auth mode", () => {
     expect(resp.status).toBe(200);
     const json = (await resp.json()) as { ok: boolean; agent: string };
     expect(json.ok).toBe(true);
-    expect(json.agent).toBe(account.address);
+    // verifiedAgent is normalized to lowercase (PR #225 P0-3).
+    expect(json.agent).toBe(account.address.toLowerCase());
+  });
+
+  test("EVM replay via address case-variance is rejected (PR #225 P0-3 replay-cache normalization)", async () => {
+    // Threat: viem's verifyMessage is case-insensitive, so a captured request
+    // replayed with a case-variant x-pact-agent still verifies. Before the fix
+    // the case-sensitive replay key (`${agent}:${nonce}`) missed the cache and
+    // let the replay through (double-billing). After normalization, both casings
+    // collapse to one key → the second request is rejected as a replay.
+    const app = makeApp({ now: () => FIXED_NOW, replayTtlMs: 60_000 });
+    const path = `/v1/${SLUG}/`;
+    const headers = await buildEvmSignedHeaders({
+      account,
+      method: "GET",
+      path,
+      timestampMs: FIXED_NOW,
+    });
+    // Sanity: the SDK ships a checksummed (mixed-case) address.
+    expect(headers["x-pact-agent"]).not.toBe(
+      headers["x-pact-agent"].toLowerCase(),
+    );
+    const first = await app.request(path, { method: "GET", headers });
+    expect(first.status).toBe(200);
+
+    // Replay: identical nonce + signature, agent header lowercased.
+    const replay = {
+      ...headers,
+      "x-pact-agent": headers["x-pact-agent"].toLowerCase(),
+    };
+    const second = await app.request(path, { method: "GET", headers: replay });
+    expect(second.status).toBe(401);
+    const json = (await second.json()) as { error: string };
+    expect(json.error).toBe("pact_auth_replay");
   });
 
   test("EVM agent with a tampered signature → 401 pact_auth_bad_sig", async () => {
@@ -534,7 +567,8 @@ describe("verifyPactSignature — v2 payload (network field embedded)", () => {
     const resp = await app.request(path, { method: "GET", headers });
     expect(resp.status).toBe(200);
     const json = (await resp.json()) as { ok: boolean; agent: string };
-    expect(json.agent).toBe(account.address);
+    // verifiedAgent is normalized to lowercase (PR #225 P0-3).
+    expect(json.agent).toBe(account.address.toLowerCase());
   });
 
   test("EVM wrong-chain replay: signed for base-sepolia, sent with x-pact-network=arc-testnet → 401", async () => {

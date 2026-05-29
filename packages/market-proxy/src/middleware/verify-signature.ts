@@ -21,7 +21,7 @@ import { createHash } from "node:crypto";
 import type { Context, MiddlewareHandler } from "hono";
 import bs58 from "bs58";
 import nacl from "tweetnacl";
-import { isAddress, verifyMessage } from "viem";
+import { getAddress, isAddress, verifyMessage } from "viem";
 
 /** Auth VM family inferred from the agent key format / endpoint network. */
 type AuthVm = "evm" | "solana";
@@ -127,7 +127,23 @@ export function verifyPactSignature(
       return reject(c, "pact_auth_stale", "timestamp outside skew window");
     }
 
-    const replayKey = `${agent}:${nonce}`;
+    // Resolve the canonical agent identity BEFORE the replay check. EVM
+    // addresses are case-insensitive — viem's verifyMessage recovers the same
+    // signer for any casing — so an attacker can replay a captured request with
+    // a case-variant header (0xABC… -> 0xabc…): the signature still verifies but
+    // a case-sensitive replay key misses the cache, double-billing the victim
+    // within the skew window (PR #225 P0-3). Normalize EVM agents to a single
+    // canonical form for BOTH the replay key and the stashed identity; Solana
+    // bs58 pubkeys are case-sensitive and pass through unchanged. `{ strict:
+    // true }` (viem's default, made explicit) also rejects all-uppercase /
+    // bad-checksum EVM inputs at the door.
+    const agentVm: AuthVm = isAddress(agent, { strict: true })
+      ? "evm"
+      : "solana";
+    const normalizedAgent =
+      agentVm === "evm" ? getAddress(agent).toLowerCase() : agent;
+
+    const replayKey = `${normalizedAgent}:${nonce}`;
     if (replay.seen(replayKey, now())) {
       return reject(c, "pact_auth_replay", "nonce already seen");
     }
@@ -164,11 +180,11 @@ export function verifyPactSignature(
       bodyHash,
     });
 
-    // Auth mode is selected by the agent key format: a 0x EVM address uses
-    // secp256k1 / EIP-191 (personal_sign); anything else is treated as a
-    // Solana bs58 pubkey + Ed25519. This is what lets an EVM agent
-    // authenticate (finding 3) — the middleware was previously Ed25519-only.
-    const agentVm: AuthVm = isAddress(agent) ? "evm" : "solana";
+    // Auth mode (`agentVm`) was resolved above with the replay-key
+    // normalization: a 0x EVM address uses secp256k1 / EIP-191 (personal_sign);
+    // anything else is treated as a Solana bs58 pubkey + Ed25519. This is what
+    // lets an EVM agent authenticate (finding 3) — the middleware was
+    // previously Ed25519-only.
 
     // Cross-mode guard: when the endpoint's network is known, reject an agent
     // whose VM does not match the endpoint (0x agent on a Solana endpoint, or
@@ -193,7 +209,7 @@ export function verifyPactSignature(
       for (const payload of [payloadV2, payloadV1]) {
         try {
           verified = await verifyMessage({
-            address: agent as `0x${string}`,
+            address: normalizedAgent as `0x${string}`,
             message: payload,
             signature: signature as `0x${string}`,
           });
@@ -238,8 +254,9 @@ export function verifyPactSignature(
 
     // Stash the verified identity for downstream handlers. The proxy
     // route reads it via c.get("verifiedAgent") and prefers it over
-    // any header re-read.
-    c.set("verifiedAgent", agent);
+    // any header re-read. Use the normalized form so downstream billing /
+    // eligibility keys on the same canonical identity as the replay cache.
+    c.set("verifiedAgent", normalizedAgent);
     return next();
   };
 }
