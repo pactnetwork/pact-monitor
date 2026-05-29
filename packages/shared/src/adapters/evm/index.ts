@@ -513,11 +513,16 @@ export class EvmAdapter implements ChainAdapter {
       throw new Error(`settleBatch estimateGas failed: ${reason}`);
     }
 
-    // Send transaction
+    // Send transaction. Pass the LOCAL account OBJECT (not account.address):
+    // viem treats a bare-address account as JSON-RPC/node-managed and emits
+    // eth_sendTransaction/wallet_sendTransaction (the RPC node signs). Some RPCs
+    // (e.g. Arc Testnet) reject that method ("request method is not supported").
+    // The object is the PrivateKeyAccount the walletClient was built with, so
+    // viem signs locally and submits via eth_sendRawTransaction.
     let txHash: Hex;
     try {
       txHash = await (this.walletClient.sendTransaction as (args: unknown) => Promise<Hex>)({
-        account: account.address,
+        account,
         to: settlerAddr,
         data: calldata,
         gas: gasLimit,
