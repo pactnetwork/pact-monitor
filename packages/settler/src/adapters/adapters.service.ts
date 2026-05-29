@@ -187,7 +187,11 @@ export class AdaptersService implements OnModuleInit {
       try {
         return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(raw)));
       } catch (e) {
-        this.logger.warn(`Failed to parse keypair for ${network}: ${e}`);
+        // Redact the error body: JSON.parse / fromSecretKey errors can echo the
+        // offending secret-key bytes. Log only the error name (PR #225 P0-4).
+        this.logger.warn(
+          `Failed to parse keypair for ${network}: ${(e as Error).name}`,
+        );
         return null;
       }
     }
@@ -204,8 +208,10 @@ export class AdaptersService implements OnModuleInit {
         try {
           return Keypair.fromSecretKey(bs58.decode(sa));
         } catch (e) {
+          // Redact: bs58.decode / fromSecretKey errors can echo the secret
+          // material. Log only the error name (PR #225 P0-4).
           this.logger.warn(
-            `Failed to parse SETTLEMENT_AUTHORITY_KEY fallback for ${network}: ${e}`,
+            `Failed to parse SETTLEMENT_AUTHORITY_KEY fallback for ${network}: ${(e as Error).name}`,
           );
         }
       }
@@ -241,7 +247,13 @@ export class AdaptersService implements OnModuleInit {
       ) as Hex;
       return privateKeyToAccount(hex);
     } catch (e) {
-      this.logger.warn(`Failed to parse EVM private key for ${network}: ${e}`);
+      // Redact: viem's InvalidHexValueError / InvalidHexLengthError include the
+      // offending private key in e.message. Log only the error name so a
+      // mistyped PACT_SETTLER_KEYPAIR_<NETWORK> never lands the key in Cloud
+      // Logging (PR #225 P0-4).
+      this.logger.warn(
+        `Failed to parse EVM private key for ${network}: ${(e as Error).name}`,
+      );
       return null;
     }
   }
