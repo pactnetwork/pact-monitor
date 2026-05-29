@@ -11,9 +11,6 @@
  * Arc 6-decimal ERC-20); names follow `ProtocolInvariants.sol`, the EVM parity
  * authority.
  */
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-
 import type { Address } from "viem";
 
 import { PactRegistryAbi } from "./abi/PactRegistry.js";
@@ -24,12 +21,33 @@ import { PactErrorsAbi } from "./abi/PactErrors.js";
 
 // --- Arc Testnet network constants (sourced from config/chains.json, design PR #201 §4.8.4) ---
 
-const _chainsJson = JSON.parse(
-  readFileSync(
-    join(__dirname, "../../program-evm/protocol-evm-v1/config/chains.json"),
-    "utf-8",
-  ),
-) as Record<string, { chainId: number; usdcAddress: string; usdcDecimals: number }>;
+// Baked from `program-evm/protocol-evm-v1/config/chains.json` rather than read
+// via `readFileSync` at module-load (PR #225 P0-2): the JSON does not ship in
+// the service Docker images and `__dirname`-relative reads break under ESM /
+// bundlers / pnpm hoisting. Drift from chains.json is caught at CI by
+// `__tests__/chain-table-drift.test.ts`, which reads the JSON from disk and
+// asserts it matches these exports; the foundry deploy reads the JSON directly
+// via `vm.readFile`, so chains.json remains the canonical source.
+const _chainsJson: Record<
+  string,
+  { chainId: number; usdcAddress: string; usdcDecimals: number }
+> = {
+  "arc-testnet": {
+    chainId: 5042002,
+    usdcAddress: "0x3600000000000000000000000000000000000000",
+    usdcDecimals: 6,
+  },
+  "base-sepolia": {
+    chainId: 84532,
+    usdcAddress: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+    usdcDecimals: 6,
+  },
+  "base-mainnet": {
+    chainId: 8453,
+    usdcAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    usdcDecimals: 6,
+  },
+};
 
 /** Arc Testnet EVM chain id (sourced from chains.json["arc-testnet"].chainId). */
 export const ARC_TESTNET_CHAIN_ID = _chainsJson["arc-testnet"].chainId;

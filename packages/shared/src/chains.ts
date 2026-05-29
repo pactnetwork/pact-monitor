@@ -8,19 +8,21 @@
  * `@q3labs/pact-protocol-v1-client` constants.
  */
 
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import {
   USDC_MINT_DEVNET,
   USDC_MINT_MAINNET,
 } from "@q3labs/pact-protocol-v1-client";
 import type { ChainDescriptor } from "./chain-adapter";
 
-const _evmChainsPath = join(
-  __dirname,
-  "../../program-evm/protocol-evm-v1/config/chains.json",
-);
-const _evmChains = JSON.parse(readFileSync(_evmChainsPath, "utf-8")) as Record<
+// EVM chain table — baked from `program-evm/protocol-evm-v1/config/chains.json`
+// (WP-MN-01's single source of truth). Inlined as a TS const rather than read
+// via `readFileSync` at module-load (PR #225 P0-2): the JSON does not ship in
+// the service Docker images, and `__dirname`-relative reads are brittle (break
+// under ESM where `__dirname` is undefined, under bundlers, and under pnpm
+// hoisting variants). Drift from chains.json is caught at CI by the disk-read
+// drift test in `test/chains.test.ts`; the foundry deploy still reads the JSON
+// directly via `vm.readFile`, so chains.json remains the canonical source.
+const _evmChains: Record<
   string,
   {
     chainId: number;
@@ -34,7 +36,44 @@ const _evmChains = JSON.parse(readFileSync(_evmChainsPath, "utf-8")) as Record<
     deploymentBlock?: number | null;
     logRangeChunk?: number | null;
   }
->;
+> = {
+  "arc-testnet": {
+    chainId: 5042002,
+    name: "arc-testnet",
+    usdcAddress: "0x3600000000000000000000000000000000000000",
+    usdcDecimals: 6,
+    rpcUrl: "https://rpc.testnet.arc.network",
+    blockTimeMs: 500,
+    finalityBlocks: 64,
+    finalityBlockTag: "finalized",
+    deploymentBlock: 42953139,
+    logRangeChunk: 9500,
+  },
+  "base-sepolia": {
+    chainId: 84532,
+    name: "base-sepolia",
+    usdcAddress: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+    usdcDecimals: 6,
+    rpcUrl: "https://sepolia.base.org",
+    blockTimeMs: 2000,
+    finalityBlocks: 1,
+    finalityBlockTag: "safe",
+    deploymentBlock: 41969204,
+    logRangeChunk: 500,
+  },
+  "base-mainnet": {
+    chainId: 8453,
+    name: "base-mainnet",
+    usdcAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    usdcDecimals: 6,
+    rpcUrl: "https://mainnet.base.org",
+    blockTimeMs: 2000,
+    finalityBlocks: 1,
+    finalityBlockTag: "safe",
+    deploymentBlock: null,
+    logRangeChunk: 500,
+  },
+};
 
 const _evmEntries: Record<string, ChainDescriptor> = Object.fromEntries(
   Object.entries(_evmChains).map(([name, c]) => [
