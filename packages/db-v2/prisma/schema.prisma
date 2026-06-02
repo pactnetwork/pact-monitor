@@ -16,6 +16,11 @@
 
 generator client {
   provider = "prisma-client-js"
+  // Custom output keeps the V2 client isolated from the v1 @pact-network/db
+  // client. Both packages use prisma-client-js; with no distinct output they
+  // race to the shared node_modules/@prisma/client and clobber each other's
+  // models in a parallel `turbo build` — the cold-build failure this fixes.
+  output   = "../src/generated/client"
 }
 
 datasource db {
