@@ -77,7 +77,8 @@ describe("E3 — golden-fetch attestation consumption", () => {
       project: "test",
       signRequests: true,
       agentPubkey,
-      secretKey: agentKp.secretKey,
+      sign: async (payload) => nacl.sign.detached(payload, agentKp.secretKey),
+      vm: "solana" as const,
       fetchImpl: fakeProxyFetch({
         "X-Pact-Call-Id": "call-1",
         "X-Pact-Outcome": "ok",
@@ -120,7 +121,8 @@ describe("E3 — golden-fetch attestation consumption", () => {
       project: "test",
       signRequests: true,
       agentPubkey,
-      secretKey: agentKp.secretKey,
+      sign: async (payload) => nacl.sign.detached(payload, agentKp.secretKey),
+      vm: "solana" as const,
       fetchImpl: fakeProxyFetch({
         "X-Pact-Call-Id": "call-1",
         "X-Pact-Outcome": "ok",
@@ -164,7 +166,8 @@ describe("E3 — golden-fetch attestation consumption", () => {
       project: "test",
       signRequests: true,
       agentPubkey,
-      secretKey: agentKp.secretKey,
+      sign: async (payload) => nacl.sign.detached(payload, agentKp.secretKey),
+      vm: "solana" as const,
       fetchImpl: fakeProxyFetch({
         "X-Pact-Call-Id": "call-1",
         "X-Pact-Outcome": "ok",
@@ -192,7 +195,8 @@ describe("E3 — golden-fetch attestation consumption", () => {
       project: "test",
       signRequests: true,
       agentPubkey,
-      secretKey: agentKp.secretKey,
+      sign: async (payload) => nacl.sign.detached(payload, agentKp.secretKey),
+      vm: "solana" as const,
       fetchImpl: fakeProxyFetch({
         "X-Pact-Call-Id": "call-1",
         "X-Pact-Outcome": "ok",
@@ -236,7 +240,8 @@ describe("E3 — golden-fetch attestation consumption", () => {
       project: "test",
       signRequests: true,
       agentPubkey,
-      secretKey: agentKp.secretKey,
+      sign: async (payload) => nacl.sign.detached(payload, agentKp.secretKey),
+      vm: "solana" as const,
       fetchImpl: fakeProxyFetch({
         "X-Pact-Call-Id": "call-1",
         "X-Pact-Outcome": "ok",
@@ -278,7 +283,8 @@ describe("E3 — golden-fetch attestation consumption", () => {
       project: "test",
       signRequests: true,
       agentPubkey,
-      secretKey: agentKp.secretKey,
+      sign: async (payload) => nacl.sign.detached(payload, agentKp.secretKey),
+      vm: "solana" as const,
       fetchImpl: fakeProxyFetch({
         "X-Pact-Call-Id": "call-1",
         "X-Pact-Outcome": "ok",

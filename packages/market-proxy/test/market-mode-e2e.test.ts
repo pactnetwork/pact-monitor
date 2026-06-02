@@ -33,13 +33,15 @@ vi.mock("../src/env.js", () => ({
 }));
 
 type MockCtx = {
-  registry: { get(s: string): Promise<unknown> };
+  registry: { get(s: string, network?: string): Promise<unknown> };
   demoAllowlist: unknown;
   operatorAllowlist: unknown;
   balanceCheck: unknown;
   sink: MemoryEventSink;
   pg: unknown;
   betaGateFlag: unknown;
+  adapters: Map<string, unknown>;
+  legacyDirectSolana: boolean;
 };
 
 function emptyCtx(): MockCtx {
@@ -51,6 +53,8 @@ function emptyCtx(): MockCtx {
     sink: new MemoryEventSink(),
     pg: undefined,
     betaGateFlag: { async isOn() { return false; } },
+    adapters: new Map(),
+    legacyDirectSolana: true,
   };
 }
 let currentMockContext: MockCtx = emptyCtx();
@@ -117,6 +121,7 @@ function buildCtx(slug: MockSlug, sink: MemoryEventSink): MockCtx {
         if (s !== slug.slug) return undefined;
         return {
           slug: slug.slug,
+          network: "solana-devnet",
           flatPremiumLamports: 100n,
           percentBps: 100,
           slaLatencyMs: 5_000,
@@ -134,6 +139,8 @@ function buildCtx(slug: MockSlug, sink: MemoryEventSink): MockCtx {
     sink,
     pg: undefined,
     betaGateFlag: { async isOn() { return false; } },
+    adapters: new Map(),
+    legacyDirectSolana: true,
   };
 }
 

@@ -26,6 +26,9 @@ importers:
       '@q3labs/pact-insurance':
         specifier: workspace:*
         version: link:../insurance
+      '@q3labs/pact-protocol-v1-client':
+        specifier: workspace:*
+        version: link:../protocol-v1-client
       '@solana/kit':
         specifier: ^6.8.0
         version: 6.8.0(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@5.9.3)(utf-8-validate@6.0.6)
@@ -509,6 +512,9 @@ importers:
       '@pact-network/wrap':
         specifier: workspace:*
         version: link:../wrap
+      '@q3labs/pact-sdk':
+        specifier: workspace:*
+        version: link:../sdk
       '@solana/spl-token':
         specifier: ^0.4.14
         version: 0.4.14(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6))(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@5.9.3)(utf-8-validate@6.0.6)

@@ -16,7 +16,8 @@ describe("buildAuthHeaders (C8)", () => {
       proxiedUrl: "https://market.example/v1/foo/bar?x=1",
       bodyBytes: new TextEncoder().encode('{"k":"v"}'),
       agentPubkey,
-      secretKey: kp.secretKey,
+      sign: async (payload) => nacl.sign.detached(payload, kp.secretKey),
+      vm: "solana",
       project: "test-project",
       now: () => 1_717_000_000_000,
     });
@@ -37,7 +38,8 @@ describe("buildAuthHeaders (C8)", () => {
       proxiedUrl: "https://market.example/v1/foo/bar",
       bodyBytes: null,
       agentPubkey,
-      secretKey: kp.secretKey,
+      sign: async (payload) => nacl.sign.detached(payload, kp.secretKey),
+      vm: "solana",
       project: "test-project",
       now: () => 1_717_111_111_111,
     });
