@@ -11,8 +11,8 @@
     }
   },
   "scripts": {
-    "build": "prisma generate && tsc",
-    "clean": "rm -rf dist",
+    "build": "prisma generate && tsc && cp -R src/generated dist/generated",
+    "clean": "rm -rf dist src/generated",
     "typecheck": "prisma generate && tsc --noEmit",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate deploy",
