@@ -1,6 +1,6 @@
 # Pact Network — Architecture Overview (EN)
 
-> Generated 2026-06-02 from the `feat/multi-network` branch, grounded in the GitNexus code graph (1,756 files / 16,841 symbols / 251 execution flows) and the live workspace layout. Diagrams are Mermaid (render on GitHub).
+> Generated 2026-06-02, updated 2026-06-03 (off-chain V2 removed) from the `feat/multi-network` branch, grounded in the GitNexus code graph (1,756 files / 16,841 symbols / 251 execution flows) and the live workspace layout. Diagrams are Mermaid (render on GitHub).
 
 ---
 
@@ -22,12 +22,12 @@ graph TD
         MD[market-dashboard<br/>Next.js 15]
     end
     subgraph Network["PACT NETWORK — the generic rails"]
-        WRAP[wrap / wrap-v2<br/>fetch-call insurance]
+        WRAP[wrap<br/>fetch-call insurance]
         SHARED[shared<br/>ChainAdapter port + types]
-        SET[settler / settler-v2<br/>settle_batch submitter]
-        IDX[indexer / indexer-v2<br/>ingest + read API + refunds]
-        DB[(db / db-v2<br/>Postgres / Prisma)]
-        CLIENTS[protocol-v1/v2-client<br/>protocol-evm-v1-client]
+        SET[settler<br/>settle_batch submitter]
+        IDX[indexer<br/>ingest + read API + refunds]
+        DB[(db<br/>Postgres / Prisma)]
+        CLIENTS[protocol-v1-client<br/>protocol-evm-v1-client]
     end
     subgraph Chains["ON-CHAIN"]
         SOL[Solana Pinocchio<br/>pact-network-v1]
@@ -59,8 +59,8 @@ The defining feature of the current `feat/multi-network` branch is a **ports-and
 ```mermaid
 graph LR
     subgraph Consumers
-        SET[settler/-v2]
-        IDX[indexer/-v2]
+        SET[settler]
+        IDX[indexer]
         MP[market-proxy]
     end
     PORT{{ChainAdapter port<br/>readEndpointConfigs · getEndpoint<br/>submitSettleBatch · getNativeBalance<br/>checkAgentEligibility · tailSettlementEvents}}
@@ -77,7 +77,7 @@ graph LR
 
 ## 3. Package inventory
 
-The monorepo is pnpm + Turborepo. 24 workspace packages, grouped by layer:
+The monorepo is pnpm + Turborepo. 19 packages (after removing the 5 off-chain V2 packages on 2026-06-03), grouped by layer:
 
 ### On-chain programs
 | Package | Role |
@@ -91,7 +91,6 @@ The monorepo is pnpm + Turborepo. 24 workspace packages, grouped by layer:
 | Package | Role |
 |---------|------|
 | `protocol-v1-client` | TS client for Solana v1 (PDAs, ix builders, account decoders, error map) |
-| `protocol-v2-client` | TS client for Solana v2 (11 ix builders, 5 decoders) |
 | `protocol-evm-v1-client` | TS client for EVM v1 (abi, addresses, encode, state, errors) |
 
 ### Rails — generic off-chain
@@ -99,12 +98,9 @@ The monorepo is pnpm + Turborepo. 24 workspace packages, grouped by layer:
 |---------|------|
 | `shared` | **Multi-VM abstraction** (`ChainAdapter`, adapters), shared types, PDA seed constants |
 | `wrap` | Generic fetch-call insurance (`wrapFetch`, BalanceCheck, Classifier, EventSink, X-Pact-* headers) |
-| `wrap-v2` | V2 fetch-call wrap (per-call premium math, breach tail + evidenceHash for `submit_claim`) |
 | `settler` | Pub/Sub → `settle_batch` submitter (NestJS) |
-| `settler-v2` | V2 oracle-cranker (premium batched + claim pipelines) |
 | `indexer` | Per-call indexer + read API + refund delivery + reorg handling (NestJS) |
-| `indexer-v2` | V2 ingest + Helius webhook account-state watcher + read API |
-| `db` / `db-v2` | Prisma schemas (pool state, settlements, recipient shares, earnings) |
+| `db` | Prisma schema (pool state, settlements, recipient shares, earnings) |
 
 ### Pact Market — the interface
 | Package | Role |
@@ -127,27 +123,22 @@ The monorepo is pnpm + Turborepo. 24 workspace packages, grouped by layer:
 
 ## 4. Package dependency & reuse
 
-The 24 workspace packages split into a **server backbone** (settler/indexer/proxy on `shared` + `wrap` + clients) and a set of **client-side / standalone packages** (the published SDK, CLI, legacy SDKs). Edges are real internal deps from each `package.json` — `dependencies` **and** `devDependencies` (bundled packages like the CLI declare workspace deps under `devDependencies` because `bun build` inlines them).
+The 19 packages (after removing the 5 off-chain V2 packages on 2026-06-03) split into a **server backbone** (settler/indexer/proxy on `shared` + `wrap` + clients) and a set of **client-side / standalone packages** (the published SDK, CLI, legacy SDKs). Edges are real internal deps from each `package.json` — `dependencies` **and** `devDependencies` (bundled packages like the CLI declare workspace deps under `devDependencies` because `bun build` inlines them).
 
 ```mermaid
 graph TD
     subgraph leaf["Leaf layer — no internal deps"]
         P1[protocol-v1-client]
-        P2[protocol-v2-client]
         PE[protocol-evm-v1-client]
         W[wrap]
-        W2[wrap-v2]
         DB[(db)]
-        DB2[(db-v2)]
     end
     subgraph hub["Multi-VM hub"]
         SH[shared]
     end
     subgraph svc["Services — GOOD REUSE"]
         SET[settler]
-        SET2[settler-v2]
         IDX[indexer]
-        IDX2[indexer-v2]
         MP[market-proxy]
         MD[market-dashboard]
         FAC[facilitator]
@@ -163,9 +154,7 @@ graph TD
     end
     SH --> P1 & PE & W
     SET --> SH & W & P1 & PE
-    SET2 --> DB2 & P2 & W2
     IDX --> SH & DB & P1 & PE
-    IDX2 --> DB2 & P2
     MP --> SH & W & PE
     MD --> P1
     FAC --> W
@@ -177,7 +166,7 @@ graph TD
 - **Server backbone:** settler/indexer/market-proxy route through `shared` + `wrap` + protocol clients. Adding a chain or service reuses this layer.
 - **Client SDK/CLI are multi-network, by their own path:** `sdk` + `cli` depend on `protocol-v1-client` and use **`viem`** for EVM. The **CLI supports Solana + Arc + Base** (`lib/evm-wallet.ts`, `lib/evm-faucets.ts`, `cmd/run.ts` branch on `isEvmNetwork`); the SDK signs for Solana + EVM. They deliberately do **not** use the server-side `shared` layer (settle-submission / RPC tailing) — correct layering for a client runtime, not divergence. (CLI deps live in `devDependencies` because it is bundled via `bun build`.)
 - **Standalone legacy:** `monitor` and `insurance` have 0 internal deps (pre-Step-A public SDKs).
-- **Genuine duplication to watch:** the SLA classifier exists in 5 packages, and there are two V2 Solana clients (`insurance` vs `protocol-v2-client`).
+- **Genuine duplication to watch:** the SLA status→category classifier has one true copy-paste (`backend/routes/monitor.ts:24`, a copy of `monitor`'s tree), and `wrap`'s premium/refund economics are duplicated in `facilitator/coverage.ts`. The "two V2 Solana clients" issue is now half-resolved — `protocol-v2-client` was deleted on 2026-06-03, leaving `insurance` as the sole V2 client.
 
 > Technical-debt detail + unification plan: see **`DIVERGENCE-AUDIT.en.md`**.
 
@@ -197,7 +186,7 @@ graph TD
         DASHBE[market-dashboard<br/>Next.js]
     end
     subgraph L3["Insurance logic"]
-        WRAP2[wrap / wrap-v2<br/>premium math · balance check · classifier]
+        WRAP2[wrap<br/>premium math · balance check · classifier]
     end
     subgraph L2["Off-chain services"]
         SETTLER[settler<br/>Pub/Sub consumer]
@@ -262,7 +251,7 @@ sequenceDiagram
     Indexer->>DB: persist settlement + recipient shares
     Indexer->>Indexer: RefundDeliveryService / ReorgService
 ```
-Anchors: `PipelineService` (`settler/src/pipeline/pipeline.service.ts:8`), `PremiumPipelineService.processBatch` (`settler-v2/src/pipeline/pipeline.service.ts:28`), `SettleBatchInput` (`shared/src/chain-adapter.ts:58`), `EventsService.ingest` (`indexer/src/events/events.service.ts:70`), `RefundDeliveryService` (`indexer/src/refund-delivery/refund-delivery.service.ts:18`), `ReorgService.rollback` (`indexer/src/reorg/reorg.service.ts:143`).
+Anchors: `PipelineService` (`settler/src/pipeline/pipeline.service.ts:8`), `SettleBatchInput` (`shared/src/chain-adapter.ts:58`), `EventsService.ingest` (`indexer/src/events/events.service.ts:70`), `RefundDeliveryService` (`indexer/src/refund-delivery/refund-delivery.service.ts:18`), `ReorgService.rollback` (`indexer/src/reorg/reorg.service.ts:143`).
 
 ---
 
@@ -307,12 +296,13 @@ GCP ownership note: Secret Manager / Cloud Run / IAM are owned by Rick; on-chain
 
 ---
 
-## 9. Current state (2026-06-02)
+## 9. Current state (2026-06-03)
 
+- **Off-chain V2 stack removed 2026-06-03 (commit 2b5cb0c)** — `wrap-v2`, `settler-v2`, `indexer-v2`, `db-v2`, `protocol-v2-client` source deleted (the on-chain `pact-network-v2-pinocchio` Rust program is kept).
 - **Active branch:** `feat/multi-network` — multi-VM rails (Solana + Arc Testnet + Base Sepolia), CLI/SDK headers. PR #225 awaiting re-review.
 - **Merchant SDK** (PR #223, branch `feat/merchant-sdk`) rebased onto this branch with tests green, but **not yet merged** — the merchant surface is not in this tree.
 - **Mainnet:** Solana program `5bCJ…` live; redeploy via authority `JB7rp…` pending (unblocks SOL-01 + the FS9 `InvalidSeeds` devnet drift).
-- **Known constraints:** devnet program `declare_id!` == mainnet id → `settle_batch` reverts `InvalidSeeds` on devnet until redeploy; db / db-v2 share one Prisma output (cold-build CI race).
+- **Known constraints:** devnet program `declare_id!` == mainnet id → `settle_batch` reverts `InvalidSeeds` on devnet until redeploy.
 
 ---
 

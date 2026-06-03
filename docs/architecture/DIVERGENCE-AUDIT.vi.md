@@ -1,6 +1,8 @@
 # Pact Network — Kiểm toán Tái sử dụng & Nợ kỹ thuật (VI)
 
-> Tạo ngày 2026-06-02 từ `feat/multi-network`. Dựa trên đồ thị phụ thuộc thật — từng `package.json` (**`dependencies` + `devDependencies`**) cộng import thực tế trong source của 24 package. Đi kèm `ARCHITECTURE.vi.md`.
+> Tạo ngày 2026-06-02, cập nhật 2026-06-03 (đã gỡ V2 off-chain) từ `feat/multi-network`. Dựa trên đồ thị phụ thuộc thật — từng `package.json` (**`dependencies` + `devDependencies`**) cộng import thực tế trong source của 19 package (sau khi gỡ 5 package V2 off-chain ngày 2026-06-03). Đi kèm `ARCHITECTURE.vi.md`.
+>
+> Phân tích từng package đầy đủ: `PACKAGE-BREAKDOWN.en.md` / `PACKAGE-BREAKDOWN.vi.md`; chi tiết classifier đã sửa: `experiments/3-cleanup-dedupe-rails-core-extract-pact-network-classifier/ANALYSIS.md`.
 
 ---
 
@@ -8,7 +10,7 @@
 
 - **Xương sống server** (`shared` + `wrap` + các protocol client, dùng bởi `settler` / `indexer` / `market-proxy`) được tách lớp tốt và đa-VM. 👍
 - **SDK và CLI công khai LÀ đa-network**: `cli` hỗ trợ **Solana + Arc + Base**, `sdk` ký cho cả Solana + EVM (đều qua `viem`). Chúng **cố ý không** nằm trên lớp `shared` của server — đây là phân tầng đúng cho runtime client, **không** phải nợ.
-- Nợ thật rất hẹp: **một khái niệm bị nhân bản (classifier SLA)** và **hai client V2 Solana song song**. Còn lại đều nhỏ.
+- Nợ thật rất hẹp và nay còn hẹp hơn: **một bản copy-paste classifier thật** (`backend/routes/monitor.ts:24`) cộng một bản **lặp lại kinh tế premium/refund của `wrap`** bị bỏ sót (`facilitator/coverage.ts`). Phát hiện **"hai client V2 Solana song song"** nay đã **giải quyết một nửa** — `protocol-v2-client` đã xoá ngày 2026-06-03, chỉ còn `insurance` là client V2 duy nhất. Còn lại đều nhỏ.
 
 ---
 
@@ -16,8 +18,8 @@
 
 | # | Phát hiện | Bằng chứng | Mức độ |
 |---|-----------|------------|--------|
-| D1 | **Logic classifier nằm ở 5 package** | `wrap/src/classifier.ts`, `wrap-v2/src/classifier.ts`, `monitor/src/classifier.ts`, `cli/src/lib/pay-classifier.ts`, `market-proxy/src/lib/classifiers.ts` (+ một migration error-classification ở backend). **Không** có parity test classifier liên-package trong source, nên các bản sao hiện không được canh lệch. | 🟠 TB |
-| D2 | **Hai client V2 Solana song song** | `insurance` (`client.ts` + `kit-client.ts` + `legacy-anchor-client.ts` + `generated/`) vs `protocol-v2-client` (`borsh/decoders/instructions/pda/state`). Cùng nhắm chương trình v2; kế hoạch alias chưa hoàn tất. Consumer duy nhất của `insurance` là `backend` — và chỉ ở nửa V2/claims (`routes/pools.ts` + `crank/*` + `services/claim-settlement.ts`), không phải control-plane Market sống. | 🟠 TB |
+| D1 | **Chỉ một bản copy-paste classifier thật, không phải năm** (trước đây nói quá) | `wrap/src/classifier.ts:52` là **nguồn chân lý chuẩn của rails** (`Outcome` SLA + premium/refund). Con số "5 package" trước đây sai: `wrap-v2/src/classifier.ts` đã **xoá** ở `2b5cb0c`; `market-proxy/src/lib/classifiers.ts:12` **import** `wrap` (consumer, không phải copy); `monitor/src/classifier.ts:3` là **classifier reliability riêng** (từ vựng khác — `timeout`/`schema_mismatch`, `statusCode` thô, không có kinh tế); `cli/src/lib/pay-classifier.ts:397` là **parser stdout/stderr subprocess** (miền đầu vào khác); `backend/migrations/20260503-split-error-classification.ts` là **ràng buộc DB CHECK**, không phải classifier runtime. **Bản copy-paste thật duy nhất** là `backend/src/routes/monitor.ts:24` (sao gần nguyên xi cây của `monitor`). **Audit cũ bỏ sót:** `facilitator/src/lib/coverage.ts:114` `computeCoverage` lặp lại kinh tế premium/refund của `wrap` (doc của nó tự ghi "identical to wrap's defaultClassifier"). Vẫn **chưa** có parity test liên-package. | 🟠 TB |
+| D2 | **Chỉ còn một client V2 Solana** (trước là "hai song song") — đã xong một nửa | `protocol-v2-client` đã **xoá** ngày 2026-06-03 (`2b5cb0c`), nên `insurance` (`client.ts` + `kit-client.ts` + `legacy-anchor-client.ts` + `generated/`) nay là client V2 **duy nhất** — không còn "song song". Consumer duy nhất là `backend`, và chỉ ở nửa V2/claims (`routes/pools.ts` + `crank/*` + `services/claim-settlement.ts`), không phải control-plane Market sống. Việc còn lại chỉ là dọn dẹp/ghi chú — giữ `legacy-anchor-client.ts` làm đường rollback. | 🟠 TB |
 | D3 | **`monitor` là đảo độc lập** | 0 phụ thuộc nội bộ; tự wrap `fetch()` đo reliability với classifier riêng. Trùng khái niệm với `wrap` nhưng không share gì. *(Phần lớn là có chủ đích — SDK công khai từ trước Step-A.)* | 🟡 Thấp |
 | D4 | **CLI giữ bản sao facilitator/envelope cục bộ** | `cli/src/lib/facilitator.ts` + `cli/src/lib/envelope.ts` viết lại thứ package `facilitator` đã làm. Client cần caller riêng, nhưng **contract/type** trên dây có thể share. | 🟡 Thấp |
 
@@ -49,13 +51,14 @@ market-proxy → shared, wrap, protocol-evm-v1-client
 Chỉ có hai mục thực sự quan trọng. Mỗi mục là task giao crew sau; **không** thực thi inline.
 
 ### P1 — Hợp nhất classifier  ·  🟠 ROI cao nhất, rủi ro thấp
-- **Vấn đề:** D1. Năm bản sao phân loại vi phạm, không có parity guard chung.
-- **Hành động:** tách một classifier chuẩn duy nhất (package mới `@pact-network/classifier`, hoặc nâng `wrap/classifier.ts` thành nguồn chân lý). Trỏ `wrap`, `wrap-v2`, `market-proxy`, `cli`, `monitor`, `backend` vào đó. Giữ nó "nhẹ dependency" để CLI import được mà không kéo theo code server.
-- **Lưới an toàn:** viết một bộ test chung khi tách — hiện không có parity test classifier nào để dựa vào.
+- **Vấn đề:** D1. Một bản copy-paste thật (`backend/routes/monitor.ts:24`) + một bản lặp kinh tế bị bỏ sót (`facilitator/coverage.ts:114`), không có parity guard chung. `wrap` vốn đã là chuẩn và `market-proxy` đã import sẵn.
+- **Hành động (sàn):** viết parity test liên-package đối chiếu `defaultClassifier` của `wrap` + `classify` của `monitor`; gỡ bản copy-paste duy nhất bằng cách cho `backend/routes/monitor.ts` import `classify` của `monitor`. `market-proxy` đã dùng `wrap`; parser stream của `cli` để ngoài phạm vi (miền đầu vào khác).
+- **Hành động (mục tiêu, tùy chọn):** tách package `@pact-network/classifier` nhẹ dependency giữ lõi status→category + một enum duy nhất, rồi trỏ `wrap` + `monitor` (+ bản copy ở backend) vào đó. Bản lặp kinh tế premium/refund (`facilitator/coverage.ts`) là follow-up riêng, blast-radius cao hơn (đụng đường tiền).
+- **Lưới an toàn:** parity test là deliverable giá trị nhất — hiện không có parity test classifier nào để dựa vào.
 
-### P2 — Gộp hai client V2 Solana  ·  🟠 TB
-- **Vấn đề:** D2.
-- **Hành động:** hoàn tất alias đã định — cho `@q3labs/pact-insurance` re-export `@pact-network/protocol-v2-client`, hoặc migrate consumer duy nhất (`backend`) sang `protocol-v2-client` rồi gỡ client trùng trong insurance. Giữ `legacy-anchor-client.ts` chỉ để rollback.
+### P2 — Gỡ client V2 trùng trong insurance  ·  🟠 phần lớn đã xong — chỉ còn dọn dẹp/ghi chú
+- **Vấn đề:** D2 — nay đã xong một nửa. `protocol-v2-client` đã xoá ngày 2026-06-03, nên không còn client "song song"; `insurance` là client V2 duy nhất.
+- **Hành động:** việc còn lại chỉ là tài liệu/ghi chú — ghi nhận `insurance` là client V2 chuẩn và giữ `legacy-anchor-client.ts` chỉ làm đường rollback. Không còn alias/migrate nào phải làm.
 - **Lưới an toàn:** test suite `backend` phải xanh.
 
 ### P3 — Dọn dẹp nhỏ (tùy chọn)  ·  🟡 thấp
@@ -71,24 +74,24 @@ graph TD
     CLS[classifier - duy nhất, nhẹ dependency]
     subgraph server["Xương sống server"]
         SH[shared - ChainAdapter]
-        W[wrap / wrap-v2] --> CLS
+        W[wrap] --> CLS
         SET[settler] --> SH
         IDX[indexer] --> SH
         MP[market-proxy] --> SH & CLS
     end
     subgraph client["SDK / CLI client - nhánh viem riêng"]
         SDK[sdk]
-        CLI[cli] --> CLS
+        CLI[cli]
     end
-    INS[insurance = alias protocol-v2-client] --> P2C[protocol-v2-client]
+    INS[insurance - client V2 duy nhất]
     MON[monitor] --> CLS
 ```
 
-Lợi ích: một classifier dùng khắp nơi, một client V2. SDK/CLI giữ nhánh client độc lập (đúng) — chỉ bỏ bản classifier riêng.
+Lợi ích: classifier của `wrap` được nâng thành lõi chung, bản copy-paste duy nhất ở backend bị gỡ, và một client V2 (`insurance`). SDK/CLI giữ nhánh client độc lập (đúng) — `pay-classifier` của CLI là parser stream ở miền đầu vào khác, không phải bản copy, nên để ngoài phạm vi.
 
 ---
 
 ## 5. Trình tự đề xuất giao crew
 1. **P1** (classifier) — một crew, một PR, parity test làm lưới.
-2. **P2** (gộp client v2) — crew riêng, gate bằng test `backend`.
+2. **P2** (client v2) — phần lớn đã xong sau khi xoá `protocol-v2-client`; chỉ còn pass tài liệu/ghi chú, gate bằng test `backend`.
 3. **P3** (dọn nhỏ tùy chọn) — làm khi tiện, sau P1.

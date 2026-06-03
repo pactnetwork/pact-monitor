@@ -6,6 +6,8 @@ const docs = [
   { src: "docs/architecture/ARCHITECTURE.vi.md", out: "docs/architecture/ARCHITECTURE.vi.html", title: "Pact Network — Tổng quan Kiến trúc", lang: "vi", kind: "arch" },
   { src: "docs/architecture/DIVERGENCE-AUDIT.en.md", out: "docs/architecture/DIVERGENCE-AUDIT.en.html", title: "Pact Network — Divergence Audit", lang: "en", kind: "audit" },
   { src: "docs/architecture/DIVERGENCE-AUDIT.vi.md", out: "docs/architecture/DIVERGENCE-AUDIT.vi.html", title: "Pact Network — Kiểm toán Divergence", lang: "vi", kind: "audit" },
+  { src: "docs/architecture/PACKAGE-BREAKDOWN.en.md", out: "docs/architecture/PACKAGE-BREAKDOWN.en.html", title: "Pact Network — Package Breakdown", lang: "en", kind: "pkg" },
+  { src: "docs/architecture/PACKAGE-BREAKDOWN.vi.md", out: "docs/architecture/PACKAGE-BREAKDOWN.vi.html", title: "Pact Network — Phân tích Package", lang: "vi", kind: "pkg" },
 ];
 
 const nav = (cur) => {
@@ -14,6 +16,8 @@ const nav = (cur) => {
     { kind: "arch", lang: "vi", href: "ARCHITECTURE.vi.html", label: "Kiến trúc · VI" },
     { kind: "audit", lang: "en", href: "DIVERGENCE-AUDIT.en.html", label: "Divergence · EN" },
     { kind: "audit", lang: "vi", href: "DIVERGENCE-AUDIT.vi.html", label: "Divergence · VI" },
+    { kind: "pkg", lang: "en", href: "PACKAGE-BREAKDOWN.en.html", label: "Packages · EN" },
+    { kind: "pkg", lang: "vi", href: "PACKAGE-BREAKDOWN.vi.html", label: "Packages · VI" },
   ];
   return items.map(i => `<a href="${i.href}" class="${i.kind === cur.kind && i.lang === cur.lang ? "active" : ""}">${i.label}</a>`).join("");
 };
@@ -60,7 +64,7 @@ for (const d of docs) {
 </head>
 <body>
 <div class="wrap">
-  <div class="topbar">Pact Network · architecture docs · generated 2026-06-02 · feat/multi-network</div>
+  <div class="topbar">Pact Network · architecture docs · generated 2026-06-02 · updated 2026-06-03 · feat/multi-network</div>
   <div class="switch">${nav(d)}</div>
   <article id="content">Loading…</article>
 </div>
