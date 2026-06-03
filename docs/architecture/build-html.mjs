@@ -8,6 +8,8 @@ const docs = [
   { src: "docs/architecture/DIVERGENCE-AUDIT.vi.md", out: "docs/architecture/DIVERGENCE-AUDIT.vi.html", title: "Pact Network — Kiểm toán Divergence", lang: "vi", kind: "audit" },
   { src: "docs/architecture/PACKAGE-BREAKDOWN.en.md", out: "docs/architecture/PACKAGE-BREAKDOWN.en.html", title: "Pact Network — Package Breakdown", lang: "en", kind: "pkg" },
   { src: "docs/architecture/PACKAGE-BREAKDOWN.vi.md", out: "docs/architecture/PACKAGE-BREAKDOWN.vi.html", title: "Pact Network — Phân tích Package", lang: "vi", kind: "pkg" },
+  { src: "docs/architecture/BUSINESS-MODEL.vi.md", out: "docs/architecture/BUSINESS-MODEL.vi.html", title: "Pact Network — Mô hình kinh doanh", lang: "vi", kind: "biz" },
+  { src: "docs/architecture/TRUST-MODEL.vi.md", out: "docs/architecture/TRUST-MODEL.vi.html", title: "Pact Network — Mô hình tin cậy", lang: "vi", kind: "trust" },
 ];
 
 const nav = (cur) => {
@@ -18,6 +20,8 @@ const nav = (cur) => {
     { kind: "audit", lang: "vi", href: "DIVERGENCE-AUDIT.vi.html", label: "Divergence · VI" },
     { kind: "pkg", lang: "en", href: "PACKAGE-BREAKDOWN.en.html", label: "Packages · EN" },
     { kind: "pkg", lang: "vi", href: "PACKAGE-BREAKDOWN.vi.html", label: "Packages · VI" },
+    { kind: "biz", lang: "vi", href: "BUSINESS-MODEL.vi.html", label: "Business · VI" },
+    { kind: "trust", lang: "vi", href: "TRUST-MODEL.vi.html", label: "Trust · VI" },
   ];
   return items.map(i => `<a href="${i.href}" class="${i.kind === cur.kind && i.lang === cur.lang ? "active" : ""}">${i.label}</a>`).join("");
 };
