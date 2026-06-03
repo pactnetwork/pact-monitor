@@ -1,3 +1,4 @@
+import { classifyHttpOutcome } from "@pact-network/classifier";
 import type { Classification, ExpectedSchema } from "./types.js";
 
 export function classify(
@@ -8,38 +9,41 @@ export function classify(
   expectedSchema?: ExpectedSchema,
   networkError?: boolean,
 ): Classification {
-  // Network unreachable / DNS failure / connection reset — provider's fault.
-  if (networkError || statusCode === 0) {
-    return "server_error";
-  }
+  // The status -> category DECISION lives in the shared rails core
+  // (@pact-network/classifier). This function maps the neutral category onto
+  // monitor's Classification vocabulary, then layers monitor's own
+  // schema-validation branch (which the core does not model) on top.
+  const category = classifyHttpOutcome({
+    statusCode,
+    latencyMs,
+    latencyThresholdMs,
+    networkError,
+  });
 
-  // 4xx — agent's fault (bad URL, missing auth, rate-limited). Not claimable.
-  if (statusCode >= 400 && statusCode < 500) {
-    return "client_error";
+  switch (category) {
+    // network/DNS/reset, 5xx, and anything outside 2xx-or-4xx (1xx, 3xx, >=600)
+    // are all provider-side anomalies for monitoring purposes. Conservative.
+    case "network_error":
+    case "server_error":
+    case "other":
+      return "server_error";
+    // 4xx — agent's fault (bad URL, missing auth, rate-limited). Not claimable.
+    case "client_error":
+      return "client_error";
+    // 2xx over the latency threshold — provider's fault. Latency takes
+    // precedence over schema (a slow-but-malformed 2xx is reported as timeout).
+    case "slow":
+      return "timeout";
+    case "success":
+      // monitor-only: a 2xx whose body fails the agent's expected shape is a
+      // provider-returned-the-wrong-thing breach, not a clean success.
+      if (expectedSchema && responseBody !== undefined) {
+        if (!matchesSchema(responseBody, expectedSchema)) {
+          return "schema_mismatch";
+        }
+      }
+      return "success";
   }
-
-  // 5xx — provider's fault. Claimable.
-  if (statusCode >= 500) {
-    return "server_error";
-  }
-
-  // Anything outside 2xx that isn't 4xx/5xx (e.g. unhandled 3xx after redirects)
-  // — treat as a server-side anomaly. Conservative.
-  if (statusCode < 200 || statusCode >= 300) {
-    return "server_error";
-  }
-
-  if (latencyMs > latencyThresholdMs) {
-    return "timeout";
-  }
-
-  if (expectedSchema && responseBody !== undefined) {
-    if (!matchesSchema(responseBody, expectedSchema)) {
-      return "schema_mismatch";
-    }
-  }
-
-  return "success";
 }
 
 function matchesSchema(body: unknown, schema: ExpectedSchema): boolean {

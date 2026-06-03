@@ -47,6 +47,7 @@
     "typescript": "^5.8.3"
   },
   "dependencies": {
+    "@pact-network/classifier": "workspace:*",
     "bs58": "^6.0.0",
     "tweetnacl": "^1.0.3"
   }
