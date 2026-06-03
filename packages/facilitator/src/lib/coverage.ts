@@ -5,17 +5,27 @@
 // path's wrap classifier does, and derives the deterministic dedup id used as
 // the Pub/Sub `callId` / facilitator `coverageId`.
 //
-// Premium/refund semantics (identical to wrap's defaultClassifier — see
-// packages/wrap/src/classifier.ts and docs/premium-coverage-mvp.md §A.2):
+// Premium/refund MATH is the single shared function `computeEconomics` in
+// @pact-network/wrap (packages/wrap/src/economics.ts). `computeCoverage` below
+// is a thin adapter over it — see docs/premium-coverage-mvp.md §A.2:
 //
 //   verdict           -> outcome          | premium    | refund
 //   "success" / "ok"  -> "ok"             | flat       | 0
-//   "latency_breach"  -> "latency_breach" | flat       | imputed   (covered)
-//   "server_error"    -> "server_error"   | flat       | imputed   (covered)
-//   "network_error"   -> "network_error"  | flat       | imputed   (covered)
+//   "latency_breach"  -> "latency_breach" | flat       | capped*   (covered)
+//   "server_error"    -> "server_error"   | flat       | capped*   (covered)
+//   "network_error"   -> "network_error"  | flat       | capped*   (covered)
 //   "payment_failed"  -> "client_error"   | 0          | 0         (uncovered)
 //   "client_error" /  -> "client_error"   | 0          | 0         (uncovered)
 //     anything 4xx-ish
+//
+// NOTE: this path shares the premium math + the breach/refund STRUCTURE with
+// wrap's `defaultClassifier`, but is NOT identical on the refund amount. The
+// facilitator passes the agent's claimed `amountPaid` to `computeEconomics`, so
+// *(`capped` = min(amountPaid, imputedCost)) — reimburse-what-you-paid, capped
+// at the pool ceiling. wrap/gateway calls `computeEconomics` WITHOUT amountPaid
+// and pays the full parametric `imputedCost`. Both are intentional and
+// preserved via the optional `amountPaid` parameter; the divergence boundary is
+// asserted in packages/facilitator/test/economics-parity.test.ts.
 //
 // `client_error` (and the synonymous `payment_failed`) is the only non-`ok`
 // outcome that is NOT covered: wrap sets premium=0, and the settler drops
@@ -25,7 +35,12 @@
 // analytics (no Pub/Sub event published — there's nothing to settle).
 
 import { createHash, randomBytes } from "node:crypto";
+import { computeEconomics } from "@pact-network/wrap";
 import type { Outcome } from "@pact-network/wrap";
+
+// The covered-breach predicate is shared with wrap — re-export it so existing
+// `../src/lib/coverage` importers keep working without a second definition.
+export { isCoveredBreach } from "@pact-network/wrap";
 
 export type Verdict =
   | "success"
@@ -69,15 +84,6 @@ export function verdictToOutcome(v: Verdict): Outcome {
   }
 }
 
-/** True if the outcome is a covered SLA breach (refund flows). */
-export function isCoveredBreach(outcome: Outcome): boolean {
-  return (
-    outcome === "latency_breach" ||
-    outcome === "server_error" ||
-    outcome === "network_error"
-  );
-}
-
 export interface CoverageMath {
   outcome: Outcome;
   /** USDC base units. 0 for `client_error` (uncovered). */
@@ -116,27 +122,14 @@ export function computeCoverage(
   pool: PoolConfig,
   amountPaidBaseUnits: bigint,
 ): CoverageMath {
-  if (outcome === "client_error") {
-    return {
-      outcome,
-      premiumLamports: 0n,
-      refundLamports: 0n,
-      covered: false,
-    };
-  }
-  let refund = 0n;
-  if (isCoveredBreach(outcome)) {
-    refund =
-      amountPaidBaseUnits < pool.imputedCostLamports
-        ? amountPaidBaseUnits
-        : pool.imputedCostLamports;
-  }
-  return {
+  // Delegate the money math to wrap's single source of truth. Passing
+  // `amountPaid` selects the facilitator/pay.sh refund model: a covered-breach
+  // refund is min(amountPaid, imputedCost) — reimburse-what-you-paid, capped.
+  return computeEconomics({
     outcome,
-    premiumLamports: pool.flatPremiumLamports,
-    refundLamports: refund,
-    covered: true,
-  };
+    pool,
+    amountPaid: amountPaidBaseUnits,
+  });
 }
 
 // ---------------------------------------------------------------------------
