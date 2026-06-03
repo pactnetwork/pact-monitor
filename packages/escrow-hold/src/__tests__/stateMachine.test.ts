@@ -130,9 +130,9 @@ describe("EscrowManager", () => {
     // Add one more AFTER advancing so its deadline is in the future.
     await manager.lock(lockInput("fresh", "ok"));
 
-    const results = await manager.crank();
-    const finalized = results.map((r) => r.record.callId).sort();
-    expect(finalized).toEqual(["bad", "good"]);
+    const { finalized, failed } = await manager.crank();
+    expect(failed).toEqual([]);
+    expect(finalized.map((r) => r.record.callId).sort()).toEqual(["bad", "good"]);
     expect(store.get("good")!.state).toBe("RELEASED");
     expect(store.get("bad")!.state).toBe("REFUNDED");
     expect(store.get("fresh")!.state).toBe("LOCKED");
@@ -142,11 +142,51 @@ describe("EscrowManager", () => {
     const { manager, clock } = makeManager();
     await manager.lock(lockInput("c1", "ok"));
     clock.advance(WINDOW + 1);
-    expect((await manager.crank()).length).toBe(1);
-    expect((await manager.crank()).length).toBe(0);
+    expect((await manager.crank()).finalized.length).toBe(1);
+    expect((await manager.crank()).finalized.length).toBe(0);
   });
 
-  it("finalize surfaces a vanished record (defensive guard)", async () => {
+  it("crank() is fault-tolerant — one failing record doesn't strand the rest", async () => {
+    // A verdict hook that throws for one specific call, succeeds for others.
+    const flakyHook: VerdictHook = {
+      decide: (r) => {
+        if (r.callId === "boom") throw new Error("verdict backend down");
+        return { action: "release", breach: false, source: "deterministic", stubbed: true };
+      },
+    };
+    const { manager, store, clock } = makeManager({ verdictHook: flakyHook });
+    await manager.lock(lockInput("ok1", "ok"));
+    await manager.lock(lockInput("boom", "ok"));
+    await manager.lock(lockInput("ok2", "ok"));
+    clock.advance(WINDOW + 1);
+
+    const { finalized, failed } = await manager.crank();
+    expect(finalized.map((r) => r.record.callId).sort()).toEqual(["ok1", "ok2"]);
+    expect(failed).toEqual([{ callId: "boom", error: "verdict backend down" }]);
+    // The failed record stays LOCKED and is retryable on the next crank.
+    expect(store.get("boom")!.state).toBe("LOCKED");
+  });
+
+  it("lock() does not leave an orphan store record if the chain call fails", async () => {
+    const store = new InMemoryEscrowStore();
+    const clock = new FakeClock(START);
+    const throwingChain = new StubEscrowChainAdapter();
+    vi.spyOn(throwingChain, "lock").mockRejectedValueOnce(new Error("chain unavailable"));
+    const manager = new EscrowManager({
+      store,
+      clock,
+      chain: throwingChain,
+      verdictHook: deterministicVerdictHook,
+      holdWindowSeconds: WINDOW,
+    });
+    await expect(manager.lock(lockInput("c1", "ok"))).rejects.toThrow(/chain unavailable/);
+    // chain.lock is awaited BEFORE store.put, so no record should exist.
+    expect(store.get("c1")).toBeUndefined();
+  });
+
+  // Guards a logically-unreachable invariant (setState succeeds on the line
+  // above the re-read). Kept as cheap defensiveness, not real-failure coverage.
+  it("finalize surfaces a vanished record (defensive guard for an unreachable state)", async () => {
     const { manager, store, clock } = makeManager();
     await manager.lock(lockInput("c1", "ok"));
     clock.advance(WINDOW + 1);

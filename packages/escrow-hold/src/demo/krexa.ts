@@ -111,13 +111,17 @@ async function main(): Promise<void> {
   clock.advance(HOLD_WINDOW_SECONDS + 1);
 
   // 3. Permissionless crank finalizes every due escrow (REAL state machine).
-  const results = await manager.crank();
-  for (const { record, verdict } of results) {
+  const { finalized, failed } = await manager.crank();
+  for (const { record, verdict } of finalized) {
     console.log(
       `${record.state.padEnd(9)}${record.callId}  ` +
         `verdict=${verdict.action} (breach=${verdict.breach}, source=${verdict.source}, stubbed=${verdict.stubbed})  ` +
         `tx=${record.finalizeTxId}`,
     );
+  }
+
+  if (failed.length > 0) {
+    console.log(`\n${failed.length} record(s) failed to finalize (stay LOCKED for next crank):`, failed);
   }
 
   // 4. Show where the money would have gone (STUB ledger).

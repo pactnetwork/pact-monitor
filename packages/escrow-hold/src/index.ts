@@ -24,5 +24,10 @@ export { InMemoryEscrowStore } from "./escrowStore";
 export type { EscrowChainAdapter, AdapterOp } from "./chainAdapter";
 export { StubEscrowChainAdapter } from "./chainAdapter";
 
-export type { EscrowManagerOptions, FinalizeResult } from "./stateMachine";
+export type {
+  EscrowManagerOptions,
+  FinalizeResult,
+  CrankFailure,
+  CrankResult,
+} from "./stateMachine";
 export { EscrowManager, nextState } from "./stateMachine";

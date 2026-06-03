@@ -28,6 +28,9 @@ export function nextState(current: EscrowState, action: EscrowAction): EscrowSta
     case "refund":
       return "REFUNDED";
     case "hold":
+      // Unreachable via EscrowManager (finalize() rejects a "hold" verdict
+      // before calling nextState). Exists only as the future dispute-path seam
+      // and for direct unit testing.
       return "LOCKED";
     default: {
       // Exhaustiveness guard.
@@ -54,6 +57,21 @@ export interface EscrowManagerOptions {
 export interface FinalizeResult {
   record: EscrowRecord;
   verdict: Verdict;
+}
+
+/** A record the crank tried but failed to finalize (it stays LOCKED). */
+export interface CrankFailure {
+  callId: string;
+  error: string;
+}
+
+/**
+ * Outcome of a crank pass. `failed` is non-empty only if a record errored
+ * (e.g. a non-stub verdict hook threw) — those stay LOCKED for the next crank.
+ */
+export interface CrankResult {
+  finalized: FinalizeResult[];
+  failed: CrankFailure[];
 }
 
 export class EscrowManager {
@@ -88,8 +106,14 @@ export class EscrowManager {
    * Finalize a single LOCKED record: run the verdict hook, apply the on-chain
    * release/refund, and advance the state. Throws if the record is missing,
    * already terminal, or its deadline hasn't passed yet.
+   *
+   * `nowUnix` defaults to the clock but can be passed in so a caller (crank)
+   * uses ONE captured timestamp for both the due-selection and the deadline
+   * check — keeping the two boundary comparisons in lockstep. It is floored to
+   * whole seconds to match `EscrowStore.dueForCrank`.
    */
-  async finalize(callId: string): Promise<FinalizeResult> {
+  async finalize(callId: string, nowUnix: number = this.opts.clock.nowUnix()): Promise<FinalizeResult> {
+    const now = Math.floor(nowUnix);
     const record = this.opts.store.get(callId);
     if (!record) {
       throw new Error(`no escrow record for callId ${callId}`);
@@ -97,10 +121,9 @@ export class EscrowManager {
     if (record.state !== "LOCKED") {
       throw new Error(`escrow ${callId} is ${record.state} (already finalized)`);
     }
-    const nowUnix = this.opts.clock.nowUnix();
-    if (BigInt(nowUnix) < BigInt(record.releaseDeadlineUnix)) {
+    if (BigInt(now) < BigInt(record.releaseDeadlineUnix)) {
       throw new Error(
-        `escrow ${callId} not yet due: now=${nowUnix} < deadline=${record.releaseDeadlineUnix}`,
+        `escrow ${callId} not yet due: now=${now} < deadline=${record.releaseDeadlineUnix}`,
       );
     }
 
@@ -131,14 +154,24 @@ export class EscrowManager {
    * Permissionless deadline crank: finalize ALL LOCKED records past their
    * deadline. This is the liveness guarantee — funds can't be stranded if a
    * single operator's executor dies, because anyone can crank.
+   *
+   * Fault-tolerant: a record that fails to finalize is collected in `failed`
+   * and left LOCKED for the next crank; it does NOT abort the rest of the
+   * batch (a crank that died on one bad record would defeat the liveness
+   * guarantee). Uses a single captured timestamp for the whole pass.
    */
-  async crank(): Promise<FinalizeResult[]> {
-    const nowUnix = this.opts.clock.nowUnix();
-    const due = this.opts.store.dueForCrank(nowUnix);
-    const out: FinalizeResult[] = [];
+  async crank(): Promise<CrankResult> {
+    const now = Math.floor(this.opts.clock.nowUnix());
+    const due = this.opts.store.dueForCrank(now);
+    const finalized: FinalizeResult[] = [];
+    const failed: CrankFailure[] = [];
     for (const r of due) {
-      out.push(await this.finalize(r.callId));
+      try {
+        finalized.push(await this.finalize(r.callId, now));
+      } catch (err) {
+        failed.push({ callId: r.callId, error: err instanceof Error ? err.message : String(err) });
+      }
     }
-    return out;
+    return { finalized, failed };
   }
 }

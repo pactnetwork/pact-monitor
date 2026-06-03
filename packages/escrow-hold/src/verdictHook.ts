@@ -59,6 +59,11 @@ export function isBreachOutcome(outcome: Outcome): boolean {
  *   - otherwise (ok)  → release the premium to the normal fan-out
  * It never returns "hold" (no dispute path in the PoC) — that branch exists in
  * the type only as the future seam.
+ *
+ * NOTE: zero-premium outcomes (4xx/429, where the classifier charges premium=0)
+ * map to a refund of 0 — a harmless no-op here. In production, callers should
+ * skip escrow entirely for a zero-premium outcome rather than create a LOCKED
+ * record that finalizes to a 0-value refund.
  */
 export const deterministicVerdictHook: VerdictHook = {
   decide(record: EscrowRecord): Verdict {
