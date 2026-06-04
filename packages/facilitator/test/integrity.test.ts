@@ -18,13 +18,16 @@ const AGENT = bs58.encode(nacl.sign.keyPair().publicKey);
 const RESOURCE = "https://merchant.example/api/quote";
 const PAY_SIG = "5q4hUBva2kmKTJgHkAMQs4JjzpHyJp4DZRiPxden4YzxjBmcJXfLiTjrxZkFJZigXkLBU68c9f2HPTFM7NBZxcJk";
 
+const ISSUED = "2026-06-04T00:00:00.000Z";
+const NOW_MS = Date.parse(ISSUED) + 1_000; // 1s after issue — inside the window
+
 function makeReceipt(over: Partial<MerchantOutcomeReceipt> = {}, signWith = merchantKp.secretKey): MerchantOutcomeReceipt {
   const base = {
     resource: RESOURCE,
     status: 503,
     agent: AGENT,
     paymentSignature: PAY_SIG,
-    issuedAt: "2026-06-04T00:00:00.000Z",
+    issuedAt: ISSUED,
   };
   const fields = { ...base, ...over };
   const payload = buildMerchantReceiptPayload(fields);
@@ -58,7 +61,7 @@ describe("statusToOutcome", () => {
 });
 
 describe("verifyMerchantReceipt", () => {
-  const ok = { payee: PAYEE, agent: AGENT, resource: RESOURCE, paymentSignature: PAY_SIG };
+  const ok = { payee: PAYEE, agent: AGENT, resource: RESOURCE, paymentSignature: PAY_SIG, nowMs: NOW_MS };
 
   test("valid receipt → ok, outcome from signed status", () => {
     const r = verifyMerchantReceipt({ receipt: makeReceipt({ status: 503 }), ...ok });
@@ -68,12 +71,28 @@ describe("verifyMerchantReceipt", () => {
     const r = verifyMerchantReceipt({ receipt: makeReceipt({ status: 200 }), ...ok });
     expect(r).toEqual({ ok: true, outcome: "ok" });
   });
+  test("valid 4xx receipt → ok, outcome=client_error (uncovered downstream)", () => {
+    const r = verifyMerchantReceipt({ receipt: makeReceipt({ status: 404 }), ...ok });
+    expect(r).toEqual({ ok: true, outcome: "client_error" });
+  });
   test("missing receipt → missing", () => {
     expect(verifyMerchantReceipt({ receipt: undefined, ...ok })).toEqual({ ok: false, reason: "missing" });
   });
+  test("malformed receipt (bad field types) → malformed", () => {
+    const bad = { ...makeReceipt(), status: "503" as unknown as number };
+    expect(verifyMerchantReceipt({ receipt: bad, ...ok })).toEqual({ ok: false, reason: "malformed" });
+  });
   test("no payee/paymentSignature (unverified) → malformed", () => {
-    expect(verifyMerchantReceipt({ receipt: makeReceipt(), payee: null, agent: AGENT, resource: RESOURCE, paymentSignature: undefined }))
+    expect(verifyMerchantReceipt({ receipt: makeReceipt(), payee: null, agent: AGENT, resource: RESOURCE, paymentSignature: undefined, nowMs: NOW_MS }))
       .toEqual({ ok: false, reason: "malformed" });
+  });
+  test("stale receipt (issuedAt outside the freshness window) → stale", () => {
+    const r = verifyMerchantReceipt({ receipt: makeReceipt(), ...ok, nowMs: Date.parse(ISSUED) + 10 * 60_000 });
+    expect(r).toEqual({ ok: false, reason: "stale" });
+  });
+  test("unparseable issuedAt → stale", () => {
+    const r = verifyMerchantReceipt({ receipt: makeReceipt({ issuedAt: "not-a-date" }), ...ok });
+    expect(r).toEqual({ ok: false, reason: "stale" });
   });
   test("resource mismatch → resource_mismatch", () => {
     const r = verifyMerchantReceipt({ receipt: makeReceipt({ resource: "https://evil.example" }), ...ok });

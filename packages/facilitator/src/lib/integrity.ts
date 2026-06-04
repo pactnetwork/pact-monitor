@@ -27,11 +27,14 @@
 //                          receipt and the payment is verified. The covered
 //                          outcome is derived from the merchant's SIGNED HTTP
 //                          status, NOT the client verdict — so the client can
-//                          no longer forge the breach. Honest limitation: this
-//                          can only cover breaches the merchant can sign for
-//                          (latency_breach, soft 5xx). It STRUCTURALLY cannot
-//                          cover network_error (merchant unreachable => no one
-//                          to sign), which is why it can't be the only control.
+//                          no longer forge the breach. Honest limitations:
+//                          (a) the outcome is derived from a STATUS CODE, so it
+//                          only covers `server_error` (5xx). A slow-but-200
+//                          `latency_breach` maps to `ok` (statusToOutcome has no
+//                          latency input) and is NOT covered here. (b) It
+//                          STRUCTURALLY cannot cover `network_error` (merchant
+//                          unreachable => no one to sign). Both are why this
+//                          can't be the only control.
 //
 // PoC scope / not-production caveats:
 //   - The merchant receipt is signed by the `payee` wallet pubkey itself. A
@@ -118,7 +121,11 @@ export type ReceiptVerifyError =
   | "resource_mismatch"
   | "agent_mismatch"
   | "payment_mismatch"
+  | "stale"
   | "bad_signature";
+
+/** Default freshness window for a merchant receipt's `issuedAt` (ms). */
+export const DEFAULT_RECEIPT_MAX_AGE_MS = 120_000;
 
 /**
  * Verify a merchant outcome receipt against the register body. The receipt must
@@ -131,8 +138,14 @@ export function verifyMerchantReceipt(args: {
   agent: string;
   resource: string;
   paymentSignature: string | undefined;
+  /** now() in ms — injectable for tests. Defaults to Date.now(). */
+  nowMs?: number;
+  /** Freshness window for `issuedAt`. Defaults to DEFAULT_RECEIPT_MAX_AGE_MS. */
+  maxAgeMs?: number;
 }): ReceiptVerifyResult {
   const { receipt, payee, agent, resource, paymentSignature } = args;
+  const nowMs = args.nowMs ?? Date.now();
+  const maxAgeMs = args.maxAgeMs ?? DEFAULT_RECEIPT_MAX_AGE_MS;
   if (!receipt) return { ok: false, reason: "missing" };
   if (
     typeof receipt.resource !== "string" ||
@@ -151,6 +164,13 @@ export function verifyMerchantReceipt(args: {
   if (receipt.agent !== agent) return { ok: false, reason: "agent_mismatch" };
   if (receipt.paymentSignature !== paymentSignature) {
     return { ok: false, reason: "payment_mismatch" };
+  }
+  // Freshness: bound how old a receipt may be so a leaked/observed receipt can't
+  // be replayed indefinitely. (On-chain CallRecord PDA dedup already binds a
+  // given payment to one registration; this additionally caps the time window.)
+  const issuedMs = Date.parse(receipt.issuedAt);
+  if (!Number.isFinite(issuedMs) || Math.abs(nowMs - issuedMs) > maxAgeMs) {
+    return { ok: false, reason: "stale" };
   }
 
   const payload = buildMerchantReceiptPayload({
@@ -240,8 +260,10 @@ export function decideIntegrity(args: {
   if (!receipt || !receipt.ok) {
     // No trustworthy merchant attestation -> the breach signal is unproven.
     // This is the branch that STRUCTURALLY drops network_error (merchant down
-    // => can never produce a receipt). Refund withheld; outcome reported as the
-    // client's claim for analytics, but settles as uncovered (see route).
+    // => can never produce a receipt). Refund withheld. The outcome is still
+    // reported as the client's claim: if it's a covered breach the route
+    // charges the premium and publishes a refund-0 event; if it's `ok`/
+    // client_error the route's own covered-check settles it accordingly.
     return { outcome: clientOutcome, refundEligible: false, withheldReason: "no_merchant_receipt" };
   }
   // The merchant's signed status is authoritative for the outcome.
