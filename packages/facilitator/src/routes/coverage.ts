@@ -213,6 +213,10 @@ export async function registerCoverageRoute(c: Context): Promise<Response> {
       connection: ctx.connection,
       paymentSignature: body.paymentSignature as string,
       payee: body.payee as string,
+      // Source binding (agent-tasks#10): the verified agent (== body.agent,
+      // cross-checked above) must also be the OWNER of the paying token
+      // account, else this is a replay of a stranger's payment.
+      agent: body.agent,
       asset: body.asset,
       amountBaseUnits,
     });
