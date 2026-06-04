@@ -88,6 +88,22 @@ export class BatchSubmitError extends Error {
 }
 
 /**
+ * Thrown by submit() when a batch targets a network this settler instance does
+ * NOT serve (network ∉ PACT_ENABLED_NETWORKS). The pipeline catches this and
+ * ACKs the messages (drop), rather than nacking (redeliver) or crashing. This
+ * is what makes per-network settler isolation safe on a fan-out Pub/Sub
+ * subscription: a base-mainnet-only settler receiving a solana-* event drops
+ * it cleanly instead of poison-looping. The owning settler (subscribed to its
+ * own subscription) still processes its copy.
+ */
+export class SkipBatchError extends Error {
+  constructor(public readonly network: string) {
+    super(`batch network "${network}" not in PACT_ENABLED_NETWORKS — ack-skip`);
+    this.name = "SkipBatchError";
+  }
+}
+
+/**
  * Per-event fee-recipient share computed off-chain to feed the indexer push
  * body. The on-chain math is `premium * bps / 10_000` rounded down (residual
  * stays in pool); we mirror that exactly here.
@@ -237,6 +253,12 @@ export class SubmitterService implements OnModuleInit {
 
     if (this.adaptersService.legacyDirectSolana && network.startsWith("solana-")) {
       return this.submitLegacyDirect(batch);
+    }
+    // Per-network isolation: if this instance has no adapter for the batch's
+    // network (network ∉ PACT_ENABLED_NETWORKS), ack-skip rather than crash.
+    // Lets a single-network settler share a fan-out subscription safely.
+    if (!this.adaptersService.hasAdapter(network)) {
+      throw new SkipBatchError(network);
     }
     return this.submitViaAdapter(batch, network);
   }

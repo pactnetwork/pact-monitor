@@ -143,6 +143,18 @@ export class AdaptersService implements OnModuleInit {
     return a;
   }
 
+  /**
+   * True iff this settler instance has an adapter booted for `network` (i.e.
+   * `network` is in PACT_ENABLED_NETWORKS). Lets the pipeline ack-skip events
+   * for networks this instance does not serve — required for safe per-network
+   * settler isolation on a fan-out Pub/Sub subscription (a base-mainnet-only
+   * settler must drop, not crash on, a solana-* event). Non-throwing twin of
+   * getAdapter.
+   */
+  hasAdapter(network: string): boolean {
+    return this.adapters.has(network);
+  }
+
   getSigner(network: string): Keypair {
     const kp = this.keypairs.get(network);
     if (!kp) {
