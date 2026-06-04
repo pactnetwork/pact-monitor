@@ -38,6 +38,8 @@ interface MockState {
   }>;
   // Call rows for GET /v1/coverage/:id (keyed by callId)
   callRows: Record<string, Record<string, unknown>>;
+  // Verdict-integrity mode (agent-tasks#10). Default "trust" = legacy behaviour.
+  integrityMode: "trust" | "verified-only";
 }
 
 const state: MockState = {
@@ -49,6 +51,7 @@ const state: MockState = {
   allowanceThrows: false,
   endpointRows: {},
   callRows: {},
+  integrityMode: "trust",
 };
 
 const publisher = new MemoryEventPublisher();
@@ -105,6 +108,7 @@ vi.mock("../src/lib/context.js", () => ({
     publisher,
     usdcMint: USDC,
     payDefaults: PAY_DEFAULTS,
+    integrityMode: state.integrityMode,
   }),
   initContext: vi.fn(),
   setContext: vi.fn(),
@@ -179,6 +183,7 @@ describe("facilitator app", () => {
     state.allowanceThrows = false;
     state.endpointRows = {};
     state.callRows = {};
+    state.integrityMode = "trust";
   });
 
   test("GET /health", async () => {
@@ -583,5 +588,76 @@ describe("facilitator app", () => {
   test("GET /v1/coverage/:id — malformed id → 400", async () => {
     const res = await app.request("/v1/coverage/not-a-uuid");
     expect(res.status).toBe(400);
+  });
+});
+
+// ---- agent-tasks#10: verdict-integrity modes (end-to-end through the app) ----
+//
+// Proves the refund-gating behaviour of each mode. The "merchant-attested" mode
+// (merchant-signed outcome receipt) ships in the stacked follow-up PR and is
+// tested there.
+
+describe("facilitator integrity modes (agent-tasks#10)", () => {
+  let app: ReturnType<typeof createApp>;
+  beforeEach(() => {
+    app = createApp();
+    publisher.reset();
+    mockPg.query.mockClear();
+    mockAllowanceCheck.check.mockClear();
+    state.paymentOk = true;
+    state.observedAmount = 1_000_000n;
+    state.allowanceEligible = true;
+    state.allowanceThrows = false;
+    state.endpointRows = {};
+    state.callRows = {};
+    state.integrityMode = "trust";
+  });
+
+  test('mode "trust": a FORGED breach verdict still triggers a refund (documents the bug)', async () => {
+    state.integrityMode = "trust";
+    // Agent really paid (verified), call really succeeded, but lies server_error.
+    const res = await app.request(signedRegisterRequest({ verdict: "server_error" }));
+    const json = (await res.json()) as { status: string; refundBaseUnits: string };
+    expect(json.status).toBe("settlement_pending");
+    expect(json.refundBaseUnits).toBe("1000000"); // pool drained on a lie
+  });
+
+  test('mode "verified-only": verified breach → refund flows', async () => {
+    state.integrityMode = "verified-only";
+    const res = await app.request(signedRegisterRequest({ verdict: "server_error" }));
+    const json = (await res.json()) as { status: string; refundBaseUnits: string; refundWithheldReason: string | null };
+    expect(json.status).toBe("settlement_pending");
+    expect(json.refundBaseUnits).toBe("1000000");
+    expect(json.refundWithheldReason).toBeNull();
+  });
+
+  test('mode "verified-only": UNVERIFIED breach → premium charged, refund withheld', async () => {
+    state.integrityMode = "verified-only";
+    // Degrade mode: no payee + no paymentSignature → verified:false.
+    const body: Record<string, unknown> = {
+      agent: AGENT, resource: RESOURCE, scheme: "x402",
+      amountBaseUnits: "1000000", asset: USDC, verdict: "server_error",
+    };
+    const json = JSON.stringify(body);
+    const ts = Date.now();
+    const nonce = bs58.encode(randomBytes(16));
+    const path = "/v1/coverage/register";
+    const payload = `v1\nPOST\n${path}\n${ts}\n${nonce}\n${sha256Hex(json)}`;
+    const sig = nacl.sign.detached(new TextEncoder().encode(payload), agentKp.secretKey);
+    const req = new Request(`http://local${path}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json", "x-pact-agent": AGENT,
+        "x-pact-timestamp": String(ts), "x-pact-nonce": nonce, "x-pact-signature": bs58.encode(sig),
+      },
+      body: json,
+    });
+    const res = await app.request(req);
+    const out = (await res.json()) as { status: string; verified: boolean; premiumBaseUnits: string; refundBaseUnits: string; refundWithheldReason: string };
+    expect(out.status).toBe("settlement_pending");
+    expect(out.verified).toBe(false);
+    expect(out.premiumBaseUnits).toBe("1000"); // premium still flows
+    expect(out.refundBaseUnits).toBe("0");      // refund withheld
+    expect(out.refundWithheldReason).toBe("unverified_payment");
   });
 });

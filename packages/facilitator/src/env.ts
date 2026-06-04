@@ -53,6 +53,14 @@ const Env = z.object({
     .string()
     .regex(/^\d+$/)
     .default("5000000"),
+  // Verdict-integrity mode for the coverage register endpoint (agent-tasks#10).
+  //   "trust"            — current behaviour (refund off the client verdict).
+  //   "verified-only"    — refund only when the payment is on-chain-verified.
+  // Defaults to "trust" so behaviour is unchanged until explicitly opted in.
+  // (A "merchant-attested" mode ships in the stacked follow-up PR.)
+  COVERAGE_INTEGRITY_MODE: z
+    .enum(["trust", "verified-only"])
+    .default("trust"),
   PORT: z.string().default("8080"),
 });
 
