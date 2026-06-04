@@ -228,6 +228,7 @@ const stubAdapter = {
 const stubAdaptersSolana = {
   legacyDirectSolana: false,
   getAdapter: vi.fn().mockReturnValue(stubAdapter),
+  hasAdapter: () => true,
   getSigner: vi.fn().mockReturnValue(Keypair.generate()),
 } as unknown as AdaptersService;
 
