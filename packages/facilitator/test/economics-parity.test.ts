@@ -1,18 +1,20 @@
-// Money-path parity guardrail for the premium/refund dedup (agent-tasks#3, S2).
+// Money-path parity guardrail for the premium/refund dedup (agent-tasks#3, S2)
+// + the canonical refund convergence (agent-tasks#11).
 //
 // Both the gateway path (`@pact-network/wrap` `computeEconomics`, called
 // WITHOUT amountPaid) and the facilitator/pay.sh path (`computeCoverage`,
-// called WITH the agent's claimed amountPaid) now share ONE math function.
-// This test pins what that means for money:
+// called WITH the agent's claimed amountPaid) share ONE math function. This
+// test pins what that means for money:
 //
 //   - premium + covered are byte-identical on both paths for every outcome.
 //   - non-breach refunds (ok, client_error) are identical (0).
-//   - covered-breach refunds DIVERGE ON PURPOSE: the gateway pays the full
-//     parametric `imputedCost`; the facilitator reimburses min(amountPaid,
-//     imputedCost). They match only when amountPaid >= imputedCost.
+//   - covered-breach refunds follow ONE canonical formula on both paths:
+//     `principal + flatPremium`. The only difference is the principal — the
+//     gateway uses `imputedCost`, the facilitator uses `amountPaid` — so the two
+//     refunds match exactly when amountPaid == imputedCost.
 //
-// If any of these assertions break, money is settling differently than it did
-// before the dedup — investigate before merging.
+// If any of these assertions break, money is settling differently than the
+// canonical `principal + premium` model — investigate before merging.
 
 import { describe, test, expect } from "vitest";
 import { computeEconomics } from "@pact-network/wrap";
@@ -38,24 +40,31 @@ describe("economics parity: wrap (gateway) vs facilitator (pay.sh)", () => {
     }
   });
 
-  describe("covered-breach refund divergence boundary (proof no money moved)", () => {
+  describe("covered-breach refund = principal + premium on BOTH paths", () => {
     for (const outcome of BREACHES) {
-      test(`${outcome}: amountPaid < imputed -> gateway pays imputed, facilitator pays amountPaid`, () => {
-        const amountPaid = 3_000n; // < POOL.imputedCostLamports (10_000n)
+      test(`${outcome}: gateway pays imputed + premium`, () => {
         const gateway = computeEconomics({ outcome, pool: POOL }); // no amountPaid
-        const facilitator = computeCoverage(outcome, POOL, amountPaid);
-        expect(gateway.refundLamports).toBe(POOL.imputedCostLamports); // full parametric: 10_000n
-        expect(facilitator.refundLamports).toBe(amountPaid); // reimburse-capped: 3_000n
-        expect(gateway.refundLamports).not.toBe(facilitator.refundLamports); // differ ON PURPOSE
+        // principal = imputedCost (10_000n) + flatPremium (1_000n) = 11_000n
+        expect(gateway.refundLamports).toBe(
+          POOL.imputedCostLamports + POOL.flatPremiumLamports,
+        );
       });
 
-      test(`${outcome}: amountPaid >= imputed -> both pay imputed (match)`, () => {
-        const amountPaid = 999_999n; // >= imputed
+      test(`${outcome}: facilitator pays amountPaid + premium`, () => {
+        const amountPaid = 3_000n;
+        const facilitator = computeCoverage(outcome, POOL, amountPaid);
+        // principal = amountPaid (3_000n) + flatPremium (1_000n) = 4_000n
+        expect(facilitator.refundLamports).toBe(amountPaid + POOL.flatPremiumLamports);
+      });
+
+      test(`${outcome}: paths match exactly when amountPaid == imputed`, () => {
+        const amountPaid = POOL.imputedCostLamports; // 10_000n
         const gateway = computeEconomics({ outcome, pool: POOL });
         const facilitator = computeCoverage(outcome, POOL, amountPaid);
-        expect(gateway.refundLamports).toBe(POOL.imputedCostLamports);
-        expect(facilitator.refundLamports).toBe(POOL.imputedCostLamports);
-        expect(gateway.refundLamports).toBe(facilitator.refundLamports);
+        expect(facilitator.refundLamports).toBe(gateway.refundLamports);
+        expect(gateway.refundLamports).toBe(
+          POOL.imputedCostLamports + POOL.flatPremiumLamports,
+        );
       });
     }
   });

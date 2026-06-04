@@ -126,7 +126,8 @@ describe("dummy registry + classifier wiring", () => {
     });
     expect(r.outcome).toBe("server_error");
     expect(r.premium).toBe(1_000n);
-    expect(r.refund).toBe(5_000n);
+    // canonical principal + premium (agent-tasks#11): imputed 5_000n + flat 1_000n
+    expect(r.refund).toBe(6_000n);
   });
 
   test("2xx over SLA (?latency=...) → latency_breach, premium + refund", () => {
@@ -139,7 +140,8 @@ describe("dummy registry + classifier wiring", () => {
     });
     expect(r.outcome).toBe("latency_breach");
     expect(r.premium).toBe(1_000n);
-    expect(r.refund).toBe(5_000n);
+    // canonical principal + premium (agent-tasks#11): imputed 5_000n + flat 1_000n
+    expect(r.refund).toBe(6_000n);
   });
 
   test("2xx within SLA → ok, premium charged, no refund", () => {
@@ -174,6 +176,7 @@ describe("dummy registry + classifier wiring", () => {
     });
     expect(r.outcome).toBe("network_error");
     expect(r.premium).toBe(1_000n);
-    expect(r.refund).toBe(5_000n);
+    // canonical principal + premium (agent-tasks#11): imputed 5_000n + flat 1_000n
+    expect(r.refund).toBe(6_000n);
   });
 });

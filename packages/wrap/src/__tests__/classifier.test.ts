@@ -31,11 +31,12 @@ describe("defaultClassifier", () => {
     expect(r.refund).toBe(0n);
   });
 
-  it("2xx exceeding sla → latency_breach, premium=flat, refund=imputed", () => {
+  it("2xx exceeding sla → latency_breach, premium=flat, refund=imputed+premium", () => {
     const r = defaultClassifier.classify(input(200, 600));
     expect(r.outcome).toBe("latency_breach");
     expect(r.premium).toBe(1_000n);
-    expect(r.refund).toBe(10_000n);
+    // canonical principal + premium: imputed 10_000n + flat 1_000n
+    expect(r.refund).toBe(11_000n);
   });
 
   it("2xx exactly at sla → ok (boundary)", () => {
@@ -44,12 +45,13 @@ describe("defaultClassifier", () => {
   });
 
   it.each([500, 502, 503, 504, 599])(
-    "%i → server_error, premium=flat, refund=imputed",
+    "%i → server_error, premium=flat, refund=imputed+premium",
     (status) => {
       const r = defaultClassifier.classify(input(status, 50));
       expect(r.outcome).toBe("server_error");
       expect(r.premium).toBe(1_000n);
-      expect(r.refund).toBe(10_000n);
+      // canonical principal + premium: imputed 10_000n + flat 1_000n
+      expect(r.refund).toBe(11_000n);
     },
   );
 
@@ -70,11 +72,12 @@ describe("defaultClassifier", () => {
     },
   );
 
-  it("network error (response=null) → network_error, premium=flat, refund=imputed", () => {
+  it("network error (response=null) → network_error, premium=flat, refund=imputed+premium", () => {
     const r = defaultClassifier.classify(input(null, 0));
     expect(r.outcome).toBe("network_error");
     expect(r.premium).toBe(1_000n);
-    expect(r.refund).toBe(10_000n);
+    // canonical principal + premium: imputed 10_000n + flat 1_000n
+    expect(r.refund).toBe(11_000n);
   });
 
   it("3xx → ok (no refund)", () => {
