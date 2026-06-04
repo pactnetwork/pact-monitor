@@ -4,6 +4,7 @@ import { Keypair, PublicKey } from "@solana/web3.js";
 
 import {
   BatchSubmitError,
+  SkipBatchError,
   SubmitterService,
 } from "./submitter.service";
 import { SecretLoaderService } from "../config/secret-loader.service";
@@ -670,5 +671,43 @@ describe("SubmitterService — boot without Solana (multi-evm WP T5)", () => {
     expect(
       () => new SubmitterService(config, makeSecretsStub(), solanaStubAdapters),
     ).toThrow(/SOLANA_RPC_URL/);
+  });
+});
+
+describe("SubmitterService — per-network isolation (SkipBatchError)", () => {
+  function batchForNetwork(network: string): SettleBatch {
+    const msg = makeMessage({
+      callIdHex: "00".repeat(16),
+      agentPubkey: "Agent111",
+      slug: "helius",
+    });
+    (msg.data as Record<string, unknown>).network = network;
+    return { messages: [msg] } as unknown as SettleBatch;
+  }
+
+  function makeSvc(servedNetwork: string): SubmitterService {
+    // EVM-only instance: serves `servedNetwork`, no Solana deps.
+    const config = makeConfig({ PACT_ENABLED_NETWORKS: servedNetwork });
+    const adapters = {
+      legacyDirectSolana: false,
+      hasAdapter: (n: string) => n === servedNetwork,
+    } as unknown as AdaptersService;
+    const secrets = { keypair: Keypair.generate() } as unknown as SecretLoaderService;
+    return new SubmitterService(config, secrets, adapters);
+  }
+
+  it("throws SkipBatchError for a batch whose network this instance does not serve", async () => {
+    const svc = makeSvc("base-mainnet");
+    await expect(svc.submit(batchForNetwork("solana-mainnet"))).rejects.toBeInstanceOf(
+      SkipBatchError,
+    );
+  });
+
+  it("SkipBatchError carries the offending network for logging/ack", async () => {
+    const svc = makeSvc("base-mainnet");
+    await svc.submit(batchForNetwork("arc-testnet")).catch((e: unknown) => {
+      expect(e).toBeInstanceOf(SkipBatchError);
+      expect((e as SkipBatchError).network).toBe("arc-testnet");
+    });
   });
 });
