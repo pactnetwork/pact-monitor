@@ -70,7 +70,7 @@ const _evmChains: Record<
     blockTimeMs: 2000,
     finalityBlocks: 1,
     finalityBlockTag: "safe",
-    deploymentBlock: null,
+    deploymentBlock: 46880730,
     logRangeChunk: 500,
   },
 };
