@@ -45,6 +45,12 @@ import {
   verdictToOutcome,
 } from "../lib/coverage.js";
 import { verifyPayment } from "../lib/payment-verify.js";
+import {
+  decideIntegrity,
+  verifyMerchantReceipt,
+  type MerchantOutcomeReceipt,
+  type ReceiptVerifyResult,
+} from "../lib/integrity.js";
 import type { PaySettlementEvent } from "../lib/events.js";
 
 // Same UUIDv4 shape gate the market-proxy's GET /v1/calls/:id uses. The
@@ -84,6 +90,11 @@ interface RegisterBody {
   asset: string;
   verdict: string;
   latencyMs?: number;
+  /**
+   * OPTIONAL merchant-signed outcome receipt (agent-tasks#10, Option 1).
+   * Only consulted when COVERAGE_INTEGRITY_MODE === "merchant-attested".
+   */
+  merchantReceipt?: MerchantOutcomeReceipt;
   // Extra fields the CLI may send (upstreamStatus, reason, ...) are ignored.
   [k: string]: unknown;
 }
@@ -246,15 +257,43 @@ export async function registerCoverageRoute(c: Context): Promise<Response> {
   // it claimed, not an unrelated bigger transfer in the same tx. In the
   // UNVERIFIED path there's nothing to cross-check against — the on-chain
   // hourly exposure cap (and the $1/call imputed-cost ceiling) is the bound.
-  const outcome = verdictToOutcome(body.verdict);
+  const clientOutcome = verdictToOutcome(body.verdict);
+
+  // ---- (7a) Verdict-integrity gate (agent-tasks#10) ----------------------
+  // The client verdict is untrusted. Depending on COVERAGE_INTEGRITY_MODE we
+  // either trust it (legacy), require an on-chain-verified payment before any
+  // refund ("verified-only"), or require a merchant-signed outcome receipt and
+  // derive the covered outcome from the SIGNED status ("merchant-attested").
+  const mode = ctx.integrityMode ?? "trust";
+  let receiptResult: ReceiptVerifyResult | undefined;
+  if (mode === "merchant-attested") {
+    receiptResult = verifyMerchantReceipt({
+      receipt: body.merchantReceipt,
+      payee,
+      agent: body.agent,
+      resource: body.resource,
+      paymentSignature: verified ? (body.paymentSignature as string) : undefined,
+    });
+  }
+  const decision = decideIntegrity({
+    mode,
+    clientOutcome,
+    verified,
+    receipt: receiptResult,
+  });
+
   const math = computeCoverage(
-    outcome,
+    decision.outcome,
     {
       flatPremiumLamports: pool.flatPremiumLamports,
       imputedCostLamports: pool.imputedCostLamports,
     },
     amountBaseUnits,
   );
+  // Integrity gate: withhold the refund (settle premium-only) when the active
+  // mode didn't establish the breach. The premium still flows on a covered
+  // outcome — only the pool-funded refund is gated.
+  const refundLamports = decision.refundEligible ? math.refundLamports : 0n;
   if (!math.covered) {
     // client_error / payment_failed — not covered. Record nothing on-chain
     // (zero-premium events are dropped by the settler's batcher anyway).
@@ -315,7 +354,7 @@ export async function registerCoverageRoute(c: Context): Promise<Response> {
     agentPubkey: body.agent,
     endpointSlug: slug,
     premiumLamports: math.premiumLamports.toString(),
-    refundLamports: math.refundLamports.toString(),
+    refundLamports: refundLamports.toString(),
     latencyMs,
     outcome: math.outcome,
     ts: new Date().toISOString(),
@@ -332,10 +371,14 @@ export async function registerCoverageRoute(c: Context): Promise<Response> {
     coverageId,
     status: "settlement_pending",
     premiumBaseUnits: math.premiumLamports.toString(),
-    refundBaseUnits: math.refundLamports.toString(),
+    refundBaseUnits: refundLamports.toString(),
     reason: null,
     poolSlug: slug,
     outcome: math.outcome,
+    // agent-tasks#10 observability: which integrity mode ran, and why a refund
+    // was withheld despite a covered outcome (null when not withheld).
+    integrityMode: mode,
+    refundWithheldReason: decision.withheldReason,
     // null in the unverified path — we never went to chain to observe it.
     observedPaymentBaseUnits:
       observedPaymentBaseUnits === null ? null : observedPaymentBaseUnits.toString(),

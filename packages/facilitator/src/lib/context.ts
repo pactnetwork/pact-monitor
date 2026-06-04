@@ -5,6 +5,7 @@ import { Connection } from "@solana/web3.js";
 import type { BalanceCheck } from "@pact-network/wrap";
 import { createAllowanceCheck } from "./allowance.js";
 import { createPubSubPublisher, type EventPublisher } from "./events.js";
+import type { IntegrityMode } from "./integrity.js";
 import { env } from "../env.js";
 
 export interface PayDefaults {
@@ -22,6 +23,8 @@ export interface AppContext {
   publisher: EventPublisher;
   usdcMint: string;
   payDefaults: PayDefaults;
+  /** Verdict-integrity mode for the register endpoint (agent-tasks#10). */
+  integrityMode: IntegrityMode;
 }
 
 let _ctx: AppContext | null = null;
@@ -66,6 +69,7 @@ export function initContext(): AppContext {
     publisher,
     usdcMint: env.USDC_MINT,
     payDefaults: payDefaultsFromEnv(),
+    integrityMode: env.COVERAGE_INTEGRITY_MODE,
   };
   return _ctx;
 }

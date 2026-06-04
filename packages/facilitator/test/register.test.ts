@@ -38,6 +38,8 @@ interface MockState {
   }>;
   // Call rows for GET /v1/coverage/:id (keyed by callId)
   callRows: Record<string, Record<string, unknown>>;
+  // Verdict-integrity mode (agent-tasks#10). Default "trust" = legacy behaviour.
+  integrityMode: "trust" | "verified-only" | "merchant-attested";
 }
 
 const state: MockState = {
@@ -49,6 +51,7 @@ const state: MockState = {
   allowanceThrows: false,
   endpointRows: {},
   callRows: {},
+  integrityMode: "trust",
 };
 
 const publisher = new MemoryEventPublisher();
@@ -105,6 +108,7 @@ vi.mock("../src/lib/context.js", () => ({
     publisher,
     usdcMint: USDC,
     payDefaults: PAY_DEFAULTS,
+    integrityMode: state.integrityMode,
   }),
   initContext: vi.fn(),
   setContext: vi.fn(),
@@ -179,6 +183,7 @@ describe("facilitator app", () => {
     state.allowanceThrows = false;
     state.endpointRows = {};
     state.callRows = {};
+    state.integrityMode = "trust";
   });
 
   test("GET /health", async () => {
@@ -583,5 +588,161 @@ describe("facilitator app", () => {
   test("GET /v1/coverage/:id — malformed id → 400", async () => {
     const res = await app.request("/v1/coverage/not-a-uuid");
     expect(res.status).toBe(400);
+  });
+});
+
+// ---- agent-tasks#10: verdict-integrity modes (end-to-end through the app) ----
+//
+// Proves the anti-forgery behaviour of each mode. The merchant key is a real
+// ed25519 keypair so its receipt signature verifies; `payee` is set to that
+// merchant's pubkey for these tests.
+
+const merchantKp = nacl.sign.keyPair();
+const MERCHANT = bs58.encode(merchantKp.publicKey);
+
+// Independent reimplementation of the canonical payload (must match
+// src/lib/integrity.ts::buildMerchantReceiptPayload byte-for-byte).
+function signMerchantReceipt(args: {
+  resource: string;
+  status: number;
+  agent: string;
+  paymentSignature: string;
+  issuedAt: string;
+  signWith?: Uint8Array;
+}) {
+  const payload = `pact-merchant-receipt/v1\n${args.resource}\n${args.status}\n${args.agent}\n${args.paymentSignature}\n${args.issuedAt}`;
+  const sig = nacl.sign.detached(
+    new TextEncoder().encode(payload),
+    args.signWith ?? merchantKp.secretKey,
+  );
+  return {
+    resource: args.resource,
+    status: args.status,
+    agent: args.agent,
+    paymentSignature: args.paymentSignature,
+    issuedAt: args.issuedAt,
+    merchantSig: bs58.encode(sig),
+  };
+}
+
+describe("facilitator integrity modes (agent-tasks#10)", () => {
+  let app: ReturnType<typeof createApp>;
+  beforeEach(() => {
+    app = createApp();
+    publisher.reset();
+    mockPg.query.mockClear();
+    mockAllowanceCheck.check.mockClear();
+    state.paymentOk = true;
+    state.observedAmount = 1_000_000n;
+    state.allowanceEligible = true;
+    state.allowanceThrows = false;
+    state.endpointRows = {};
+    state.callRows = {};
+    state.integrityMode = "trust";
+  });
+
+  test('mode "trust": a FORGED breach verdict still triggers a refund (documents the bug)', async () => {
+    state.integrityMode = "trust";
+    // Agent really paid (verified), call really succeeded, but lies server_error.
+    const res = await app.request(signedRegisterRequest({ verdict: "server_error" }));
+    const json = (await res.json()) as { status: string; refundBaseUnits: string };
+    expect(json.status).toBe("settlement_pending");
+    expect(json.refundBaseUnits).toBe("1000000"); // pool drained on a lie
+  });
+
+  test('mode "verified-only": verified breach → refund flows', async () => {
+    state.integrityMode = "verified-only";
+    const res = await app.request(signedRegisterRequest({ verdict: "server_error" }));
+    const json = (await res.json()) as { status: string; refundBaseUnits: string; refundWithheldReason: string | null };
+    expect(json.status).toBe("settlement_pending");
+    expect(json.refundBaseUnits).toBe("1000000");
+    expect(json.refundWithheldReason).toBeNull();
+  });
+
+  test('mode "verified-only": UNVERIFIED breach → premium charged, refund withheld', async () => {
+    state.integrityMode = "verified-only";
+    // Degrade mode: no payee + no paymentSignature → verified:false.
+    const body: Record<string, unknown> = {
+      agent: AGENT, resource: RESOURCE, scheme: "x402",
+      amountBaseUnits: "1000000", asset: USDC, verdict: "server_error",
+    };
+    const json = JSON.stringify(body);
+    const ts = Date.now();
+    const nonce = bs58.encode(randomBytes(16));
+    const path = "/v1/coverage/register";
+    const payload = `v1\nPOST\n${path}\n${ts}\n${nonce}\n${sha256Hex(json)}`;
+    const sig = nacl.sign.detached(new TextEncoder().encode(payload), agentKp.secretKey);
+    const req = new Request(`http://local${path}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json", "x-pact-agent": AGENT,
+        "x-pact-timestamp": String(ts), "x-pact-nonce": nonce, "x-pact-signature": bs58.encode(sig),
+      },
+      body: json,
+    });
+    const res = await app.request(req);
+    const out = (await res.json()) as { status: string; verified: boolean; premiumBaseUnits: string; refundBaseUnits: string; refundWithheldReason: string };
+    expect(out.status).toBe("settlement_pending");
+    expect(out.verified).toBe(false);
+    expect(out.premiumBaseUnits).toBe("1000"); // premium still flows
+    expect(out.refundBaseUnits).toBe("0");      // refund withheld
+    expect(out.refundWithheldReason).toBe("unverified_payment");
+  });
+
+  test('mode "merchant-attested": valid merchant receipt for a real 503 → refund flows', async () => {
+    state.integrityMode = "merchant-attested";
+    const issuedAt = new Date().toISOString();
+    const receipt = signMerchantReceipt({ resource: RESOURCE, status: 503, agent: AGENT, paymentSignature: SIG, issuedAt });
+    const res = await app.request(signedRegisterRequest({ payee: MERCHANT, verdict: "server_error", merchantReceipt: receipt }));
+    const json = (await res.json()) as { status: string; outcome: string; refundBaseUnits: string; refundWithheldReason: string | null };
+    expect(json.status).toBe("settlement_pending");
+    expect(json.outcome).toBe("server_error");
+    expect(json.refundBaseUnits).toBe("1000000");
+    expect(json.refundWithheldReason).toBeNull();
+  });
+
+  test('mode "merchant-attested": FORGED verdict but merchant signed a 200 → outcome=ok, NO refund (forgery blocked)', async () => {
+    state.integrityMode = "merchant-attested";
+    const issuedAt = new Date().toISOString();
+    // Merchant attests the call actually returned 200; agent lies "server_error".
+    const receipt = signMerchantReceipt({ resource: RESOURCE, status: 200, agent: AGENT, paymentSignature: SIG, issuedAt });
+    const res = await app.request(signedRegisterRequest({ payee: MERCHANT, verdict: "server_error", merchantReceipt: receipt }));
+    const json = (await res.json()) as { status: string; outcome: string; refundBaseUnits: string };
+    // Signed status wins → ok. The forged breach earns NO refund — the agent
+    // lands exactly where an honest success does: premium charged, refund 0.
+    expect(json.outcome).toBe("ok");
+    expect(json.refundBaseUnits).toBe("0");
+    expect(json.status).toBe("settlement_pending");
+    expect(publisher.events).toHaveLength(1);
+    expect(publisher.events[0].refundLamports).toBe("0");
+    expect(publisher.events[0].outcome).toBe("ok");
+  });
+
+  test('mode "merchant-attested": breach verdict but NO receipt → refund withheld', async () => {
+    state.integrityMode = "merchant-attested";
+    const res = await app.request(signedRegisterRequest({ payee: MERCHANT, verdict: "server_error" }));
+    const json = (await res.json()) as { status: string; refundBaseUnits: string; refundWithheldReason: string };
+    expect(json.refundBaseUnits).toBe("0");
+    expect(json.refundWithheldReason).toBe("no_merchant_receipt");
+  });
+
+  test('mode "merchant-attested": network_error is STRUCTURALLY uncoverable (merchant down → no receipt)', async () => {
+    state.integrityMode = "merchant-attested";
+    // Honest limitation: a merchant that was never reached can't sign anything.
+    const res = await app.request(signedRegisterRequest({ payee: MERCHANT, verdict: "network_error" }));
+    const json = (await res.json()) as { refundBaseUnits: string; refundWithheldReason: string };
+    expect(json.refundBaseUnits).toBe("0");
+    expect(json.refundWithheldReason).toBe("no_merchant_receipt");
+  });
+
+  test('mode "merchant-attested": receipt signed by the WRONG key → refund withheld', async () => {
+    state.integrityMode = "merchant-attested";
+    const issuedAt = new Date().toISOString();
+    const imposter = nacl.sign.keyPair();
+    const receipt = signMerchantReceipt({ resource: RESOURCE, status: 503, agent: AGENT, paymentSignature: SIG, issuedAt, signWith: imposter.secretKey });
+    const res = await app.request(signedRegisterRequest({ payee: MERCHANT, verdict: "server_error", merchantReceipt: receipt }));
+    const json = (await res.json()) as { refundBaseUnits: string; refundWithheldReason: string };
+    expect(json.refundBaseUnits).toBe("0");
+    expect(json.refundWithheldReason).toBe("no_merchant_receipt");
   });
 });
