@@ -2,11 +2,6 @@
 
 **Status:** PoC for review. Default behaviour unchanged (`COVERAGE_INTEGRITY_MODE=trust`).
 
-> **Scope of this PR.** This is the shippable core: the `trust` (default, zero
-> behaviour change) and `verified-only` modes. The `merchant-attested` mode
-> (a merchant-signed outcome receipt whose signed HTTP status overrides the
-> client verdict) ships in the **stacked follow-up PR** on top of this one.
-
 ## The bug
 
 `POST /v1/coverage/register` pays pool-funded refunds off a **client-supplied SLA verdict**.
@@ -33,28 +28,39 @@ the HTTP exchange.
 
 ## Research outcome (two rteam specialists, both read the real code)
 
+- **Option 1 (oracle / server-side attestation): post-MVP.** Re-probing is broken (non-idempotent
+  paid call; "up now" ≠ "this call's outcome"). zkTLS web-proofs (Reclaim/TLSNotary) are the only
+  mechanism that proves outcome without merchant cooperation, but need the agent to route through a
+  zkTLS attestor + per-merchant response config — a roadmap item. The only *shippable* Option-1
+  form is a **merchant-cosigned outcome receipt** (covers opt-in merchants only).
 - **Option 2 full (merchant-signed FAILURE receipt): structurally impossible.** A failure receipt
   needs the failing merchant to co-sign its own failure; `network_error` (merchant unreachable) has
   no signer, hard 5xx has a downed signer. It can't cover the breaches users actually insure.
 - **Shippable core (both agents):** drop the unverified/degrade payout path + ship a `pay` build
   that logs the settle tx sig so x402 goes *verified by default*; harden on-chain caps as the
-  economic backstop. **This is what `verified-only` implements.**
-- The opt-in merchant-cosigned receipt (`merchant-attested`) is the only *shippable* Option-1 form
-  and ships in the **stacked follow-up PR**.
+  economic backstop.
 
-## This PR
+## This PoC
 
-One env flag — `COVERAGE_INTEGRITY_MODE` — selects the strategy. All logic is in
-`src/lib/integrity.ts` (pure, unit-tested); the route wires it in between the payment-verify and
-coverage-math steps.
+One env flag — `COVERAGE_INTEGRITY_MODE` — selects three strategies so the options are comparable
+side-by-side. All logic is in `src/lib/integrity.ts` (pure, unit-tested); the route wires it in
+between the payment-verify and coverage-math steps.
 
 | Mode | Refund rule | Outcome source | Notes |
 |---|---|---|---|
 | `trust` (default) | covered breach → refund | client verdict | current behaviour, unchanged |
 | `verified-only` | covered breach **and** on-chain-verified payment | client verdict | Option 2 shippable core; drops unverified payouts |
+| `merchant-attested` | verified **and** valid merchant receipt | **merchant-signed HTTP status** | Option 1 viable form; client verdict can't forge the breach |
 
 ### Honest limitations (encoded as tests)
 
+- `merchant-attested` **cannot cover `network_error`** — a merchant that was never reached can't
+  sign a receipt. The PoC withholds the refund (`refundWithheldReason:"no_merchant_receipt"`) and a
+  test pins it. This is why merchant attestation can't be the *only* control.
+- A forged breach verdict in `merchant-attested` lands where an honest success lands: premium
+  charged, refund 0 (the signed 200 wins). Forgery earns nothing.
+- The receipt is signed by the `payee` wallet pubkey. **Production needs a merchant registry**
+  separating the receiving wallet from an online signing key. Flagged, not solved.
 - `verified-only` does **not** fix the verdict-trust bug — a verified agent can still lie. It
   shrinks the blast radius to "agent who really paid, lying about a real call, capped at $1/call".
 
@@ -63,14 +69,14 @@ coverage-math steps.
 1. **Now:** ship `verified-only` + a `pay` build that exposes the settle tx sig (`payee` is already
    recoverable at `pay-classifier.ts:110`; only `paymentSignature` is missing). Add per-payee
    exposure caps + breach-rate anomaly monitoring.
-2. **Opt-in tier:** `merchant-attested` for merchants willing to sign (the stacked follow-up PR;
-   curated pools could mandate it at onboarding).
+2. **Opt-in tier:** `merchant-attested` for merchants willing to sign (curated pools could mandate
+   it at onboarding).
 3. **Roadmap:** zkTLS web-proof to kill client-verdict trust entirely.
 
 ## Files
 
-- `src/lib/integrity.ts` — modes + `decideIntegrity`.
+- `src/lib/integrity.ts` — modes, merchant-receipt scheme, `decideIntegrity`.
 - `src/routes/coverage.ts` — integrity gate wired in (step 7a).
 - `src/env.ts` / `src/lib/context.ts` — `COVERAGE_INTEGRITY_MODE` flag.
 - `test/integrity.test.ts` — unit tests for the pure functions.
-- `test/register.test.ts` — end-to-end tests for `trust` + `verified-only`.
+- `test/register.test.ts` — end-to-end tests for all three modes (incl. forgery + network_error).

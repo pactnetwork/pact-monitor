@@ -56,10 +56,11 @@ const Env = z.object({
   // Verdict-integrity mode for the coverage register endpoint (agent-tasks#10).
   //   "trust"            — current behaviour (refund off the client verdict).
   //   "verified-only"    — refund only when the payment is on-chain-verified.
+  //   "merchant-attested"— refund only with a valid merchant-signed outcome
+  //                        receipt; outcome derived from the SIGNED status.
   // Defaults to "trust" so behaviour is unchanged until explicitly opted in.
-  // (A "merchant-attested" mode ships in the stacked follow-up PR.)
   COVERAGE_INTEGRITY_MODE: z
-    .enum(["trust", "verified-only"])
+    .enum(["trust", "verified-only", "merchant-attested"])
     .default("trust"),
   PORT: z.string().default("8080"),
 });

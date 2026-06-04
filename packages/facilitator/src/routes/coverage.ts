@@ -45,7 +45,12 @@ import {
   verdictToOutcome,
 } from "../lib/coverage.js";
 import { verifyPayment } from "../lib/payment-verify.js";
-import { decideIntegrity } from "../lib/integrity.js";
+import {
+  decideIntegrity,
+  verifyMerchantReceipt,
+  type MerchantOutcomeReceipt,
+  type ReceiptVerifyResult,
+} from "../lib/integrity.js";
 import type { PaySettlementEvent } from "../lib/events.js";
 
 // Same UUIDv4 shape gate the market-proxy's GET /v1/calls/:id uses. The
@@ -85,6 +90,11 @@ interface RegisterBody {
   asset: string;
   verdict: string;
   latencyMs?: number;
+  /**
+   * OPTIONAL merchant-signed outcome receipt (agent-tasks#10, Option 1).
+   * Only consulted when COVERAGE_INTEGRITY_MODE === "merchant-attested".
+   */
+  merchantReceipt?: MerchantOutcomeReceipt;
   // Extra fields the CLI may send (upstreamStatus, reason, ...) are ignored.
   [k: string]: unknown;
 }
@@ -251,14 +261,25 @@ export async function registerCoverageRoute(c: Context): Promise<Response> {
 
   // ---- (7a) Verdict-integrity gate (agent-tasks#10) ----------------------
   // The client verdict is untrusted. Depending on COVERAGE_INTEGRITY_MODE we
-  // either trust it (legacy) or require an on-chain-verified payment before any
-  // refund ("verified-only"). A "merchant-attested" mode (derive the covered
-  // outcome from a merchant-signed HTTP status) ships in the stacked follow-up.
+  // either trust it (legacy), require an on-chain-verified payment before any
+  // refund ("verified-only"), or require a merchant-signed outcome receipt and
+  // derive the covered outcome from the SIGNED status ("merchant-attested").
   const mode = ctx.integrityMode ?? "trust";
+  let receiptResult: ReceiptVerifyResult | undefined;
+  if (mode === "merchant-attested") {
+    receiptResult = verifyMerchantReceipt({
+      receipt: body.merchantReceipt,
+      payee,
+      agent: body.agent,
+      resource: body.resource,
+      paymentSignature: verified ? (body.paymentSignature as string) : undefined,
+    });
+  }
   const decision = decideIntegrity({
     mode,
     clientOutcome,
     verified,
+    receipt: receiptResult,
   });
 
   const math = computeCoverage(
