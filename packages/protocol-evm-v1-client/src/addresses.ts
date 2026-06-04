@@ -54,9 +54,10 @@ export const DEPLOYMENTS: Record<number, PactDeployment> = {
   [BASE_MAINNET_CHAIN_ID]: {
     chainId: BASE_MAINNET_CHAIN_ID,
     usdc: BASE_MAINNET_USDC,
-    registry: null,
-    pool: null,
-    settler: null,
+    // Deployed on Base mainnet (8453) 2026-06-04, deploy block 46880730.
+    registry: "0x8cf7Dd83877a6a254bf05E31A79d50bC7169221D",
+    pool: "0xA3245C40d9C8448eeA03847CD2BFdDe41f7c14A4",
+    settler: "0x21adb7C1aD28b332661DaB8d52d765610dBF162A",
   },
 };
 
