@@ -45,12 +45,13 @@ export interface Classifier {
  *  2. This function maps that neutral category onto wrap's `Outcome` vocabulary.
  *  3. The premium/refund MATH lives in `computeEconomics` (./economics) — the
  *     single source of truth shared with the facilitator path. wrap calls it
- *     WITHOUT `amountPaid`, so a covered breach refunds the full imputed cost.
+ *     WITHOUT `amountPaid`, so a covered breach refunds the canonical
+ *     `imputedCost + flatPremium` (principal + premium; agent-tasks#11).
  *
- * - network error / no response  → network_error, premium=flat, refund=imputed
- * - 5xx                          → server_error,  premium=flat, refund=imputed
+ * - network error / no response  → network_error, premium=flat, refund=imputed+flat
+ * - 5xx                          → server_error,  premium=flat, refund=imputed+flat
  * - 4xx (incl. 429)              → client_error,  premium=0,    refund=0
- * - 2xx + latency >  sla         → latency_breach, premium=flat, refund=imputed
+ * - 2xx + latency >  sla         → latency_breach, premium=flat, refund=imputed+flat
  * - 2xx + latency <= sla         → ok,            premium=flat, refund=0
  * - 1xx / 3xx / other (core      → ok,            premium=flat, refund=0
  *   `other`)                       (premium charged, no refund — a real
@@ -94,7 +95,8 @@ export const defaultClassifier: Classifier = {
         flatPremiumLamports: endpointConfig.flat_premium_lamports,
         imputedCostLamports: endpointConfig.imputed_cost_lamports,
       },
-      // No `amountPaid`: the gateway path pays the full parametric imputed cost.
+      // No `amountPaid`: the gateway path's principal is the parametric imputed
+      // cost, so a covered breach refunds imputedCost + flatPremium.
     });
     return { outcome: econ.outcome, premium: econ.premiumLamports, refund: econ.refundLamports };
   },

@@ -48,6 +48,13 @@ export function classify(statusCode: number, latencyMs: number, networkError: bo
     case "success":
       return "success";
   }
+
+  // Defensive total fallback. The switch above is exhaustive over CoreCategory's
+  // six members, so this is unreachable today. It exists so `classify` stays
+  // provably total (no implicit `undefined` return) even if @pact-network/classifier
+  // adds a category or its types ever regress — mirrors the scorecard's
+  // "treat unknown as a server-side failure" default.
+  return "server_error";
 }
 
 export async function monitorRoutes(app: FastifyInstance): Promise<void> {

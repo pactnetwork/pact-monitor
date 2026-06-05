@@ -11,21 +11,20 @@
 //
 //   verdict           -> outcome          | premium    | refund
 //   "success" / "ok"  -> "ok"             | flat       | 0
-//   "latency_breach"  -> "latency_breach" | flat       | capped*   (covered)
-//   "server_error"    -> "server_error"   | flat       | capped*   (covered)
-//   "network_error"   -> "network_error"  | flat       | capped*   (covered)
-//   "payment_failed"  -> "client_error"   | 0          | 0         (uncovered)
-//   "client_error" /  -> "client_error"   | 0          | 0         (uncovered)
+//   "latency_breach"  -> "latency_breach" | flat       | paid+flat*  (covered)
+//   "server_error"    -> "server_error"   | flat       | paid+flat*  (covered)
+//   "network_error"   -> "network_error"  | flat       | paid+flat*  (covered)
+//   "payment_failed"  -> "client_error"   | 0          | 0           (uncovered)
+//   "client_error" /  -> "client_error"   | 0          | 0           (uncovered)
 //     anything 4xx-ish
 //
-// NOTE: this path shares the premium math + the breach/refund STRUCTURE with
-// wrap's `defaultClassifier`, but is NOT identical on the refund amount. The
-// facilitator passes the agent's claimed `amountPaid` to `computeEconomics`, so
-// *(`capped` = min(amountPaid, imputedCost)) — reimburse-what-you-paid, capped
-// at the pool ceiling. wrap/gateway calls `computeEconomics` WITHOUT amountPaid
-// and pays the full parametric `imputedCost`. Both are intentional and
-// preserved via the optional `amountPaid` parameter; the divergence boundary is
-// asserted in packages/facilitator/test/economics-parity.test.ts.
+// NOTE: this path shares the full premium AND refund math with wrap's
+// `defaultClassifier` — both compute the canonical `principal + flatPremium`
+// covered-breach refund (agent-tasks#11). The optional `amountPaid` parameter
+// only selects the principal: *(`paid+flat` = amountPaid + flatPremium) on the
+// facilitator path, vs (imputedCost + flatPremium) on the wrap/gateway path.
+// The shared formula is asserted in
+// packages/facilitator/test/economics-parity.test.ts.
 //
 // `client_error` (and the synonymous `payment_failed`) is the only non-`ok`
 // outcome that is NOT covered: wrap sets premium=0, and the settler drops
@@ -89,12 +88,11 @@ export interface CoverageMath {
   /** USDC base units. 0 for `client_error` (uncovered). */
   premiumLamports: bigint;
   /**
-   * USDC base units. On a covered breach this is the amount the agent paid the
-   * merchant (`amountPaidBaseUnits`), CAPPED at the pool's per-call refund
-   * ceiling (`imputedCostLamports`) so a single large claim can't drain the
-   * subsidised launch pool. 0 unless `isCoveredBreach(outcome)`. The on-chain
-   * `settle_batch` additionally clamps this by the endpoint's hourly
-   * `exposure_cap_per_hour_lamports`.
+   * USDC base units. On a covered breach this is the canonical
+   * `principal + flatPremium` refund (agent-tasks#11): the amount the agent paid
+   * the merchant (`amountPaidBaseUnits`) plus the premium just charged. 0 unless
+   * `isCoveredBreach(outcome)`. The on-chain `settle_batch` still clamps the
+   * payout by the endpoint's hourly `exposure_cap_per_hour_lamports`.
    */
   refundLamports: bigint;
   /** True if a Pub/Sub settlement event should be published. */
@@ -114,8 +112,8 @@ export interface PoolConfig {
  * @param outcome             canonical wrap outcome (from `verdictToOutcome`)
  * @param pool                the coverage pool's premium/imputed config
  * @param amountPaidBaseUnits the (on-chain-verified) amount the agent paid the
- *                            merchant; the refund equals this on a covered
- *                            breach, capped at `pool.imputedCostLamports`.
+ *                            merchant; on a covered breach the refund is this
+ *                            principal plus the flat premium just charged.
  */
 export function computeCoverage(
   outcome: Outcome,
@@ -123,8 +121,8 @@ export function computeCoverage(
   amountPaidBaseUnits: bigint,
 ): CoverageMath {
   // Delegate the money math to wrap's single source of truth. Passing
-  // `amountPaid` selects the facilitator/pay.sh refund model: a covered-breach
-  // refund is min(amountPaid, imputedCost) — reimburse-what-you-paid, capped.
+  // `amountPaid` selects it as the principal: a covered-breach refund is the
+  // canonical `amountPaid + flatPremium` (agent-tasks#11).
   return computeEconomics({
     outcome,
     pool,
