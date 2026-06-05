@@ -8,6 +8,7 @@
 // consumer (e.g. @pact-network/market-proxy) and compose with the default —
 // see the example at the bottom of this file.
 
+import { classifyHttpOutcome } from "@pact-network/classifier";
 import type { Outcome } from "./types";
 
 export interface ClassifierInput {
@@ -38,15 +39,20 @@ export interface Classifier {
 const ZERO = 0n;
 
 /**
- * Default classifier:
- * - network error / no response  → server_error, premium=flat, refund=imputed
- * - 5xx                          → server_error, premium=flat, refund=imputed
- * - 429                          → client_error, premium=0,    refund=0
- * - other 4xx                    → client_error, premium=0,    refund=0
+ * Default classifier. The status → category DECISION lives in the shared
+ * rails core (`@pact-network/classifier`); this function maps that neutral
+ * category onto wrap's Outcome vocabulary AND attaches the premium/refund
+ * economics (which stay here, in wrap — they are not part of the core).
+ *
+ * - network error / no response  → network_error, premium=flat, refund=imputed
+ * - 5xx                          → server_error,  premium=flat, refund=imputed
+ * - 4xx (incl. 429)              → client_error,  premium=0,    refund=0
  * - 2xx + latency >  sla         → latency_breach, premium=flat, refund=imputed
- * - 2xx + latency <= sla         → ok, premium=flat, refund=0
- * - any other 3xx                → ok, premium=flat, refund=0 (treated as
- *                                  upstream-defined success; consumer plugins
+ * - 2xx + latency <= sla         → ok,            premium=flat, refund=0
+ * - 1xx / 3xx / other (core      → ok,            premium=flat, refund=0
+ *   `other`)                       (premium charged, no refund — a real
+ *                                  Response only ever carries 3xx here, and it
+ *                                  is not a covered breach; consumer plugins
  *                                  may override)
  */
 export const defaultClassifier: Classifier = {
@@ -54,30 +60,27 @@ export const defaultClassifier: Classifier = {
     const flat = endpointConfig.flat_premium_lamports;
     const imputed = endpointConfig.imputed_cost_lamports;
 
-    if (response === null) {
-      return { outcome: "network_error", premium: flat, refund: imputed };
-    }
+    const category = classifyHttpOutcome({
+      statusCode: response === null ? null : response.status,
+      latencyMs,
+      latencyThresholdMs: endpointConfig.sla_latency_ms,
+      networkError: response === null,
+    });
 
-    const status = response.status;
-
-    if (status >= 500 && status <= 599) {
-      return { outcome: "server_error", premium: flat, refund: imputed };
-    }
-    if (status === 429) {
-      return { outcome: "client_error", premium: ZERO, refund: ZERO };
-    }
-    if (status >= 400 && status <= 499) {
-      return { outcome: "client_error", premium: ZERO, refund: ZERO };
-    }
-    if (status >= 200 && status <= 299) {
-      if (latencyMs > endpointConfig.sla_latency_ms) {
+    switch (category) {
+      case "network_error":
+        return { outcome: "network_error", premium: flat, refund: imputed };
+      case "server_error":
+        return { outcome: "server_error", premium: flat, refund: imputed };
+      case "client_error":
+        return { outcome: "client_error", premium: ZERO, refund: ZERO };
+      case "slow":
         return { outcome: "latency_breach", premium: flat, refund: imputed };
-      }
-      return { outcome: "ok", premium: flat, refund: ZERO };
+      case "success":
+      case "other":
+        // 2xx-within-SLA and 1xx/3xx/other both bill premium with no refund.
+        return { outcome: "ok", premium: flat, refund: ZERO };
     }
-
-    // 3xx and other unusual codes: treat as ok (premium charged, no refund).
-    return { outcome: "ok", premium: flat, refund: ZERO };
   },
 };
 

@@ -1,0 +1,24 @@
+{
+  "name": "@pact-network/classifier",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Pact Network rails core: the single source-of-truth HTTP-outcome -> neutral SLA category decision tree. Dependency-light (pure TS in/out): no @solana/*, no db, no RPC, no server deps. Consumers (wrap, monitor, backend) map the neutral category onto their own output vocabulary.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.0"
+  }
+}
