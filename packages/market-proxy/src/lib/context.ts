@@ -12,6 +12,7 @@ import { Allowlist } from "./allowlist.js";
 import { createBalanceCheck } from "./balance.js";
 import { createEventSink } from "./events.js";
 import { createSystemFlagReader, type SystemFlagReader } from "./system-flag.js";
+import { hasSolanaNetwork } from "./enabled-networks.js";
 import { env } from "../env.js";
 
 export function buildAdapterMap(processEnv: NodeJS.ProcessEnv): {
@@ -103,6 +104,23 @@ export function setContext(ctx: AppContext): void {
   _ctx = ctx;
 }
 
+/**
+ * Placeholder BalanceCheck for an EVM-only proxy boot (agent-tasks#14). The
+ * Solana legacy-direct balance check is never selected on an EVM-only deploy
+ * (proxy.ts only picks it for solana-* endpoints under legacyDirectSolana, and
+ * an EVM-only proxy has no solana-* network). If it is ever reached, fail loud
+ * rather than silently mis-checking custody.
+ */
+function evmOnlyBalanceCheckStub(): BalanceCheck {
+  return {
+    check() {
+      throw new Error(
+        "[market-proxy] Solana balance check unavailable on an EVM-only boot (no solana-* network enabled)",
+      );
+    },
+  };
+}
+
 export async function initContext(): Promise<AppContext> {
   const pg = new Pool({ connectionString: env.PG_URL });
 
@@ -110,10 +128,21 @@ export async function initContext(): Promise<AppContext> {
   const demoAllowlist = new Allowlist(pg, "demo_allowlist");
   const operatorAllowlist = new Allowlist(pg, "operator_allowlist");
 
-  const balanceCheck = createBalanceCheck({
-    rpcUrl: env.RPC_URL,
-    usdcMint: env.USDC_MINT,
-  });
+  // Solana balance check is the legacy-direct path (proxy.ts selects it only
+  // when legacyDirectSolana && endpointNetwork starts with "solana-"). Build it
+  // ONLY when a solana-* network is enabled (agent-tasks#14) so a base-only
+  // proxy boots without SOLANA RPC_URL / USDC_MINT. EVM networks use their
+  // adapter-backed balance check (adapterToBalanceCheck) selected per request.
+  // The env schema guarantees RPC_URL / USDC_MINT are present whenever this
+  // branch runs.
+  const balanceCheck: BalanceCheck = hasSolanaNetwork(
+    process.env.PACT_ENABLED_NETWORKS,
+  )
+    ? createBalanceCheck({
+        rpcUrl: env.RPC_URL as string,
+        usdcMint: env.USDC_MINT as string,
+      })
+    : evmOnlyBalanceCheckStub();
 
   const sink = createEventSink({
     backend: env.QUEUE_BACKEND,
