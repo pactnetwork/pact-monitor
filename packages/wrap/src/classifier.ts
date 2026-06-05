@@ -9,6 +9,7 @@
 // see the example at the bottom of this file.
 
 import { classifyHttpOutcome } from "@pact-network/classifier";
+import { computeEconomics } from "./economics";
 import type { Outcome } from "./types";
 
 export interface ClassifierInput {
@@ -36,13 +37,15 @@ export interface Classifier {
   classify(input: ClassifierInput): ClassifierResult;
 }
 
-const ZERO = 0n;
-
 /**
- * Default classifier. The status → category DECISION lives in the shared
- * rails core (`@pact-network/classifier`); this function maps that neutral
- * category onto wrap's Outcome vocabulary AND attaches the premium/refund
- * economics (which stay here, in wrap — they are not part of the core).
+ * Default classifier. Three stages, each with one job:
+ *
+ *  1. The status → category DECISION lives in the shared rails core
+ *     (`@pact-network/classifier`).
+ *  2. This function maps that neutral category onto wrap's `Outcome` vocabulary.
+ *  3. The premium/refund MATH lives in `computeEconomics` (./economics) — the
+ *     single source of truth shared with the facilitator path. wrap calls it
+ *     WITHOUT `amountPaid`, so a covered breach refunds the full imputed cost.
  *
  * - network error / no response  → network_error, premium=flat, refund=imputed
  * - 5xx                          → server_error,  premium=flat, refund=imputed
@@ -57,9 +60,6 @@ const ZERO = 0n;
  */
 export const defaultClassifier: Classifier = {
   classify({ response, latencyMs, endpointConfig }: ClassifierInput): ClassifierResult {
-    const flat = endpointConfig.flat_premium_lamports;
-    const imputed = endpointConfig.imputed_cost_lamports;
-
     const category = classifyHttpOutcome({
       statusCode: response === null ? null : response.status,
       latencyMs,
@@ -67,20 +67,36 @@ export const defaultClassifier: Classifier = {
       networkError: response === null,
     });
 
+    let outcome: Outcome;
     switch (category) {
       case "network_error":
-        return { outcome: "network_error", premium: flat, refund: imputed };
+        outcome = "network_error";
+        break;
       case "server_error":
-        return { outcome: "server_error", premium: flat, refund: imputed };
+        outcome = "server_error";
+        break;
       case "client_error":
-        return { outcome: "client_error", premium: ZERO, refund: ZERO };
+        outcome = "client_error";
+        break;
       case "slow":
-        return { outcome: "latency_breach", premium: flat, refund: imputed };
+        outcome = "latency_breach";
+        break;
       case "success":
       case "other":
-        // 2xx-within-SLA and 1xx/3xx/other both bill premium with no refund.
-        return { outcome: "ok", premium: flat, refund: ZERO };
+        // 2xx-within-SLA and 1xx/3xx/other both map to ok (premium, no refund).
+        outcome = "ok";
+        break;
     }
+
+    const econ = computeEconomics({
+      outcome,
+      pool: {
+        flatPremiumLamports: endpointConfig.flat_premium_lamports,
+        imputedCostLamports: endpointConfig.imputed_cost_lamports,
+      },
+      // No `amountPaid`: the gateway path pays the full parametric imputed cost.
+    });
+    return { outcome: econ.outcome, premium: econ.premiumLamports, refund: econ.refundLamports };
   },
 };
 
