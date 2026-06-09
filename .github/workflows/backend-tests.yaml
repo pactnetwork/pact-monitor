@@ -118,6 +118,16 @@ jobs:
         # claim-settlement). Pre-existing CI gap landed via PR #46.
         run: pnpm --filter @q3labs/pact-insurance run build
 
+      - name: Build @pact-network/classifier (workspace dep)
+        # Backend `tsc` resolves @pact-network/classifier via its package.json
+        # `main`/`types`, both of which point at `dist/`. Without this step the
+        # backend typecheck fails with TS2307 on src/routes/monitor.ts (which
+        # imports classifyHttpOutcome) and, downstream, TS2366 because the
+        # otherwise-exhaustive switch over the now-unknown return type can't be
+        # proven total. New workspace dep landed via the classifier extraction
+        # (PR #250); mirrors the pact-insurance pre-build above.
+        run: pnpm --filter @pact-network/classifier run build
+
       - name: Typecheck backend
         run: pnpm --filter @pact-network/backend run build
 

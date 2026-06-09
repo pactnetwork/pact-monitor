@@ -246,6 +246,11 @@ async function respond(
     case "eth_gasPrice":
     case "eth_maxPriorityFeePerGas":
       return toHexQty(1n);
+    case "eth_getTransactionCount":
+      // Local signing (post-#246: viem signs and sends via
+      // eth_sendRawTransaction) fetches the sender nonce during tx prep.
+      // Without this the default "0x" → BigInt("0x") throws.
+      return toHexQty(0n);
     case "eth_feeHistory":
       return {
         baseFeePerGas: [toHexQty(1n), toHexQty(1n)],

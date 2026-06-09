@@ -216,6 +216,7 @@ describe("WP-MN-04 T5 — arc-testnet routing dispatch", () => {
     const stubAdaptersArc = {
       legacyDirectSolana: false,
       getAdapter: vi.fn().mockReturnValue(evmAdapter),
+      hasAdapter: () => true,
       getSigner: getSignerMock,
     } as unknown as AdaptersService;
 
@@ -268,6 +269,7 @@ describe("WP-MN-04 T5 — arc-testnet routing dispatch", () => {
     const stubAdaptersArc = {
       legacyDirectSolana: true,
       getAdapter: vi.fn().mockReturnValue(evmAdapter),
+      hasAdapter: () => true,
       getSigner: vi.fn(),
     } as unknown as AdaptersService;
 
@@ -303,6 +305,7 @@ describe("WP-MN-04 T5 — arc-testnet routing dispatch", () => {
     const stubAdaptersSol = {
       legacyDirectSolana: false,
       getAdapter: vi.fn().mockReturnValue(solanaAdapter),
+      hasAdapter: () => true,
       getSigner: getSignerMock,
     } as unknown as AdaptersService;
 

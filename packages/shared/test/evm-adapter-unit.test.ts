@@ -230,6 +230,36 @@ describe("EvmAdapter unit tests (WP-MN-04 T2)", () => {
     );
   });
 
+  // 5b. Regression (arc529): submit must pass the LOCAL account OBJECT so viem
+  //     signs locally and emits eth_sendRawTransaction. Passing account.address
+  //     (a bare string) makes viem treat it as a JSON-RPC/node-managed account
+  //     and emit wallet_sendTransaction, which Arc Testnet's RPC rejects with
+  //     "this request method is not supported".
+  it("submitSettleBatch passes the local account object (local signing), not the bare address string", async () => {
+    const adapter = new EvmAdapter(SIGNER_OPTS);
+
+    mockEstimateFeesPerGas.mockResolvedValue({
+      maxFeePerGas: 1000n,
+      maxPriorityFeePerGas: 100n,
+    });
+    mockEstimateGas.mockResolvedValue(100000n);
+    mockSendTransaction.mockResolvedValue("0xLocalSignTxHash" as `0x${string}`);
+    mockGetTransactionReceipt.mockResolvedValue({
+      status: "success",
+      blockNumber: 10n,
+    });
+    mockGetBlockNumber.mockResolvedValue(12n); // depth 3 >= finality 2
+
+    await adapter.submitSettleBatch(SETTLE_INPUT);
+
+    const sendArgs = (mockSendTransaction as Mock).mock.calls[0][0];
+    // The account must be the LocalAccount OBJECT (has .address), not the string.
+    expect(sendArgs.account).toBe(MOCK_ACCOUNT);
+    expect(typeof sendArgs.account).toBe("object");
+    expect(sendArgs.account).toHaveProperty("address");
+    expect(sendArgs.account).not.toBe(MOCK_ACCOUNT.address);
+  });
+
   // 6. readEndpointConfigs returns empty array when no EndpointRegistered logs
   it("readEndpointConfigs returns empty array when no EndpointRegistered logs", async () => {
     const adapter = new EvmAdapter(BASE_OPTS);

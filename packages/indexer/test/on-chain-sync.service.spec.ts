@@ -167,8 +167,20 @@ describe("OnChainSyncService", () => {
     expect(args.update).not.toHaveProperty("logoUrl");
   });
 
-  it("five endpoints (mainnet shape) — upserts each by slug", async () => {
-    const slugs = ["helius", "birdeye", "jupiter", "elfa", "fal"];
+  it("curated endpoints (mainnet shape) — upserts each by slug with default upstreamBase", async () => {
+    // The 7 production curated providers (shared ENDPOINT_SLUGS). Each must
+    // resolve a non-empty default upstreamBase from DEFAULT_UPSTREAM_BASE so
+    // the market-proxy's `new URL(...)` never sees an empty base.
+    const expectedUpstream: Record<string, string> = {
+      helius: "https://mainnet.helius-rpc.com",
+      birdeye: "https://public-api.birdeye.so",
+      jupiter: "https://api.jup.ag",
+      elfa: "https://api.elfa.ai",
+      fal: "https://queue.fal.run",
+      moralis: "https://deep-index.moralis.io",
+      covalent: "https://api.covalenthq.com",
+    };
+    const slugs = Object.keys(expectedUpstream);
     getProgramAccounts.mockResolvedValueOnce(
       slugs.map((slug, i) =>
         fakeAccount({
@@ -182,9 +194,15 @@ describe("OnChainSyncService", () => {
     );
 
     await svc.syncEndpointsFromChain();
-    expect(prismaUpsert).toHaveBeenCalledTimes(5);
+    expect(prismaUpsert).toHaveBeenCalledTimes(slugs.length);
     const seen = prismaUpsert.mock.calls.map((c) => c[0].where.network_slug.slug);
     expect(seen.sort()).toEqual([...slugs].sort());
+    for (const c of prismaUpsert.mock.calls) {
+      const args = c[0];
+      expect(args.create.upstreamBase).toBe(
+        expectedUpstream[args.where.network_slug.slug],
+      );
+    }
   });
 
   it("RPC error does not crash — error is caught and logged", async () => {

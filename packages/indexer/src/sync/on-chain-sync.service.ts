@@ -19,6 +19,7 @@ import {
 import { PrismaService } from "../prisma/prisma.service";
 import { AdaptersService } from "../adapters/adapters.service";
 import { getChain, type EndpointConfigSnapshot } from "@pact-network/shared";
+import { hasSolanaNetwork } from "../lib/enabled-networks";
 
 const DEFAULT_RPC_URL = "https://api.mainnet-beta.solana.com";
 const DEFAULT_PROGRAM_ID = PROGRAM_ID.toBase58();
@@ -38,6 +39,13 @@ const DEFAULT_UPSTREAM_BASE: Record<string, string> = {
   jupiter: "https://api.jup.ag",
   elfa: "https://api.elfa.ai",
   fal: "https://queue.fal.run",
+  // Moralis Web3 Data API. Auth via `X-API-KEY` header (caller passthrough);
+  // callers append the versioned path (e.g. `/api/v2.2/...`).
+  moralis: "https://deep-index.moralis.io",
+  // Covalent (now GoldRush) unified blockchain API. Auth via
+  // `Authorization: Bearer <key>` (caller passthrough); callers append the
+  // `/v1/...` path. `api.covalenthq.com` remains the canonical base post-rebrand.
+  covalent: "https://api.covalenthq.com",
   // Demo upstream — `pact-dummy-upstream` behind https://dummy.pactnetwork.io.
   // Used by the premium-coverage MVP; see docs/premium-coverage-mvp.md.
   dummy: "https://dummy.pactnetwork.io",
@@ -67,8 +75,18 @@ const DEFAULT_UPSTREAM_BASE: Record<string, string> = {
 @Injectable()
 export class OnChainSyncService implements OnModuleInit {
   private readonly logger = new Logger(OnChainSyncService.name);
-  private readonly connection: Connection;
-  private readonly programId: PublicKey;
+  /** True iff PACT_ENABLED_NETWORKS includes a solana-* network. */
+  private readonly solanaEnabled: boolean;
+  /**
+   * Solana RPC Connection + program id for the legacy-direct getProgramAccounts
+   * sync. Built in the constructor ONLY when a Solana network is enabled, and
+   * left null for an EVM-only indexer so a base-only deploy boots without any
+   * SOLANA_RPC_URL / PROGRAM_ID (agent-tasks#14). The legacy path is the only
+   * consumer; it is unreachable unless a Solana network is enabled (boot sync is
+   * gated below; the cron's legacy-direct branch requires a solana-* network).
+   */
+  private readonly connection: Connection | null;
+  private readonly programId: PublicKey | null;
   private isRunning = false;
 
   constructor(
@@ -76,6 +94,24 @@ export class OnChainSyncService implements OnModuleInit {
     private readonly prisma: PrismaService,
     private readonly adaptersService: AdaptersService,
   ) {
+    this.solanaEnabled = hasSolanaNetwork(
+      this.config.get<string>("PACT_ENABLED_NETWORKS"),
+    );
+
+    // EVM-only boot (agent-tasks#14): when no solana-* network is enabled, do
+    // NOT read SOLANA_RPC_URL / PROGRAM_ID and do NOT build the Solana
+    // Connection. The legacy getProgramAccounts syncer never runs (boot sync is
+    // gated in onModuleInit; the cron routes base-mainnet through the adapter
+    // path). Mirrors the settler's EVM-only boot (pact-monitor#258).
+    if (!this.solanaEnabled) {
+      this.connection = null;
+      this.programId = null;
+      this.logger.log(
+        "[chain-sync] no Solana network enabled — EVM-only boot; skipping Solana Connection/PDA init and legacy endpoint sync",
+      );
+      return;
+    }
+
     const rpcUrl =
       this.config.get<string>("SOLANA_RPC_URL") ?? DEFAULT_RPC_URL;
     const programIdStr =
@@ -106,8 +142,19 @@ export class OnChainSyncService implements OnModuleInit {
    * Kick off an initial sync at boot — fire-and-forget. We deliberately do
    * NOT `await` here so the indexer's HTTP server can start serving even if
    * the RPC is slow or unreachable. The Cron tick below covers retries.
+   *
+   * Gated on a Solana network being enabled (agent-tasks#14): the boot sync is
+   * the legacy-direct getProgramAccounts path, so an EVM-only indexer skips it
+   * entirely. Enabled EVM networks are still synced by the 5-minute cron
+   * (`refreshAllNetworks` → adapter path).
    */
   onModuleInit(): void {
+    if (!this.solanaEnabled) {
+      this.logger.log(
+        "[chain-sync] EVM-only boot — skipping legacy Solana boot sync (cron adapter path handles enabled networks)",
+      );
+      return;
+    }
     void this.syncEndpointsFromChain().catch((err) => {
       this.logger.error(
         `boot sync failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -359,6 +406,15 @@ export class OnChainSyncService implements OnModuleInit {
    * the filter when supported.
    */
   private async fetchEndpointConfigAccounts(): Promise<GetProgramAccountsResponse> {
+    // Defensive: the legacy getProgramAccounts path only runs when a Solana
+    // network is enabled (boot sync gated in onModuleInit; cron legacy-direct
+    // branch requires a solana-* network), so connection/programId are
+    // non-null here. Guard anyway so a future caller can't silently NPE.
+    if (!this.connection || !this.programId) {
+      throw new Error(
+        "[chain-sync] legacy Solana sync invoked without a Solana network enabled",
+      );
+    }
     return this.connection.getProgramAccounts(this.programId, {
       filters: [{ dataSize: ENDPOINT_CONFIG_LEN }],
       commitment: "confirmed",
