@@ -70,6 +70,11 @@ export interface WrapCallEventDto {
    * out fee attribution.
    */
   shares: RecipientShareDto[];
+  /**
+   * Network identifier. Optional during MN migration; indexer defaults to
+   * 'solana-devnet' for legacy unstamped events.
+   */
+  network?: string;
 }
 
 export interface SettlementEventDto {
@@ -79,6 +84,9 @@ export interface SettlementEventDto {
   totalRefundsLamports: string;
   ts: string;
   calls: WrapCallEventDto[];
+  /** Network identifier for the batch. Falls back to per-call network or
+   * 'solana-devnet'. */
+  network?: string;
 }
 
 /**

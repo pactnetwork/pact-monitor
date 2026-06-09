@@ -3,6 +3,11 @@ import { createHash } from "node:crypto";
 import nacl from "tweetnacl";
 import bs58 from "bs58";
 import {
+  generatePrivateKey,
+  privateKeyToAccount,
+} from "viem/accounts";
+import { getAddress, verifyMessage } from "viem";
+import {
   buildSignaturePayload,
   buildProxiedUrl,
   buildAuthHeaders,
@@ -11,19 +16,34 @@ import {
   isPactProcessed,
   bodyToBytes,
 } from "../proxy-transport.js";
+import type { SignFn } from "../signer.js";
 import { sha256Hex } from "../crypto.js";
 
-describe("buildSignaturePayload", () => {
-  it("is byte-identical to the market-proxy contract", () => {
-    // Mirrors packages/market-proxy/src/middleware/verify-signature.ts
+describe("buildSignaturePayload (v2)", () => {
+  it("is byte-identical to the v2 market-proxy contract with NETWORK field", () => {
     const p = buildSignaturePayload({
       method: "post",
       path: "/v1/helius/v0/x?y=1",
+      network: "base-sepolia",
       timestampMs: 1715990400000,
       nonce: "NONCE",
       bodyHash: "abcd",
     });
-    expect(p).toBe("v1\nPOST\n/v1/helius/v0/x?y=1\n1715990400000\nNONCE\nabcd");
+    expect(p).toBe(
+      "v2\nPOST\n/v1/helius/v0/x?y=1\nbase-sepolia\n1715990400000\nNONCE\nabcd",
+    );
+  });
+
+  it("embeds an empty NETWORK as literal '' when none is configured", () => {
+    const p = buildSignaturePayload({
+      method: "GET",
+      path: "/v1/helius/x",
+      network: "",
+      timestampMs: 1,
+      nonce: "N",
+      bodyHash: "",
+    });
+    expect(p).toBe("v2\nGET\n/v1/helius/x\n\n1\nN\n");
   });
 });
 
@@ -45,61 +65,73 @@ describe("buildProxiedUrl", () => {
   });
 });
 
-describe("buildAuthHeaders", () => {
-  it("produces a signature the proxy's verify step would accept", async () => {
+describe("buildAuthHeaders — Solana path", () => {
+  it("produces a v2 signature the proxy's Solana verify step accepts", async () => {
     const kp = nacl.sign.keyPair();
     const agentPubkey = bs58.encode(kp.publicKey);
     const proxiedUrl = "https://market.pactnetwork.io/v1/helius/v0/x?y=1";
     const bodyBytes = new TextEncoder().encode('{"a":1}');
+
+    const sign: SignFn = async (payload) =>
+      nacl.sign.detached(payload, kp.secretKey);
 
     const h = await buildAuthHeaders({
       method: "POST",
       proxiedUrl,
       bodyBytes,
       agentPubkey,
-      secretKey: kp.secretKey,
+      sign,
+      vm: "solana",
       project: "default",
+      network: "solana-devnet",
       now: () => 1_700_000_000_000,
     });
 
     expect(h["x-pact-agent"]).toBe(agentPubkey);
     expect(h["x-pact-timestamp"]).toBe("1700000000000");
     expect(h["x-pact-project"]).toBe("default");
+    expect(h["x-pact-network"]).toBe("solana-devnet");
     expect(h["x-pact-nonce"]).toBeTruthy();
 
-    // Reconstruct exactly as verify-signature.ts does and verify.
+    // Reconstruct the v2 payload and verify.
     const u = new URL(proxiedUrl);
     const bodyHash = createHash("sha256").update(bodyBytes).digest("hex");
     const payload = buildSignaturePayload({
       method: "POST",
       path: u.pathname + u.search,
+      network: "solana-devnet",
       timestampMs: 1_700_000_000_000,
       nonce: h["x-pact-nonce"],
       bodyHash,
     });
-    const ok = nacl.sign.detached.verify(
-      new TextEncoder().encode(payload),
-      bs58.decode(h["x-pact-signature"]),
-      kp.publicKey,
-    );
-    expect(ok).toBe(true);
+    expect(
+      nacl.sign.detached.verify(
+        new TextEncoder().encode(payload),
+        bs58.decode(h["x-pact-signature"]),
+        kp.publicKey,
+      ),
+    ).toBe(true);
   });
 
-  it("uses an empty bodyHash for an empty body", async () => {
+  it("uses an empty bodyHash and empty NETWORK for an empty body / no network", async () => {
     const kp = nacl.sign.keyPair();
     const proxiedUrl = "https://m.io/v1/dummy/q";
+    const sign: SignFn = async (p) => nacl.sign.detached(p, kp.secretKey);
     const h = await buildAuthHeaders({
       method: "GET",
       proxiedUrl,
       bodyBytes: null,
       agentPubkey: bs58.encode(kp.publicKey),
-      secretKey: kp.secretKey,
+      sign,
+      vm: "solana",
       project: "p",
       now: () => 42,
     });
+    expect(h["x-pact-network"]).toBeUndefined();
     const payload = buildSignaturePayload({
       method: "GET",
       path: "/v1/dummy/q",
+      network: "",
       timestampMs: 42,
       nonce: h["x-pact-nonce"],
       bodyHash: "",
@@ -111,6 +143,89 @@ describe("buildAuthHeaders", () => {
         kp.publicKey,
       ),
     ).toBe(true);
+  });
+});
+
+describe("buildAuthHeaders — EVM path", () => {
+  it("emits checksummed 0x agent + 0x-hex EIP-191 signature + x-pact-network", async () => {
+    const pk = generatePrivateKey();
+    const account = privateKeyToAccount(pk);
+    const sign: SignFn = async (payload) =>
+      account.signMessage({ message: { raw: payload } });
+
+    const proxiedUrl = "https://market.pactnetwork.io/v1/helius-rpc/?api=1";
+    const bodyBytes = new TextEncoder().encode('{"q":1}');
+
+    const h = await buildAuthHeaders({
+      method: "POST",
+      proxiedUrl,
+      bodyBytes,
+      agentPubkey: getAddress(account.address),
+      sign,
+      vm: "evm",
+      project: "default",
+      network: "base-sepolia",
+      now: () => 1_700_000_000_000,
+    });
+
+    // EIP-55 checksummed
+    expect(h["x-pact-agent"]).toBe(getAddress(account.address));
+    expect(h["x-pact-agent"]).toMatch(/^0x[0-9a-fA-F]{40}$/);
+    // 0x + 130 hex chars (65 bytes secp256k1 r||s||v)
+    expect(h["x-pact-signature"]).toMatch(/^0x[0-9a-fA-F]{130}$/);
+    expect(h["x-pact-network"]).toBe("base-sepolia");
+
+    // Reconstruct v2 payload and verify with viem.
+    const u = new URL(proxiedUrl);
+    const bodyHash = createHash("sha256").update(bodyBytes).digest("hex");
+    const payload = buildSignaturePayload({
+      method: "POST",
+      path: u.pathname + u.search,
+      network: "base-sepolia",
+      timestampMs: 1_700_000_000_000,
+      nonce: h["x-pact-nonce"],
+      bodyHash,
+    });
+    const ok = await verifyMessage({
+      address: account.address,
+      message: payload,
+      signature: h["x-pact-signature"] as `0x${string}`,
+    });
+    expect(ok).toBe(true);
+  });
+
+  it("EVM sig does not verify when the network field differs (wrong-chain replay)", async () => {
+    const pk = generatePrivateKey();
+    const account = privateKeyToAccount(pk);
+    const sign: SignFn = async (payload) =>
+      account.signMessage({ message: { raw: payload } });
+
+    const h = await buildAuthHeaders({
+      method: "GET",
+      proxiedUrl: "https://m.io/v1/helius/x",
+      bodyBytes: null,
+      agentPubkey: getAddress(account.address),
+      sign,
+      vm: "evm",
+      project: "default",
+      network: "base-sepolia",
+      now: () => 42,
+    });
+    // Reconstruct with a DIFFERENT network — must fail.
+    const evil = buildSignaturePayload({
+      method: "GET",
+      path: "/v1/helius/x",
+      network: "arc-testnet",
+      timestampMs: 42,
+      nonce: h["x-pact-nonce"],
+      bodyHash: "",
+    });
+    const ok = await verifyMessage({
+      address: account.address,
+      message: evil,
+      signature: h["x-pact-signature"] as `0x${string}`,
+    });
+    expect(ok).toBe(false);
   });
 });
 
@@ -200,12 +315,14 @@ describe("sha256Hex (WebCrypto) byte-equivalence to node:crypto", () => {
     const kp = nacl.sign.keyPair();
     const bodyBytes = new Uint8Array([0, 255, 7, 200]); // non-utf8
     const proxiedUrl = "https://m.io/v1/dummy/x?z=1";
+    const sign: SignFn = async (p) => nacl.sign.detached(p, kp.secretKey);
     const h = await buildAuthHeaders({
       method: "POST",
       proxiedUrl,
       bodyBytes,
       agentPubkey: bs58.encode(kp.publicKey),
-      secretKey: kp.secretKey,
+      sign,
+      vm: "solana",
       project: "default",
       now: () => 1_700_000_000_000,
     });
@@ -213,6 +330,7 @@ describe("sha256Hex (WebCrypto) byte-equivalence to node:crypto", () => {
     const payload = buildSignaturePayload({
       method: "POST",
       path: "/v1/dummy/x?z=1",
+      network: "",
       timestampMs: 1_700_000_000_000,
       nonce: h["x-pact-nonce"],
       bodyHash,

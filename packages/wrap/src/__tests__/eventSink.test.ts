@@ -114,7 +114,22 @@ describe("PubSubEventSink", () => {
     const topic: PubSubTopicPublisher = { publishMessage };
     const sink = new PubSubEventSink({ topic });
     await sink.publish(sampleEvent);
-    expect(publishMessage).toHaveBeenCalledWith({ json: sampleEvent });
+    expect(publishMessage).toHaveBeenCalledWith({
+      json: sampleEvent,
+      attributes: undefined,
+    });
+  });
+
+  it("publishes a `network` Pub/Sub attribute when the event carries one", async () => {
+    const publishMessage = vi.fn().mockResolvedValue("msg-456");
+    const topic: PubSubTopicPublisher = { publishMessage };
+    const sink = new PubSubEventSink({ topic });
+    const evt = { ...sampleEvent, network: "base-mainnet" };
+    await sink.publish(evt);
+    expect(publishMessage).toHaveBeenCalledWith({
+      json: evt,
+      attributes: { network: "base-mainnet" },
+    });
   });
 
   it("swallows publish failures and reports via onError", async () => {

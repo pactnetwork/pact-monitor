@@ -175,7 +175,8 @@ program
   .option(
     "--wait [secs]",
     "after an insured call, poll on-chain settlement (~8s) and merge tx_signature/premium/refund into the envelope (default window 30s)",
-  );
+  )
+  .option("--network <name>", "Target network (e.g. base-sepolia, arc-testnet). Disambiguates same-slug endpoints across chains. Sent as X-Pact-Network header.");
 
 // `--keypair <path>` is sugar for PACT_PRIVATE_KEY: the wallet loader's
 // secret-key parser already accepts a file path, so feeding the flag value in
@@ -237,7 +238,14 @@ program
       project,
       rpcUrl: program.opts().rpc,
       raw: options.raw,
+      network: options.network as string | undefined,
       timeoutMs: (options.timeout as number) * 1000,
+      // The global --keypair flag is also forwarded to the EVM wallet loader
+      // so a single CLI invocation can override both code paths. Solana side
+      // already consumes the same value via the preAction hook that mirrors
+      // it into PACT_PRIVATE_KEY; here we hand the raw flag value to the EVM
+      // loader so it wins over PACT_EVM_PRIVATE_KEY / disk on EVM calls too.
+      evmKeypairPath: program.opts().keypair as string | undefined,
     });
     const jsonFlag = Boolean(program.opts().json);
     const quietFlag = Boolean(program.opts().quiet);

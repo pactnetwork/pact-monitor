@@ -7,6 +7,7 @@ import {
   slugBytesToString,
 } from "../src/sync/on-chain-sync.service";
 import { PrismaService } from "../src/prisma/prisma.service";
+import { AdaptersService } from "../src/adapters/adapters.service";
 
 /**
  * Build a 544-byte EndpointConfig buffer matching the layout in
@@ -106,6 +107,16 @@ describe("OnChainSyncService", () => {
           provide: PrismaService,
           useValue: { endpoint: { upsert: prismaUpsert } },
         },
+        // WP-MN-03b T4: stub AdaptersService with legacyDirectSolana=true so
+        // existing tests exercise the pre-WP-MN-03b direct path unchanged.
+        {
+          provide: AdaptersService,
+          useValue: {
+            legacyDirectSolana: true,
+            listEnabledNetworks: () => ["solana-devnet"],
+            getAdapter: () => { throw new Error("stub: adapter path not expected in legacy-direct tests"); },
+          },
+        },
       ],
     }).compile();
 
@@ -138,7 +149,8 @@ describe("OnChainSyncService", () => {
     await svc.syncEndpointsFromChain();
     expect(prismaUpsert).toHaveBeenCalledTimes(1);
     const args = prismaUpsert.mock.calls[0][0];
-    expect(args.where).toEqual({ slug: "helius" });
+    expect(args.where).toEqual({ network_slug: { network: "solana-devnet", slug: "helius" } });
+    expect(args.create.network).toBe("solana-devnet");
     expect(args.create.slug).toBe("helius");
     expect(args.create.flatPremiumLamports).toBe(1000n);
     expect(args.create.percentBps).toBe(250);
@@ -155,8 +167,20 @@ describe("OnChainSyncService", () => {
     expect(args.update).not.toHaveProperty("logoUrl");
   });
 
-  it("five endpoints (mainnet shape) — upserts each by slug", async () => {
-    const slugs = ["helius", "birdeye", "jupiter", "elfa", "fal"];
+  it("curated endpoints (mainnet shape) — upserts each by slug with default upstreamBase", async () => {
+    // The 7 production curated providers (shared ENDPOINT_SLUGS). Each must
+    // resolve a non-empty default upstreamBase from DEFAULT_UPSTREAM_BASE so
+    // the market-proxy's `new URL(...)` never sees an empty base.
+    const expectedUpstream: Record<string, string> = {
+      helius: "https://mainnet.helius-rpc.com",
+      birdeye: "https://public-api.birdeye.so",
+      jupiter: "https://api.jup.ag",
+      elfa: "https://api.elfa.ai",
+      fal: "https://queue.fal.run",
+      moralis: "https://deep-index.moralis.io",
+      covalent: "https://api.covalenthq.com",
+    };
+    const slugs = Object.keys(expectedUpstream);
     getProgramAccounts.mockResolvedValueOnce(
       slugs.map((slug, i) =>
         fakeAccount({
@@ -170,9 +194,15 @@ describe("OnChainSyncService", () => {
     );
 
     await svc.syncEndpointsFromChain();
-    expect(prismaUpsert).toHaveBeenCalledTimes(5);
-    const seen = prismaUpsert.mock.calls.map((c) => c[0].where.slug);
+    expect(prismaUpsert).toHaveBeenCalledTimes(slugs.length);
+    const seen = prismaUpsert.mock.calls.map((c) => c[0].where.network_slug.slug);
     expect(seen.sort()).toEqual([...slugs].sort());
+    for (const c of prismaUpsert.mock.calls) {
+      const args = c[0];
+      expect(args.create.upstreamBase).toBe(
+        expectedUpstream[args.where.network_slug.slug],
+      );
+    }
   });
 
   it("RPC error does not crash — error is caught and logged", async () => {
@@ -211,9 +241,85 @@ describe("OnChainSyncService", () => {
     ]);
     await svc.syncEndpointsFromChain();
     const upserts = prismaUpsert.mock.calls.map((c) => c[0]);
-    const paused = upserts.find((u) => u.where.slug === "paused-ep");
-    const live = upserts.find((u) => u.where.slug === "live-ep");
+    const paused = upserts.find((u) => u.where.network_slug?.slug === "paused-ep");
+    const live = upserts.find((u) => u.where.network_slug?.slug === "live-ep");
     expect(paused?.create.paused).toBe(true);
     expect(live?.create.paused).toBe(false);
+  });
+});
+
+// Multi-EVM WP T6: the legacy-direct Solana config-sync path must stamp rows
+// with the actually-enabled Solana network, not the hardcoded "solana-devnet"
+// literal — otherwise a solana-mainnet legacy deploy mislabels every endpoint
+// row as devnet.
+describe("OnChainSyncService — legacy-direct network resolution (multi-evm WP T6)", () => {
+  let svc: OnChainSyncService;
+  let prismaUpsert: jest.Mock;
+  let getProgramAccounts: jest.Mock;
+
+  async function buildSvc(enabledSolanaNetworks: string[]): Promise<void> {
+    prismaUpsert = jest.fn().mockResolvedValue({});
+    getProgramAccounts = jest.fn();
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        OnChainSyncService,
+        {
+          provide: ConfigService,
+          useValue: {
+            get: (key: string) =>
+              key === "SOLANA_RPC_URL"
+                ? "https://api.mainnet-beta.solana.com"
+                : undefined,
+          },
+        },
+        {
+          provide: PrismaService,
+          useValue: { endpoint: { upsert: prismaUpsert } },
+        },
+        {
+          provide: AdaptersService,
+          useValue: {
+            legacyDirectSolana: true,
+            listEnabledNetworks: () => enabledSolanaNetworks,
+            getAdapter: () => {
+              throw new Error("stub: adapter path not expected in legacy-direct tests");
+            },
+          },
+        },
+      ],
+    }).compile();
+
+    svc = module.get(OnChainSyncService);
+    (svc as unknown as { connection: { getProgramAccounts: jest.Mock } }).connection.getProgramAccounts =
+      getProgramAccounts;
+  }
+
+  it("stamps rows with the enabled Solana network (solana-mainnet), not solana-devnet", async () => {
+    await buildSvc(["solana-mainnet"]);
+    getProgramAccounts.mockResolvedValueOnce([
+      fakeAccount({ slug: "helius", flatPremiumLamports: 1000n }),
+    ]);
+
+    await svc.syncEndpointsFromChain();
+
+    expect(prismaUpsert).toHaveBeenCalledTimes(1);
+    const args = prismaUpsert.mock.calls[0][0];
+    expect(args.where).toEqual({
+      network_slug: { network: "solana-mainnet", slug: "helius" },
+    });
+    expect(args.create.network).toBe("solana-mainnet");
+  });
+
+  it("still stamps solana-devnet when that is the enabled Solana network", async () => {
+    await buildSvc(["solana-devnet"]);
+    getProgramAccounts.mockResolvedValueOnce([
+      fakeAccount({ slug: "helius", flatPremiumLamports: 1000n }),
+    ]);
+
+    await svc.syncEndpointsFromChain();
+
+    const args = prismaUpsert.mock.calls[0][0];
+    expect(args.create.network).toBe("solana-devnet");
   });
 });

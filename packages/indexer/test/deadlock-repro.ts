@@ -75,7 +75,11 @@ function makeDto(opts: {
 
 async function main() {
   const prisma = new PrismaClient() as unknown as PrismaService;
-  const svc = new EventsService(prisma);
+  // EventsService gained a RefundDeliveryService dependency (develop merge);
+  // this manual harness exercises the deadlock path only, so a no-op enqueue
+  // stub satisfies the constructor without delivering webhooks.
+  const delivery = { enqueue: () => {} } as never;
+  const svc = new EventsService(prisma, delivery);
 
   // Wipe any prior harness data so we have a true green DB.
   await (prisma as unknown as PrismaClient).$transaction([

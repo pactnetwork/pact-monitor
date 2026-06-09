@@ -8,7 +8,7 @@ import { Cron, CronExpression } from "@nestjs/schedule";
 import {
   decodeEndpointConfig,
   ENDPOINT_CONFIG_LEN,
-  EndpointConfig,
+  type EndpointConfig,
   PROGRAM_ID,
 } from "@q3labs/pact-protocol-v1-client";
 import {
@@ -17,6 +17,9 @@ import {
   PublicKey,
 } from "@solana/web3.js";
 import { PrismaService } from "../prisma/prisma.service";
+import { AdaptersService } from "../adapters/adapters.service";
+import { getChain, type EndpointConfigSnapshot } from "@pact-network/shared";
+import { hasSolanaNetwork } from "../lib/enabled-networks";
 
 const DEFAULT_RPC_URL = "https://api.mainnet-beta.solana.com";
 const DEFAULT_PROGRAM_ID = PROGRAM_ID.toBase58();
@@ -36,6 +39,13 @@ const DEFAULT_UPSTREAM_BASE: Record<string, string> = {
   jupiter: "https://api.jup.ag",
   elfa: "https://api.elfa.ai",
   fal: "https://queue.fal.run",
+  // Moralis Web3 Data API. Auth via `X-API-KEY` header (caller passthrough);
+  // callers append the versioned path (e.g. `/api/v2.2/...`).
+  moralis: "https://deep-index.moralis.io",
+  // Covalent (now GoldRush) unified blockchain API. Auth via
+  // `Authorization: Bearer <key>` (caller passthrough); callers append the
+  // `/v1/...` path. `api.covalenthq.com` remains the canonical base post-rebrand.
+  covalent: "https://api.covalenthq.com",
   // Demo upstream — `pact-dummy-upstream` behind https://dummy.pactnetwork.io.
   // Used by the premium-coverage MVP; see docs/premium-coverage-mvp.md.
   dummy: "https://dummy.pactnetwork.io",
@@ -65,14 +75,43 @@ const DEFAULT_UPSTREAM_BASE: Record<string, string> = {
 @Injectable()
 export class OnChainSyncService implements OnModuleInit {
   private readonly logger = new Logger(OnChainSyncService.name);
-  private readonly connection: Connection;
-  private readonly programId: PublicKey;
+  /** True iff PACT_ENABLED_NETWORKS includes a solana-* network. */
+  private readonly solanaEnabled: boolean;
+  /**
+   * Solana RPC Connection + program id for the legacy-direct getProgramAccounts
+   * sync. Built in the constructor ONLY when a Solana network is enabled, and
+   * left null for an EVM-only indexer so a base-only deploy boots without any
+   * SOLANA_RPC_URL / PROGRAM_ID (agent-tasks#14). The legacy path is the only
+   * consumer; it is unreachable unless a Solana network is enabled (boot sync is
+   * gated below; the cron's legacy-direct branch requires a solana-* network).
+   */
+  private readonly connection: Connection | null;
+  private readonly programId: PublicKey | null;
   private isRunning = false;
 
   constructor(
     private readonly config: ConfigService,
     private readonly prisma: PrismaService,
+    private readonly adaptersService: AdaptersService,
   ) {
+    this.solanaEnabled = hasSolanaNetwork(
+      this.config.get<string>("PACT_ENABLED_NETWORKS"),
+    );
+
+    // EVM-only boot (agent-tasks#14): when no solana-* network is enabled, do
+    // NOT read SOLANA_RPC_URL / PROGRAM_ID and do NOT build the Solana
+    // Connection. The legacy getProgramAccounts syncer never runs (boot sync is
+    // gated in onModuleInit; the cron routes base-mainnet through the adapter
+    // path). Mirrors the settler's EVM-only boot (pact-monitor#258).
+    if (!this.solanaEnabled) {
+      this.connection = null;
+      this.programId = null;
+      this.logger.log(
+        "[chain-sync] no Solana network enabled — EVM-only boot; skipping Solana Connection/PDA init and legacy endpoint sync",
+      );
+      return;
+    }
+
     const rpcUrl =
       this.config.get<string>("SOLANA_RPC_URL") ?? DEFAULT_RPC_URL;
     const programIdStr =
@@ -103,8 +142,19 @@ export class OnChainSyncService implements OnModuleInit {
    * Kick off an initial sync at boot — fire-and-forget. We deliberately do
    * NOT `await` here so the indexer's HTTP server can start serving even if
    * the RPC is slow or unreachable. The Cron tick below covers retries.
+   *
+   * Gated on a Solana network being enabled (agent-tasks#14): the boot sync is
+   * the legacy-direct getProgramAccounts path, so an EVM-only indexer skips it
+   * entirely. Enabled EVM networks are still synced by the 5-minute cron
+   * (`refreshAllNetworks` → adapter path).
    */
   onModuleInit(): void {
+    if (!this.solanaEnabled) {
+      this.logger.log(
+        "[chain-sync] EVM-only boot — skipping legacy Solana boot sync (cron adapter path handles enabled networks)",
+      );
+      return;
+    }
     void this.syncEndpointsFromChain().catch((err) => {
       this.logger.error(
         `boot sync failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -113,12 +163,194 @@ export class OnChainSyncService implements OnModuleInit {
   }
 
   /**
-   * Scheduled tick — every 5 minutes. The `isRunning` guard inside
-   * `syncEndpointsFromChain` ensures two ticks never race even if a tick
-   * runs longer than the interval.
+   * Scheduled tick — every 5 minutes. Routes to legacy-direct or adapter
+   * path per PACT_LEGACY_DIRECT_SOLANA flag.
+   *
+   * - Legacy path: calls the pre-WP-MN-03b `syncEndpointsFromChain()` which
+   *   uses `this.connection.getProgramAccounts` directly for solana-devnet.
+   * - Adapter path: iterates all enabled networks from `adaptersService` and
+   *   calls `adapter.readEndpointConfigs()` per network.
    */
   @Cron(CronExpression.EVERY_5_MINUTES)
-  async scheduledTick(): Promise<void> {
+  async refreshAllNetworks(): Promise<void> {
+    const networks = this.adaptersService.listEnabledNetworks();
+    // Refresh every network CONCURRENTLY so one slow/failing chain's sync does
+    // not delay or abort the others. Each per-network refresh has its own
+    // try/catch isolation (refreshViaAdapter swallows + logs adapter errors;
+    // refreshLegacyDirect's syncEndpointsFromChain catches internally); the
+    // allSettled backstop surfaces anything that still escapes.
+    const results = await Promise.allSettled(
+      networks.map((network) => this.refreshNetwork(network)),
+    );
+    for (let i = 0; i < results.length; i++) {
+      const r = results[i];
+      if (r.status === "rejected") {
+        this.logger.error(
+          `[chain-sync] refresh failed for ${networks[i]} (isolated): ${r.reason}`,
+        );
+      }
+    }
+  }
+
+  /** Route one network to the legacy-direct or adapter path. */
+  private async refreshNetwork(network: string): Promise<void> {
+    if (this.adaptersService.legacyDirectSolana && network.startsWith("solana-")) {
+      await this.refreshLegacyDirect();
+    } else {
+      await this.refreshViaAdapter(network);
+    }
+  }
+
+  /**
+   * Adapter path — refreshes a network's EndpointConfigs and upserts each
+   * snapshot. Chains whose adapter exposes the cursor-able
+   * `readEndpointConfigsFrom` (EVM) resume their EndpointRegistered discovery
+   * scan from a persisted per-network cursor instead of re-walking from
+   * `deploymentBlock` every tick; chains without it (Solana
+   * `getProgramAccounts`, which does not scale with chain height) take the plain
+   * `readEndpointConfigs` full-read path.
+   */
+  private async refreshViaAdapter(network: string): Promise<void> {
+    const adapter = this.adaptersService.getAdapter(network);
+
+    if (typeof adapter.readEndpointConfigsFrom === "function") {
+      await this.refreshViaAdapterWithCursor(network, adapter);
+      return;
+    }
+
+    let snapshots: ReadonlyArray<EndpointConfigSnapshot>;
+    try {
+      snapshots = await adapter.readEndpointConfigs();
+    } catch (e) {
+      this.logger.warn(
+        `[chain-sync] adapter.readEndpointConfigs failed for ${network}: ${e}`,
+      );
+      return;
+    }
+    let upserted = 0;
+    for (const s of snapshots) {
+      await this.upsertEndpointFromAdapter(network, s);
+      upserted += 1;
+    }
+    this.logger.log(
+      `[chain-sync] adapter path: upserted ${upserted} endpoints for ${network}`,
+    );
+  }
+
+  /**
+   * Cursor-able adapter path (multi-evm WP T3). Resolves the resume point:
+   *   - cold start (no SyncCursor row): the chain's `deploymentBlock`.
+   *   - warm: the persisted `lastScannedBlock + 1` (we already scanned through
+   *     `lastScannedBlock`, so resume strictly after it; finalized blocks don't
+   *     reorg, so this never misses an event).
+   * Passes the indexer's already-known slugs so the adapter refreshes their
+   * current config too (config changed via update_config emits no
+   * EndpointRegistered event). Persists the finalized block scanned to as the
+   * next cursor only after a successful pass.
+   */
+  private async refreshViaAdapterWithCursor(
+    network: string,
+    adapter: ReturnType<AdaptersService["getAdapter"]>,
+  ): Promise<void> {
+    const deploymentBlock = BigInt(getChain(network).deploymentBlock ?? 0);
+    const cursor = await this.prisma.syncCursor.findUnique({
+      where: { network },
+    });
+    const fromBlock = cursor
+      ? BigInt(cursor.lastScannedBlock) + 1n
+      : deploymentBlock;
+
+    const known = await this.prisma.endpoint.findMany({
+      where: { network },
+      select: { slug: true },
+    });
+    const knownSlugs = known.map((e) => e.slug);
+
+    let result: {
+      snapshots: ReadonlyArray<EndpointConfigSnapshot>;
+      scannedToBlock: bigint;
+    };
+    try {
+      result = await adapter.readEndpointConfigsFrom!(fromBlock, knownSlugs);
+    } catch (e) {
+      this.logger.warn(
+        `[chain-sync] adapter.readEndpointConfigsFrom failed for ${network} (fromBlock=${fromBlock}): ${e}`,
+      );
+      return;
+    }
+
+    let upserted = 0;
+    for (const s of result.snapshots) {
+      await this.upsertEndpointFromAdapter(network, s);
+      upserted += 1;
+    }
+
+    // Advance the cursor only after a successful pass so a mid-sync failure
+    // re-scans the same range next tick rather than skipping it.
+    await this.prisma.syncCursor.upsert({
+      where: { network },
+      create: { network, lastScannedBlock: result.scannedToBlock },
+      update: { lastScannedBlock: result.scannedToBlock },
+    });
+
+    this.logger.log(
+      `[chain-sync] cursor path: upserted ${upserted} endpoints for ${network} ` +
+        `(from ${fromBlock} to ${result.scannedToBlock}, ${knownSlugs.length} known slugs)`,
+    );
+  }
+
+  /**
+   * Upsert a single endpoint from the adapter snapshot. VM-neutral: handles
+   * both Solana snapshots (slug = human string, raw.flatPremiumLamports etc.)
+   * and EVM snapshots (slug = bytes16 hex like 0x68656c69757300..., raw.flatPremium
+   * etc., the bare-EVM ABI names). The DB schema uses the Solana-derived field
+   * names (flatPremiumLamports/imputedCostLamports/exposureCapPerHourLamports)
+   * because it predates multi-VM; we keep those column names and map EVM raw
+   * fields onto them here.
+   */
+  private async upsertEndpointFromAdapter(
+    network: string,
+    snapshot: EndpointConfigSnapshot,
+  ): Promise<void> {
+    const slug = normalizeSnapshotSlug(snapshot.slug);
+    if (!slug || slug.length === 0) return;
+    const cfg = normalizeRawConfig(snapshot.raw);
+    const now = new Date();
+    const upstreamBase = DEFAULT_UPSTREAM_BASE[slug] ?? "";
+    await this.prisma.endpoint.upsert({
+      where: { network_slug: { network, slug } },
+      create: {
+        network,
+        slug,
+        flatPremiumLamports: cfg.flatPremium,
+        percentBps: cfg.percentBps,
+        slaLatencyMs: cfg.slaLatencyMs,
+        imputedCostLamports: cfg.imputedCost,
+        exposureCapPerHourLamports: cfg.exposureCapPerHour,
+        paused: cfg.paused,
+        upstreamBase,
+        displayName: slug,
+        registeredAt: now,
+        lastUpdated: now,
+      },
+      update: {
+        flatPremiumLamports: cfg.flatPremium,
+        percentBps: cfg.percentBps,
+        slaLatencyMs: cfg.slaLatencyMs,
+        imputedCostLamports: cfg.imputedCost,
+        exposureCapPerHourLamports: cfg.exposureCapPerHour,
+        paused: cfg.paused,
+        lastUpdated: now,
+      },
+    });
+  }
+
+  /**
+   * Legacy direct path — calls the pre-WP-MN-03b syncEndpointsFromChain()
+   * which uses this.connection.getProgramAccounts directly. Active when
+   * PACT_LEGACY_DIRECT_SOLANA=true.
+   */
+  private async refreshLegacyDirect(): Promise<void> {
     await this.syncEndpointsFromChain();
   }
 
@@ -139,10 +371,11 @@ export class OnChainSyncService implements OnModuleInit {
     const startedAt = Date.now();
 
     try {
+      const syncNetwork = this.resolveLegacySolanaNetwork();
       const accounts = await this.fetchEndpointConfigAccounts();
       let upserted = 0;
       for (const acct of accounts) {
-        const slug = await this.upsertOne(acct);
+        const slug = await this.upsertOne(acct, syncNetwork);
         if (slug) upserted += 1;
       }
       const tookMs = Date.now() - startedAt;
@@ -173,10 +406,33 @@ export class OnChainSyncService implements OnModuleInit {
    * the filter when supported.
    */
   private async fetchEndpointConfigAccounts(): Promise<GetProgramAccountsResponse> {
+    // Defensive: the legacy getProgramAccounts path only runs when a Solana
+    // network is enabled (boot sync gated in onModuleInit; cron legacy-direct
+    // branch requires a solana-* network), so connection/programId are
+    // non-null here. Guard anyway so a future caller can't silently NPE.
+    if (!this.connection || !this.programId) {
+      throw new Error(
+        "[chain-sync] legacy Solana sync invoked without a Solana network enabled",
+      );
+    }
     return this.connection.getProgramAccounts(this.programId, {
       filters: [{ dataSize: ENDPOINT_CONFIG_LEN }],
       commitment: "confirmed",
     });
+  }
+
+  /**
+   * Resolve the Solana network for the legacy-direct path. In legacy-direct
+   * mode exactly one Solana network is enabled (this.connection points at its
+   * RPC); use it so rows are stamped with the real network (e.g. solana-mainnet)
+   * rather than a hardcoded literal. Falls back to "solana-devnet" only if no
+   * Solana network is enabled (defensive — legacy-direct implies one is).
+   */
+  private resolveLegacySolanaNetwork(): string {
+    const solana = this.adaptersService
+      .listEnabledNetworks()
+      .find((n) => n.startsWith("solana-"));
+    return solana ?? "solana-devnet";
   }
 
   /**
@@ -186,6 +442,7 @@ export class OnChainSyncService implements OnModuleInit {
    */
   private async upsertOne(
     acct: GetProgramAccountsResponse[number],
+    syncNetwork: string,
   ): Promise<string | null> {
     let decoded: EndpointConfig;
     try {
@@ -220,9 +477,14 @@ export class OnChainSyncService implements OnModuleInit {
     // for upstreams that need them (e.g. Helius) are injected by the
     // proxy via env vars, NOT stored in the DB.
     const upstreamBase = DEFAULT_UPSTREAM_BASE[slug] ?? "";
+    // Stamp the resolved legacy-direct Solana network (multi-evm WP T6) — was a
+    // hardcoded "solana-devnet" literal, which mislabeled rows on a
+    // solana-mainnet legacy deploy. `syncNetwork` is resolved once per pass in
+    // syncEndpointsFromChain via resolveLegacySolanaNetwork().
     await this.prisma.endpoint.upsert({
-      where: { slug },
+      where: { network_slug: { network: syncNetwork, slug } },
       create: {
+        network: syncNetwork,
         slug,
         flatPremiumLamports: BigInt(decoded.flatPremiumLamports),
         percentBps: decoded.percentBps,
@@ -267,4 +529,60 @@ export function slugBytesToString(bytes: Uint8Array): string {
   return new TextDecoder("utf-8", { fatal: false }).decode(
     bytes.subarray(0, end),
   );
+}
+
+const BYTES16_HEX_RE = /^0x[0-9a-fA-F]{32}$/;
+
+/**
+ * Adapter snapshots return slugs in one of two shapes: Solana decodes its
+ * own EndpointConfig and yields the already-decoded human slug ("helius");
+ * EVM's `EndpointRegistered` log carries the bytes16 hex
+ * ("0x68656c69757300000000000000000000") and the adapter passes that through
+ * verbatim. Normalize both into the human slug the DB stores.
+ */
+export function normalizeSnapshotSlug(slug: string): string {
+  if (!BYTES16_HEX_RE.test(slug)) return slug;
+  const bytes = new Uint8Array(16);
+  for (let i = 0; i < 16; i++) {
+    bytes[i] = parseInt(slug.slice(2 + i * 2, 2 + i * 2 + 2), 16);
+  }
+  return slugBytesToString(bytes);
+}
+
+interface NormalizedEndpointConfig {
+  flatPremium: bigint;
+  percentBps: number;
+  slaLatencyMs: number;
+  imputedCost: bigint;
+  exposureCapPerHour: bigint;
+  paused: boolean;
+}
+
+/**
+ * VM-neutral projection of an `EndpointConfigSnapshot.raw`. Solana raw is the
+ * decoded Pinocchio `EndpointConfig` (fields suffixed `Lamports`); EVM raw is
+ * the viem-decoded `getEndpoint` tuple (bare ABI names: `flatPremium`,
+ * `imputedCost`, `exposureCapPerHour`). Read both and emit a single shape so
+ * the upsert path doesn't have to branch.
+ */
+export function normalizeRawConfig(raw: unknown): NormalizedEndpointConfig {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  const pick = (...keys: string[]): bigint => {
+    for (const k of keys) {
+      const v = r[k];
+      if (v != null) return BigInt(v as string | number | bigint);
+    }
+    return 0n;
+  };
+  return {
+    paused: Boolean(r.paused),
+    percentBps: Number(r.percentBps ?? 0),
+    slaLatencyMs: Number(r.slaLatencyMs ?? 0),
+    flatPremium: pick("flatPremiumLamports", "flatPremium"),
+    imputedCost: pick("imputedCostLamports", "imputedCost"),
+    exposureCapPerHour: pick(
+      "exposureCapPerHourLamports",
+      "exposureCapPerHour",
+    ),
+  };
 }

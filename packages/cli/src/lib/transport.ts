@@ -42,6 +42,7 @@ export async function signedRequest(opts: {
   body?: string;
   keypair: Keypair;
   project: string;
+  network?: string;
   timeoutMs?: number;
   maxRetries?: number;
 }): Promise<SignedRequestResult> {
@@ -102,6 +103,7 @@ export async function signedRequest(opts: {
       "x-pact-nonce": nonce,
       "x-pact-signature": bs58.encode(sig),
       "x-pact-project": opts.project,
+      ...(opts.network ? { "x-pact-network": opts.network } : {}),
     };
 
     const ctrl = new AbortController();

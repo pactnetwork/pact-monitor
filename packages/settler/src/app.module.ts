@@ -4,6 +4,7 @@ import { AppConfigModule } from "./config/config.module";
 import { PipelineModule } from "./pipeline/pipeline.module";
 import { HealthModule } from "./health/health.module";
 import { MetricsModule } from "./metrics/metrics.module";
+import { AdaptersModule } from "./adapters/adapters.module";
 
 @Module({
   imports: [
@@ -12,6 +13,7 @@ import { MetricsModule } from "./metrics/metrics.module";
     PipelineModule,
     HealthModule,
     MetricsModule,
+    AdaptersModule,
   ],
 })
 export class AppModule {}

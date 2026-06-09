@@ -1,0 +1,712 @@
+/**
+ * EvmAdapter — real ChainAdapter implementation for EVM networks (WP-MN-04 T2).
+ *
+ * Replaces EvmAdapterStub (WP-MN-03b) which threw "not implemented" on every
+ * method. Wraps @pact-network/protocol-evm-v1-client (viem) and implements:
+ *   - readEndpointConfigs(): authority() + EndpointRegistered log scan +
+ *     multicall(getEndpoint) -> EndpointConfigSnapshot projection
+ *   - submitSettleBatch(): outcome->breach/refund mapping + encodeSettleBatch
+ *     + EIP-1559/legacy gas strategy + D6 §5.1 finality wait-loop verbatim
+ *   - checkAgentEligibility(): USDC balanceOf + allowance via multicall
+ *   - tailSettlementEvents(): async-iter over finalized CallSettled events
+ *     for D6 §5.2 reconcile-tail consumer (WP-MN-04 T3 reorg module)
+ *
+ * CORRECTIONS vs. plan (documented here for captain review):
+ *   1. SettlementEventInput has timestamp: bigint field (not in plan) —
+ *      set to BigInt(Math.floor(Date.now() / 1000)) per SolanaAdapter pattern.
+ *   2. tailSettlementEvents yield shape includes blockOrSlot: string (from
+ *      ChainAdapter interface) — set to finalized.number.toString().
+ *   3. @pact-network/protocol-evm-v1-client was not in shared's deps —
+ *      added as workspace:* to package.json.
+ *   4. EndpointRegistered event in PactRegistryAbi has only indexed slug
+ *      (no decoded.args.slug plain field) — log.args.slug is the bytes16 hex.
+ *   5. perEvent.status simplification: uniformly 'settled' on success;
+ *      granular 'replayed'/'rejected' deferred to follow-up (see RESEARCH §3.2).
+ */
+
+import {
+  createPublicClient,
+  createWalletClient,
+  http,
+  parseAbi,
+  type Address,
+  type Hex,
+  type PrivateKeyAccount,
+  type PublicClient,
+  type WalletClient,
+} from "viem";
+import { privateKeyToAccount } from "viem/accounts";
+import {
+  encodeSettleBatch,
+  getDeployment,
+  slugToBytes16,
+  tryExtractPactError,
+  decodePactEventLog,
+  PactRegistryAbi,
+  PactEventsAbi,
+  type PactDeployment,
+  type SettlementEventInput,
+} from "@pact-network/protocol-evm-v1-client";
+
+import type {
+  ChainAdapter,
+  ChainDescriptor,
+  EligibilityCheckResult,
+  EndpointConfigSnapshot,
+  SettleBatchInput,
+  SettleBatchResult,
+  TailOptions,
+} from "../../chain-adapter";
+
+// ---------------------------------------------------------------------------
+// Minimal ERC-20 ABI fragments needed for balanceOf + allowance multicall
+// ---------------------------------------------------------------------------
+const ERC20_ABI = parseAbi([
+  "function balanceOf(address) view returns (uint256)",
+  "function allowance(address, address) view returns (uint256)",
+]);
+
+// Canonical Multicall3 address deployed at the same address across all major
+// EVM chains (https://www.multicall3.com/). Verified on Arc Testnet at
+// chain 5042002 via eth_getCode. viem requires this on the chain object to
+// power its publicClient.multicall() helper.
+const MULTICALL3_ADDRESS: Address =
+  "0xcA11bde05977b3631167028862bE2a173976CA11";
+
+// Default `eth_getLogs` block-range window. Arc Testnet caps inclusive ranges
+// at 10 000; Base Sepolia's public RPC (`sepolia.base.org`) caps tighter and
+// rejects > 500 with `InvalidParamsRpcError`. Per-chain overrides come from
+// `chains.json.logRangeChunk` via `EvmAdapterOptions.logRangeChunk`. The
+// default below is the looser-of-the-two so unconfigured chains stay below
+// Arc's cap; tight chains MUST set their own override.
+const DEFAULT_LOG_RANGE_CHUNK = 9_500n;
+
+// Regex matching the canonical bytes16 hex slug form (lowercase `0x` + 32 hex
+// chars). Used in `readEndpointConfigsFrom` to detect when a caller passed an
+// already-encoded slug vs. a human string that needs `slugToBytes16` first.
+const BYTES16_RE = /^0x[0-9a-fA-F]{32}$/;
+
+// ---------------------------------------------------------------------------
+// Public types
+// ---------------------------------------------------------------------------
+
+export interface EvmAdapterOptions {
+  descriptor: ChainDescriptor;
+  rpcUrl: string;
+  finalityBlocks: number;
+  blockTimeMs: number;
+  deploymentBlock: bigint;
+  /**
+   * Inclusive `eth_getLogs` block-range window for the EndpointRegistered
+   * discovery scan. Public RPCs cap per chain (Arc 10 000; Base Sepolia 500),
+   * so each chain's value comes from `chains.json.logRangeChunk` via
+   * `ChainDescriptor.logRangeChunk` and is plumbed through here. Falls back to
+   * `DEFAULT_LOG_RANGE_CHUNK` when unset. Test parameter — overriding lets a
+   * single test fixture simulate any chain's cap.
+   */
+  logRangeChunk?: bigint;
+  signer?: { privateKey: Hex } | { account: PrivateKeyAccount };
+  /**
+   * Pre-resolved contract addresses. If omitted, falls back to
+   * getDeployment(chainId) which uses the baked-in DEPLOYMENTS map.
+   * T4 services will pass `resolveDeployment(chainId, process.env)` to
+   * honor PACT_EVM_REGISTRY / PACT_EVM_POOL / PACT_EVM_SETTLER overlays.
+   */
+  deployment?: PactDeployment;
+  /** Block tag for finality checks. Defaults to "finalized". */
+  finalityBlockTag?: "safe" | "finalized";
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// ---------------------------------------------------------------------------
+// EvmAdapter
+// ---------------------------------------------------------------------------
+
+export class EvmAdapter implements ChainAdapter {
+  readonly descriptor: ChainDescriptor;
+
+  private readonly publicClient: PublicClient;
+  private readonly walletClient: WalletClient | null;
+  private readonly finalityBlocks: number;
+  private readonly blockTimeMs: number;
+  private readonly deploymentBlock: bigint;
+  private readonly deployment: PactDeployment;
+  private readonly finalityBlockTag: "safe" | "finalized";
+  private readonly logRangeChunk: bigint;
+
+  constructor(opts: EvmAdapterOptions) {
+    if (opts.descriptor.vm !== "evm") {
+      throw new Error(
+        `EvmAdapter requires descriptor.vm === "evm", got "${opts.descriptor.vm}"`,
+      );
+    }
+    if (!opts.descriptor.chainId) {
+      throw new Error("EvmAdapter requires descriptor.chainId");
+    }
+    this.descriptor = opts.descriptor;
+    this.finalityBlocks = opts.finalityBlocks;
+    this.blockTimeMs = opts.blockTimeMs;
+    this.deploymentBlock = opts.deploymentBlock;
+    this.finalityBlockTag = opts.finalityBlockTag ?? "finalized";
+    this.logRangeChunk =
+      opts.logRangeChunk ??
+      (opts.descriptor.logRangeChunk != null
+        ? BigInt(opts.descriptor.logRangeChunk)
+        : DEFAULT_LOG_RANGE_CHUNK);
+    if (this.logRangeChunk <= 0n) {
+      throw new Error(
+        `EvmAdapter: logRangeChunk must be > 0 (got ${this.logRangeChunk})`,
+      );
+    }
+    // Cache deployment at construction time. Caller passes `deployment`
+    // (typically resolveDeployment(chainId, process.env)) to honor env
+    // overlays; otherwise falls back to the baked-in DEPLOYMENTS map.
+    this.deployment = opts.deployment ?? getDeployment(opts.descriptor.chainId);
+
+    const transport = http(opts.rpcUrl);
+
+    // viem chain object: chainId + canonical Multicall3 address. viem's
+    // multicall() helper looks up `contracts.multicall3.address` on the chain;
+    // omitting it throws `Chain "undefined" does not support contract "multicall3"`.
+    const viemChain = opts.descriptor.chainId
+      ? ({
+          id: opts.descriptor.chainId,
+          contracts: {
+            multicall3: { address: MULTICALL3_ADDRESS },
+          },
+        } as Parameters<typeof createPublicClient>[0]["chain"])
+      : undefined;
+
+    this.publicClient = createPublicClient({
+      chain: viemChain,
+      transport,
+    }) as PublicClient;
+
+    if (opts.signer) {
+      const account =
+        "account" in opts.signer
+          ? opts.signer.account
+          : privateKeyToAccount(opts.signer.privateKey);
+      this.walletClient = createWalletClient({
+        account,
+        chain: viemChain,
+        transport,
+      }) as WalletClient;
+    } else {
+      this.walletClient = null;
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // readEndpointConfigs
+  //
+  // 1. authority() view for the protocol-wide authority address (EVM has no
+  //    per-endpoint authority; authority is protocol-wide).
+  // 2. getContractEvents(EndpointRegistered) from deploymentBlock to gather
+  //    all registered slugs (bytes16 hex).
+  // 3. multicall(getEndpoint(slug)) for each unique slug.
+  // 4. Project to EndpointConfigSnapshot:
+  //    - authority: protocol-wide (correction #4)
+  //    - maxTotalFeeBps: computed from feeRecipients.reduce (no per-endpoint
+  //      field on EVM; EVM maxTotalFeeBps is a global protocol constant, not
+  //      per-endpoint — we surface the actual sum as a conservative bound)
+  //    - feeRecipients: map FeeRecipient{kind,destination,bps} -> {recipient,bps,kind}
+  // -------------------------------------------------------------------------
+  async readEndpointConfigs(): Promise<ReadonlyArray<EndpointConfigSnapshot>> {
+    // Full sweep: discover from deploymentBlock with no pre-seeded known set.
+    // Delegates to the cursor-able path so both share one implementation.
+    return (await this.readEndpointConfigsFrom(this.deploymentBlock)).snapshots;
+  }
+
+  // -------------------------------------------------------------------------
+  // readEndpointConfigsFrom (multi-evm WP T3)
+  //
+  // Cursor-able config sync. Resumes the EndpointRegistered discovery scan from
+  // `fromBlock` (the indexer's persisted cursor; cold start = deploymentBlock)
+  // instead of always re-walking from deployment — the discovery scan is what
+  // scales with chain height. Refreshes the FULL set = newly-discovered slugs
+  // UNIONed with `knownSlugs` (the endpoints the indexer already tracks), so a
+  // config change made via update_config (which emits no EndpointRegistered)
+  // still gets re-read on every tick. Returns the finalized block scanned to so
+  // the caller can persist the next cursor.
+  // -------------------------------------------------------------------------
+  async readEndpointConfigsFrom(
+    fromBlock: bigint,
+    knownSlugs: ReadonlyArray<string> = [],
+  ): Promise<{
+    snapshots: ReadonlyArray<EndpointConfigSnapshot>;
+    scannedToBlock: bigint;
+  }> {
+    if (!this.deployment.registry) {
+      throw new Error(
+        `EvmAdapter.readEndpointConfigsFrom: no registry address for chain ${this.deployment.chainId}`,
+      );
+    }
+    const registryAddr = this.deployment.registry;
+
+    // 1. Get protocol-wide authority (no per-endpoint authority on EVM)
+    const authorityAddr = await this.publicClient.readContract({
+      address: registryAddr,
+      abi: PactRegistryAbi,
+      functionName: "authority",
+    }) as Address;
+
+    // 2. Resolve the finality blockTag to a concrete block first so every chunk has a
+    //    stable upper bound (and so we can persist it as the next cursor).
+    const finalizedBlock = await this.publicClient.getBlock({
+      blockTag: this.finalityBlockTag,
+    });
+    const finalizedNumber = finalizedBlock.number;
+
+    // 3. Seed the refresh set with the indexer's KNOWN slugs (so endpoints
+    //    registered before `fromBlock` still get their mutable config re-read),
+    //    then scan [fromBlock..finalized] in LOG_RANGE_CHUNK windows for any
+    //    NEW EndpointRegistered slugs (Arc + many public RPCs cap eth_getLogs
+    //    at 10k blocks; we harvest per-chunk so we never hold all logs at once).
+    // knownSlugs may arrive as either human strings ("dummy" — the form the
+    // indexer's Postgres `Endpoint.slug` column stores) OR pre-encoded bytes16
+    // hex. Multicall's `getEndpoint(bytes16)` rejects raw strings with
+    // `ContractFunctionExecutionError: Size of bytes "X" (bytesN) does not
+    // match expected size (bytes16)`, so we normalize EVERY known slug to
+    // bytes16 hex before adding to the dedupe set. The on-chain
+    // EndpointRegistered topic also carries bytes16, so the merge is lossless.
+    const slugSet = new Set<Hex>();
+    for (const k of knownSlugs) {
+      const hex = BYTES16_RE.test(k)
+        ? (k.toLowerCase() as Hex)
+        : slugToBytes16(k);
+      slugSet.add(hex);
+    }
+    for (
+      let from = fromBlock;
+      from <= finalizedNumber;
+      from += this.logRangeChunk
+    ) {
+      const to =
+        from + this.logRangeChunk - 1n > finalizedNumber
+          ? finalizedNumber
+          : from + this.logRangeChunk - 1n;
+      const chunkLogs = await this.publicClient.getContractEvents({
+        address: registryAddr,
+        abi: PactRegistryAbi,
+        eventName: "EndpointRegistered",
+        fromBlock: from,
+        toBlock: to,
+      });
+      for (const log of chunkLogs) {
+        const slug = (log.args as { slug?: Hex }).slug;
+        if (slug) slugSet.add(slug.toLowerCase() as Hex);
+      }
+    }
+
+    if (slugSet.size === 0) {
+      return { snapshots: [], scannedToBlock: finalizedNumber };
+    }
+    const slugs = Array.from(slugSet);
+
+    // 4. Multicall getEndpoint for the full refresh set
+    const configs = await this.publicClient.multicall({
+      contracts: slugs.map((s) => ({
+        address: registryAddr,
+        abi: PactRegistryAbi,
+        functionName: "getEndpoint" as const,
+        args: [s] as const,
+      })),
+      allowFailure: false,
+    }) as Array<{
+      paused: boolean;
+      flatPremium: bigint;
+      percentBps: number;
+      slaLatencyMs: number;
+      imputedCost: bigint;
+      exposureCapPerHour: bigint;
+      totalCalls: bigint;
+      totalBreaches: bigint;
+      totalPremiums: bigint;
+      totalRefunds: bigint;
+      currentPeriodStart: bigint;
+      currentPeriodRefunds: bigint;
+      lastUpdated: bigint;
+      feeRecipientCount: number;
+      feeRecipients: ReadonlyArray<{ kind: number; destination: Address; bps: number }>;
+    }>;
+
+    // 5. Project to EndpointConfigSnapshot. Slice feeRecipients to the on-chain
+    //    feeRecipientCount first so the zero-padded FeeRecipient[8] tail is
+    //    dropped (the contract only pays the first feeRecipientCount entries),
+    //    mirroring getEndpoint() — otherwise maxTotalFeeBps would be summed over
+    //    padding the settler never pays (review #226 F4).
+    const snapshots = configs.map((c, i) => {
+      const count = Number(c.feeRecipientCount);
+      const recipients = c.feeRecipients.slice(0, count);
+      return {
+        slug: slugs[i],
+        // Protocol-wide authority on EVM (no per-endpoint authority field)
+        authority: authorityAddr,
+        // EVM has no per-endpoint maxTotalFeeBps field; compute from the paid
+        // feeRecipients sum. This is the actual total bps allocated, which
+        // serves as a conservative bound.
+        maxTotalFeeBps: recipients.reduce((s, f) => s + Number(f.bps), 0),
+        feeRecipients: recipients.map((f) => ({
+          recipient: f.destination,
+          bps: Number(f.bps),
+          kind: Number(f.kind),
+        })),
+        paused: c.paused,
+        raw: c,
+      };
+    });
+    return { snapshots, scannedToBlock: finalizedNumber };
+  }
+
+  // -------------------------------------------------------------------------
+  // getEndpoint
+  //
+  // Single-slug endpoint read via one getEndpoint() view call (no log scan).
+  // Used by the settler to derive an EVM endpoint's fee fan-out at submit time
+  // without ever reading Solana PDAs. feeRecipients is sliced to the on-chain
+  // feeRecipientCount so the zero-padded FeeRecipient[8] tail is dropped (the
+  // contract only pays the first feeRecipientCount entries).
+  // -------------------------------------------------------------------------
+  async getEndpoint(slug: string): Promise<EndpointConfigSnapshot> {
+    if (!this.deployment.registry) {
+      throw new Error(
+        `EvmAdapter.getEndpoint: no registry address for chain ${this.deployment.chainId}`,
+      );
+    }
+    const slugHex = slugToBytes16(slug);
+    const c = (await this.publicClient.readContract({
+      address: this.deployment.registry,
+      abi: PactRegistryAbi,
+      functionName: "getEndpoint",
+      args: [slugHex],
+    })) as {
+      paused: boolean;
+      feeRecipientCount: number;
+      feeRecipients: ReadonlyArray<{ kind: number; destination: Address; bps: number }>;
+    };
+
+    const count = Number(c.feeRecipientCount);
+    const recipients = c.feeRecipients.slice(0, count);
+    return {
+      slug: slugHex,
+      // No per-endpoint authority on EVM; surface the registry address.
+      authority: this.deployment.registry,
+      maxTotalFeeBps: recipients.reduce((s, f) => s + Number(f.bps), 0),
+      feeRecipients: recipients.map((f) => ({
+        recipient: f.destination,
+        bps: Number(f.bps),
+        kind: Number(f.kind),
+      })),
+      paused: c.paused,
+      raw: c,
+    };
+  }
+
+  // -------------------------------------------------------------------------
+  // submitSettleBatch
+  //
+  // Outcome -> breach/refund mapping: copied from SolanaAdapter pattern
+  // (breach refunds full premium; ok refunds 0).
+  //
+  // Gas strategy per D6 §3:
+  //   - EIP-1559: estimateFeesPerGas -> maxFeePerGas * 120% / 100, keep
+  //     maxPriorityFeePerGas unchanged.
+  //   - Fallback (chain rejects EIP-1559): legacy gasPrice * 120% / 100.
+  //   - gasLimit: estimateGas * 130% / 100.
+  //
+  // Finality wait-loop: D6 §5.1 verbatim.
+  //   timeout = finalityBlocks * blockTimeMs * 3
+  //   poll every blockTimeMs until receipt.blockNumber + finalityBlocks <= current
+  //
+  // perEvent.status simplification: uniformly 'settled' on success.
+  // Granular 'replayed'/'rejected' deferred (requires receipt-log matching
+  // against input events — see RESEARCH §3.2 for follow-up scope).
+  // -------------------------------------------------------------------------
+  async submitSettleBatch(input: SettleBatchInput): Promise<SettleBatchResult> {
+    if (!this.walletClient) {
+      throw new Error(
+        "EvmAdapter.submitSettleBatch: no signer configured — pass signer: { privateKey } or signer: { account } in EvmAdapterOptions",
+      );
+    }
+
+    if (!this.deployment.settler) {
+      throw new Error(
+        `EvmAdapter.submitSettleBatch: no settler address for chain ${this.deployment.chainId}`,
+      );
+    }
+    const settlerAddr = this.deployment.settler;
+
+    // Map SettleBatchInput events -> SettlementEventInput[]
+    // Fallback clock for events that carry no canonical timestamp (backward
+    // compat); the supplied eventTimestamp takes precedence below.
+    const now = BigInt(Math.floor(Date.now() / 1000));
+    const eventsWire: SettlementEventInput[] = input.events.map((e) => ({
+      callId: e.callId,
+      agent: e.agent as Address,
+      endpointSlug: input.slug,
+      premium: e.premiumBaseUnits,
+      // Encode the exact refund supplied by the wrap classifier (finding 6),
+      // not the premium. Mirrors the on-chain handler, which pays the wire
+      // refund value verbatim. Defaults to 0 when unset (e.g. a clean call).
+      refund: e.refundBaseUnits ?? 0n,
+      latencyMs: e.latencyMs,
+      breach: e.outcome === "breach",
+      feeRecipientCountHint: e.feeRecipientCountHint,
+      // Encode the canonical wrapped-call timestamp supplied by the settler
+      // (Rick #226 F1), NOT submit-time Date.now(). Falls back to `now` only
+      // when the caller omits it.
+      timestamp: e.eventTimestamp ?? now,
+    }));
+
+    const calldata = encodeSettleBatch(eventsWire);
+
+    // Gas strategy: try EIP-1559, fall back to legacy gasPrice. If BOTH
+    // fail (e.g., RPC down), wrap the underlying error in the standard
+    // `settleBatch <what> failed: <reason>` envelope so operator-grep finds it.
+    let gasParams: { maxFeePerGas?: bigint; maxPriorityFeePerGas?: bigint; gasPrice?: bigint } = {};
+    try {
+      const fees = await this.publicClient.estimateFeesPerGas();
+      if (fees.maxFeePerGas != null) {
+        gasParams = {
+          maxFeePerGas: (fees.maxFeePerGas * 120n) / 100n,
+          maxPriorityFeePerGas: fees.maxPriorityFeePerGas ?? undefined,
+        };
+      } else {
+        throw new Error("EIP-1559 not supported");
+      }
+    } catch {
+      // Fall back to legacy gasPrice
+      try {
+        const gp = await this.publicClient.getGasPrice();
+        gasParams = { gasPrice: (gp * 120n) / 100n };
+      } catch (gasErr) {
+        const decoded = tryExtractPactError(gasErr);
+        const reason = decoded?.name ?? (gasErr as Error)?.message ?? "unknown";
+        throw new Error(`settleBatch gas estimation failed: ${reason}`);
+      }
+    }
+
+    // Estimate gas limit (+30%)
+    // Cast to unknown first to avoid viem's discriminated-union type
+    // incompatibility between EIP-1559 and legacy gasPrice params.
+    const account = (this.walletClient as WalletClient & { account: { address: Address } }).account;
+    let gasLimit: bigint;
+    try {
+      const estimated = await (this.publicClient.estimateGas as (args: unknown) => Promise<bigint>)({
+        account: account.address,
+        to: settlerAddr,
+        data: calldata,
+        ...gasParams,
+      });
+      gasLimit = (estimated * 130n) / 100n;
+    } catch (err) {
+      const decoded = tryExtractPactError(err);
+      const reason = decoded?.name ?? (err as Error)?.message ?? "unknown";
+      throw new Error(`settleBatch estimateGas failed: ${reason}`);
+    }
+
+    // Send transaction. Pass the LOCAL account OBJECT (not account.address):
+    // viem treats a bare-address account as JSON-RPC/node-managed and emits
+    // eth_sendTransaction/wallet_sendTransaction (the RPC node signs). Some RPCs
+    // (e.g. Arc Testnet) reject that method ("request method is not supported").
+    // The object is the PrivateKeyAccount the walletClient was built with, so
+    // viem signs locally and submits via eth_sendRawTransaction.
+    let txHash: Hex;
+    try {
+      txHash = await (this.walletClient.sendTransaction as (args: unknown) => Promise<Hex>)({
+        account,
+        to: settlerAddr,
+        data: calldata,
+        gas: gasLimit,
+        ...gasParams,
+      });
+    } catch (err) {
+      const decoded = tryExtractPactError(err);
+      const reason = decoded?.name ?? (err as Error)?.message ?? "unknown";
+      throw new Error(`settleBatch send failed: ${reason}`);
+    }
+
+    // D6 §5.1 finality wait-loop (verbatim)
+    const timeoutMs = this.finalityBlocks * this.blockTimeMs * 3;
+    const start = Date.now();
+
+    while (true) {
+      const receipt = await this.publicClient
+        .getTransactionReceipt({ hash: txHash })
+        .catch(() => null);
+
+      if (receipt) {
+        if (receipt.status === "reverted") {
+          throw new Error(
+            `settleBatch tx reverted on-chain: ${txHash}`,
+          );
+        }
+        const current = await this.publicClient.getBlockNumber();
+        const depth = current - receipt.blockNumber + 1n;
+        if (depth >= BigInt(this.finalityBlocks)) {
+          return {
+            txId: txHash,
+            perEvent: input.events.map((e) => ({
+              callId: e.callId,
+              // Uniformly 'settled' on success. Granular 'replayed'/'rejected' per-event
+              // status requires receipt-log matching against input events — deferred to
+              // follow-up; see RESEARCH §3.2.
+              status: "settled" as const,
+            })),
+          };
+        }
+      }
+
+      if (Date.now() - start > timeoutMs) {
+        throw new Error(
+          `settleBatch finality timeout after ${timeoutMs}ms: ${txHash}`,
+        );
+      }
+
+      await sleep(this.blockTimeMs);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // getNativeBalance
+  //
+  // Native gas-token balance (wei) of an address, via the real viem public
+  // client (no hand-rolled RPC). Used by the settler's per-network EVM signer
+  // gas-balance monitor (multi-evm WP T4).
+  // -------------------------------------------------------------------------
+  async getNativeBalance(address: string): Promise<bigint> {
+    return this.publicClient.getBalance({ address: address as Address });
+  }
+
+  // -------------------------------------------------------------------------
+  // checkAgentEligibility
+  //
+  // ERC-20 balanceOf + allowance via multicall. EVM never returns 'no_account'
+  // (every address is implicit in EVM).
+  // -------------------------------------------------------------------------
+  async checkAgentEligibility(
+    agent: string,
+    requiredBaseUnits: bigint,
+  ): Promise<EligibilityCheckResult> {
+    const usdc = this.deployment.usdc;
+    if (!this.deployment.settler) {
+      throw new Error(
+        `EvmAdapter.checkAgentEligibility: no settler address for chain ${this.deployment.chainId}`,
+      );
+    }
+    const settlerAddr = this.deployment.settler;
+
+    const [balance, allowance] = await this.publicClient.multicall({
+      contracts: [
+        {
+          address: usdc,
+          abi: ERC20_ABI,
+          functionName: "balanceOf" as const,
+          args: [agent as Address] as const,
+        },
+        {
+          address: usdc,
+          abi: ERC20_ABI,
+          functionName: "allowance" as const,
+          args: [agent as Address, settlerAddr] as const,
+        },
+      ],
+      allowFailure: false,
+    }) as [bigint, bigint];
+
+    if (balance < requiredBaseUnits) {
+      return {
+        eligible: false,
+        reason: "insufficient_balance",
+        balance,
+        allowance,
+      };
+    }
+    if (allowance < requiredBaseUnits) {
+      return {
+        eligible: false,
+        reason: "insufficient_allowance",
+        balance,
+        allowance,
+      };
+    }
+    return { eligible: true, balance, allowance };
+  }
+
+  // -------------------------------------------------------------------------
+  // tailSettlementEvents (optional)
+  //
+  //   Yields finalized CallSettled events for D6 §5.2 reconcile-tail consumer
+  //   (WP-MN-04 T3 reorg module). Polls the configured finality block tag and
+  //   advances fromBlock after each sweep.
+  // -------------------------------------------------------------------------
+  async *tailSettlementEvents(opts: TailOptions): AsyncIterable<{
+    callId: string;
+    settlementSig: string;
+    blockOrSlot: string;
+  }> {
+    if (!this.deployment.settler) {
+      throw new Error(
+        `EvmAdapter.tailSettlementEvents: no settler address for chain ${this.deployment.chainId}`,
+      );
+    }
+    const settlerAddr = this.deployment.settler;
+
+    let fromBlock = BigInt(opts.fromBlockOrSlot);
+    const pollMs = opts.pollIntervalMs ?? 60_000;
+
+    while (true) {
+      const finalized = await this.publicClient.getBlock({ blockTag: this.finalityBlockTag });
+      if (finalized.number == null) {
+        await sleep(pollMs);
+        continue;
+      }
+
+      if (fromBlock <= finalized.number) {
+        // Chunked to respect Arc's 10k eth_getLogs window — same reason as
+        // readEndpointConfigs above. Cold starts at deploymentBlock would
+        // otherwise blow through the limit on first sweep.
+        for (
+          let from = fromBlock;
+          from <= finalized.number;
+          from += this.logRangeChunk
+        ) {
+          const to =
+            from + this.logRangeChunk - 1n > finalized.number
+              ? finalized.number
+              : from + this.logRangeChunk - 1n;
+          const logs = await this.publicClient.getContractEvents({
+            address: settlerAddr,
+            abi: PactEventsAbi,
+            eventName: "CallSettled",
+            fromBlock: from,
+            toBlock: to,
+          });
+
+          for (const log of logs) {
+            const decoded = decodePactEventLog(log as { data: Hex; topics: [Hex, ...Hex[]] });
+            if (decoded.eventName === "CallSettled") {
+              yield {
+                callId: decoded.args["callId"] as string,
+                settlementSig: log.transactionHash ?? "",
+                blockOrSlot: log.blockNumber?.toString() ?? finalized.number.toString(),
+              };
+            }
+          }
+        }
+
+        fromBlock = finalized.number + 1n;
+      }
+
+      await sleep(pollMs);
+    }
+  }
+}

@@ -21,14 +21,29 @@ import { computeDemoBreachDelayMs } from "../lib/force-breach.js";
 import { classifierRegistry } from "../lib/classifiers.js";
 import { createBufferedFetch } from "../lib/buffered-fetch.js";
 import { buildSanitisedResponse } from "../lib/response-headers.js";
+import { adapterToBalanceCheck } from "../lib/balance.js";
 
 export async function proxyRoute(c: Context): Promise<Response> {
   const slug = c.req.param("slug") ?? "";
-  const { registry, demoAllowlist, balanceCheck, sink } = getContext();
+  const network = c.req.header("x-pact-network");
+  const { registry, demoAllowlist, balanceCheck: legacyBalanceCheck, sink, adapters, legacyDirectSolana } = getContext();
 
-  const endpoint = await registry.get(slug);
+  const endpoint = await registry.get(slug, network);
   if (!endpoint) {
-    return c.json({ error: "endpoint not found" }, 404);
+    const available = await registry.getNetworksForSlug(slug);
+    if (available.length === 0) {
+      return c.json({ error: "endpoint not found" }, 404);
+    }
+    if (network) {
+      return c.json({
+        error: "endpoint_not_found",
+        message: `endpoint "${slug}" not found on network "${network}". Available networks: ${available.join(", ")}`,
+      }, 404);
+    }
+    return c.json({
+      error: "endpoint_ambiguous",
+      message: `Set X-Pact-Network header to disambiguate: ${available.join(", ")}`,
+    }, 404);
   }
   if (endpoint.paused) {
     return c.json({ error: "endpoint paused" }, 503);
@@ -37,6 +52,33 @@ export async function proxyRoute(c: Context): Promise<Response> {
   const handler = handlerRegistry[slug];
   if (!handler) {
     return c.json({ error: "no handler for endpoint" }, 501);
+  }
+
+  // Resolve the network for this endpoint. The DB row carries a `network`
+  // column (added in WP-MN-03a). EndpointRegistry defaults to "solana-devnet"
+  // for rows from before the migration so this is always a valid network string.
+  const endpointNetwork = endpoint.network;
+
+  // Select balance check: legacy direct (from createBalanceCheck) or
+  // adapter-backed (from ChainAdapter.checkAgentEligibility).
+  const adapterForNetwork = adapters.get(endpointNetwork);
+  let balanceCheck: import("@pact-network/wrap").BalanceCheck;
+  if (legacyDirectSolana && endpointNetwork.startsWith("solana-")) {
+    balanceCheck = legacyBalanceCheck;
+  } else if (adapterForNetwork) {
+    balanceCheck = adapterToBalanceCheck(adapterForNetwork);
+  } else {
+    // Adapter missing for this network — explicit 503 + WARN log.
+    // Silent fallback to legacyBalanceCheck was removed in WP-MN-03b T5:
+    // an unknown network means the operator has not enabled it in
+    // PACT_ENABLED_NETWORKS, so we must not silently degrade to Solana.
+    console.warn(
+      `[proxy] endpoint "${endpoint.slug}" requires network "${endpointNetwork}", not in PACT_ENABLED_NETWORKS`,
+    );
+    return c.text(
+      `Network "${endpointNetwork}" not enabled on this proxy`,
+      503,
+    );
   }
 
   // Agent identity: the CLI transmits the agent pubkey in the `x-pact-agent`
@@ -133,6 +175,7 @@ export async function proxyRoute(c: Context): Promise<Response> {
     endpointConfig,
     fetchImpl: buffered.fetchImpl,
     pool: slug,
+    network: endpointNetwork,
   });
 
   // Alan review M2: wrap's response carries upstream headers (with

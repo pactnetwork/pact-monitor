@@ -13,6 +13,9 @@ export type { WrapFetchOptions, WrapFetchResult } from "./wrapFetch";
 export { defaultClassifier, composeWithDefault } from "./classifier";
 export type { Classifier, ClassifierInput, ClassifierResult } from "./classifier";
 
+export { computeEconomics, isCoveredBreach } from "./economics";
+export type { Economics, EconomicsPool } from "./economics";
+
 export { createDefaultBalanceCheck } from "./balanceCheck";
 export type {
   BalanceCheck,
