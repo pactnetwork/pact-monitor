@@ -20,6 +20,14 @@ import type { Classification } from "../../monitor/src/types";
 
 const FLAT = 500n;
 const IMPUTED = 50_000n;
+// Canonical covered-breach refund on the gateway/wrap path (agent-tasks#11):
+// `principal + premium`, where the gateway's principal is the configured
+// `imputedCost` (wrap calls computeEconomics WITHOUT amountPaid). Expressed as
+// the formula — not a literal — so this fixture stays pinned to the same money
+// math `computeEconomics` runs (packages/wrap/src/economics.ts), matching the
+// convention in wrap's own classifier.test.ts and the facilitator
+// economics-parity.test.ts.
+const COVERED_REFUND = IMPUTED + FLAT;
 const T = 5000; // shared latency threshold
 
 interface Fixture {
@@ -53,7 +61,7 @@ const FIXTURES: Fixture[] = [
   {
     name: "200 over threshold",
     statusCode: 200, latencyMs: 6000, body: { data: "ok" },
-    core: "slow", wrap: "latency_breach", wrapPremium: FLAT, wrapRefund: IMPUTED, monitor: "timeout",
+    core: "slow", wrap: "latency_breach", wrapPremium: FLAT, wrapRefund: COVERED_REFUND, monitor: "timeout",
   },
   {
     name: "200 exactly at threshold (strict >, not a breach)",
@@ -63,29 +71,29 @@ const FIXTURES: Fixture[] = [
   {
     name: "201 (non-200 2xx) over threshold",
     statusCode: 201, latencyMs: 6000,
-    core: "slow", wrap: "latency_breach", wrapPremium: FLAT, wrapRefund: IMPUTED, monitor: "timeout",
+    core: "slow", wrap: "latency_breach", wrapPremium: FLAT, wrapRefund: COVERED_REFUND, monitor: "timeout",
   },
   {
     name: "204 (no body) over threshold",
     statusCode: 204, latencyMs: 6000,
-    core: "slow", wrap: "latency_breach", wrapPremium: FLAT, wrapRefund: IMPUTED, monitor: "timeout",
+    core: "slow", wrap: "latency_breach", wrapPremium: FLAT, wrapRefund: COVERED_REFUND, monitor: "timeout",
   },
 
   // --- 5xx server fault (covered) ---
   {
     name: "500",
     statusCode: 500, latencyMs: 100,
-    core: "server_error", wrap: "server_error", wrapPremium: FLAT, wrapRefund: IMPUTED, monitor: "server_error",
+    core: "server_error", wrap: "server_error", wrapPremium: FLAT, wrapRefund: COVERED_REFUND, monitor: "server_error",
   },
   {
     name: "503",
     statusCode: 503, latencyMs: 100,
-    core: "server_error", wrap: "server_error", wrapPremium: FLAT, wrapRefund: IMPUTED, monitor: "server_error",
+    core: "server_error", wrap: "server_error", wrapPremium: FLAT, wrapRefund: COVERED_REFUND, monitor: "server_error",
   },
   {
     name: "599 (5xx upper bound)",
     statusCode: 599, latencyMs: 100,
-    core: "server_error", wrap: "server_error", wrapPremium: FLAT, wrapRefund: IMPUTED, monitor: "server_error",
+    core: "server_error", wrap: "server_error", wrapPremium: FLAT, wrapRefund: COVERED_REFUND, monitor: "server_error",
   },
 
   // --- 4xx caller fault (NOT covered) ---
@@ -124,7 +132,7 @@ const FIXTURES: Fixture[] = [
   {
     name: "network error (no response)",
     statusCode: null, latencyMs: 100, networkError: true,
-    core: "network_error", wrap: "network_error", wrapPremium: FLAT, wrapRefund: IMPUTED, monitor: "server_error",
+    core: "network_error", wrap: "network_error", wrapPremium: FLAT, wrapRefund: COVERED_REFUND, monitor: "server_error",
   },
   {
     name: "statusCode 0 + networkError (monitor-shaped)",
@@ -172,7 +180,7 @@ const FIXTURES: Fixture[] = [
     name: "200 OVER threshold + schema -> latency wins (monitor timeout, not schema_mismatch)",
     statusCode: 200, latencyMs: 6000,
     body: { name: "test" }, schema: { type: "object", required: ["id", "name"] },
-    core: "slow", wrap: "latency_breach", wrapPremium: FLAT, wrapRefund: IMPUTED, monitor: "timeout",
+    core: "slow", wrap: "latency_breach", wrapPremium: FLAT, wrapRefund: COVERED_REFUND, monitor: "timeout",
   },
 ];
 
