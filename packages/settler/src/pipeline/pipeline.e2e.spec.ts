@@ -7,6 +7,7 @@ import { EventEmitter } from "events";
 import { BatcherService } from "../batcher/batcher.service";
 import { ConsumerService } from "../consumer/consumer.service";
 import { SubmitterService } from "../submitter/submitter.service";
+import { AdaptersService } from "../adapters/adapters.service";
 import { IndexerPusherService } from "../indexer/indexer-pusher.service";
 import { PipelineService } from "./pipeline.service";
 import { SecretLoaderService } from "../config/secret-loader.service";
@@ -181,9 +182,11 @@ describe("Pipeline e2e", () => {
     );
     consumer = new ConsumerService(pubsubConsumer);
     batcher = new BatcherService();
+    const stubAdapters = { legacyDirectSolana: true } as unknown as AdaptersService;
     submitter = new SubmitterService(
       config,
       { keypair: devKeypair } as unknown as SecretLoaderService,
+      stubAdapters,
     );
     pusher = new IndexerPusherService(config);
     pipeline = new PipelineService(consumer, batcher, submitter, pusher);

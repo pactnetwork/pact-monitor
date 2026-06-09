@@ -6,6 +6,7 @@ import {
   Query,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { validateNetworkParam } from "../lib/network-filter";
 
 // BigInts must be stringified at the controller boundary because Nest's default
 // JSON serialiser cannot encode `bigint` (TypeError on JSON.stringify). Same
@@ -94,14 +95,19 @@ export class AgentsController {
   async getAgentCalls(
     @Param("pubkey") pubkey: string,
     @Query("limit") limitStr?: string,
+    @Query("network") rawNetwork?: string,
   ): Promise<AgentCallWire[]> {
     const parsed = Number(limitStr);
     const limit = Math.min(
       Math.max(Number.isFinite(parsed) && parsed > 0 ? parsed : 50, 1),
       200,
     );
+    const network = validateNetworkParam(rawNetwork);
+    const where = network
+      ? { agentPubkey: pubkey, network }
+      : { agentPubkey: pubkey };
     const rows = await this.prisma.call.findMany({
-      where: { agentPubkey: pubkey },
+      where,
       orderBy: { ts: "desc" },
       take: limit,
     });

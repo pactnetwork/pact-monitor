@@ -17,6 +17,16 @@ export class EventsController {
   @HttpCode(200)
   @UseGuards(PushSecretGuard)
   async ingest(@Body() dto: SettlementEventDto) {
-    return this.events.ingest(dto);
+    // WP-MN-03a: default to solana-devnet for legacy unstamped events.
+    // Per call resolution: per-call > batch > "solana-devnet".
+    const batchNetwork = dto.network ?? "solana-devnet";
+    return this.events.ingest({
+      ...dto,
+      network: batchNetwork,
+      calls: dto.calls.map((c) => ({
+        ...c,
+        network: c.network ?? dto.network ?? "solana-devnet",
+      })),
+    });
   }
 }

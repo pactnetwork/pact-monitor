@@ -12,7 +12,14 @@ export type { PactInstance, PactFetchCallOptions } from "./factory.js";
 export { PactError, PactErrorCode, isPactError } from "./errors.js";
 export type { PactConfig, AutoTopUpConfig } from "./config.js";
 export type { Network } from "./network.js";
-export type { PactSigner, WalletAdapterSigner } from "./signer.js";
+export type {
+  EvmPactSigner,
+  PactSigner,
+  SignFn,
+  SolanaPactSigner,
+  Vm,
+  WalletAdapterSigner,
+} from "./signer.js";
 
 export type {
   PactEventMap,

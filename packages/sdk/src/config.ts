@@ -13,12 +13,40 @@
  * API-key check). It is kept so a future proxy gate is a no-op for callers.
  */
 import bs58 from "bs58";
+import { getAddress } from "viem";
 
 import { PactError, PactErrorCode } from "./errors.js";
 import type { Network } from "./network.js";
-import type { PactSigner } from "./signer.js";
+import {
+  evmAddressFromPrivateKey,
+  isEvmSigner,
+  signerVm,
+  type PactSigner,
+} from "./signer.js";
 import type { PactStorage } from "./storage.js";
 import type { WebhookConfig } from "./webhook.js";
+
+/**
+ * Heuristic mapping from endpointNetwork string → VM family. EVM testnet/L2
+ * names live in chains.json on the proxy side; the SDK only needs to refuse
+ * obvious mismatches (Solana signer ↔ EVM network and vice versa). Anything
+ * starting with `solana-` is Solana; anything else with a recognised EVM-style
+ * suffix is EVM. Names we cannot classify pass through (the proxy's cross-VM
+ * guard is the authoritative check).
+ */
+function endpointNetworkVm(name: string): "solana" | "evm" | "unknown" {
+  if (name.startsWith("solana-")) return "solana";
+  if (
+    name.startsWith("base-") ||
+    name.startsWith("arc-") ||
+    name.startsWith("eth-") ||
+    name.startsWith("ethereum-") ||
+    name === "mainnet-eth"
+  ) {
+    return "evm";
+  }
+  return "unknown";
+}
 
 export interface AutoTopUpConfig {
   /** Re-approve when delegated allowance drops below this (USDC base units). */
@@ -35,13 +63,16 @@ export interface PactConfig {
 
   /** Reserved; unused by the V1 proxy. See note above. */
   apiKey?: string;
-  /** Sign covered proxy requests (ed25519). Default true. */
+  /** Sign covered proxy requests. Default true. */
   signRequests?: boolean;
   /**
-   * Raw 64-byte ed25519 secret for request signing when `signer` is a wallet
-   * adapter that cannot expose it. Ignored for `Keypair` signers.
+   * Raw signing secret used when the `signer` cannot expose one (Solana wallet
+   * adapter; EVM signer constructed without a private key).
+   *  - Solana: 64-byte ed25519 secret (`Uint8Array`).
+   *  - EVM: 0x-prefixed 32-byte secp256k1 private key (`0x{string}`).
+   * Ignored when the signer already holds an equivalent secret.
    */
-  requestSigningSecretKey?: Uint8Array;
+  requestSigningSecretKey?: Uint8Array | `0x${string}`;
 
   /** Override the program ID (required for devnet/localnet on-chain ops; B1). */
   programId?: string;
@@ -61,6 +92,8 @@ export interface PactConfig {
 
   /** Sent as the `x-pact-project` header (proxy requires it). Default "default". */
   project?: string;
+  /** Endpoint network discriminator sent as X-Pact-Network header (e.g. "base-sepolia", "arc-testnet"). Disambiguates same-slug endpoints across chains. */
+  endpointNetwork?: string;
 
   /**
    * Local durable observation buffer path (Node). Default
@@ -100,7 +133,7 @@ export interface ResolvedConfig {
   signer: PactSigner;
   apiKey?: string;
   signRequests: boolean;
-  requestSigningSecretKey?: Uint8Array;
+  requestSigningSecretKey?: Uint8Array | `0x${string}`;
   programId?: string;
   usdcMint?: string;
   rpcUrl?: string;
@@ -109,6 +142,7 @@ export interface ResolvedConfig {
   defaultAllowanceUsdc: number;
   autoTopUp?: AutoTopUpConfig;
   project: string;
+  endpointNetwork?: string;
   /** undefined in a browser (no node:fs) — selectStorage uses memory then. */
   storagePath?: string;
   storage?: PactStorage;
@@ -157,9 +191,35 @@ export function validateConfig(config: PactConfig): ResolvedConfig {
     );
   }
   const signer = config.signer;
-  if (
-    !signer ||
-    typeof signer.publicKey?.toBase58 !== "function"
+  if (!signer || typeof signer !== "object") {
+    throw new PactError(
+      PactErrorCode.SIGNER_MISSING,
+      "createPact: a signer is required",
+    );
+  }
+  if (isEvmSigner(signer)) {
+    if (
+      typeof signer.address !== "string" ||
+      !signer.address.startsWith("0x")
+    ) {
+      throw new PactError(
+        PactErrorCode.SIGNER_MISSING,
+        "createPact: EVM signer requires a 0x-prefixed address",
+      );
+    }
+    try {
+      // Throws on non-EIP-55 mixed case / bad checksum; pass-through for plain
+      // lowercase / uppercase (viem normalises).
+      getAddress(signer.address);
+    } catch {
+      throw new PactError(
+        PactErrorCode.CONFIG_INVALID,
+        `createPact: EVM signer.address is not a valid address (${signer.address})`,
+      );
+    }
+  } else if (
+    typeof (signer as { publicKey?: { toBase58?: unknown } }).publicKey
+      ?.toBase58 !== "function"
   ) {
     throw new PactError(
       PactErrorCode.SIGNER_MISSING,
@@ -167,28 +227,85 @@ export function validateConfig(config: PactConfig): ResolvedConfig {
     );
   }
 
+  // endpointNetwork cross-VM guard — refuse a Solana signer on an EVM network
+  // and vice versa, before any covered call is attempted.
+  if (config.endpointNetwork) {
+    const wantVm = endpointNetworkVm(config.endpointNetwork);
+    const haveVm = signerVm(signer);
+    if (wantVm !== "unknown" && wantVm !== haveVm) {
+      throw new PactError(
+        PactErrorCode.CONFIG_INVALID,
+        `createPact: endpointNetwork "${config.endpointNetwork}" is a ${wantVm} ` +
+          `network but signer is a ${haveVm} signer`,
+      );
+    }
+  }
+
   // A malformed request-signing secret must fail HERE (construction), not
   // later inside goldenFetch where throwing would violate the golden rule.
   const rsk = config.requestSigningSecretKey;
   if (rsk !== undefined) {
-    if (!(rsk instanceof Uint8Array) || rsk.length !== 64) {
-      throw new PactError(
-        PactErrorCode.CONFIG_INVALID,
-        `createPact: requestSigningSecretKey must be a 64-byte ed25519 ` +
-          `secret key (got ${
-            rsk instanceof Uint8Array ? `${rsk.length} bytes` : typeof rsk
-          })`,
-      );
+    if (isEvmSigner(signer)) {
+      if (
+        typeof rsk !== "string" ||
+        !/^0x[0-9a-fA-F]{64}$/.test(rsk)
+      ) {
+        throw new PactError(
+          PactErrorCode.CONFIG_INVALID,
+          `createPact: requestSigningSecretKey for an EVM signer must be a ` +
+            `0x-prefixed 32-byte secp256k1 private key (got ${
+              typeof rsk === "string" ? `"${rsk.slice(0, 4)}..."` : typeof rsk
+            })`,
+        );
+      }
+      const derived = evmAddressFromPrivateKey(rsk as `0x${string}`);
+      const declared = getAddress(signer.address);
+      if (!derived || getAddress(derived) !== declared) {
+        throw new PactError(
+          PactErrorCode.CONFIG_INVALID,
+          `createPact: requestSigningSecretKey address (${derived ?? "invalid"}) ` +
+            `does not match signer.address (${declared})`,
+        );
+      }
+    } else {
+      if (!(rsk instanceof Uint8Array) || rsk.length !== 64) {
+        throw new PactError(
+          PactErrorCode.CONFIG_INVALID,
+          `createPact: requestSigningSecretKey must be a 64-byte ed25519 ` +
+            `secret key (got ${
+              rsk instanceof Uint8Array ? `${rsk.length} bytes` : typeof rsk
+            })`,
+        );
+      }
+      // ed25519 secret = seed(32) || pubkey(32). The trailing 32 bytes must
+      // match the signer's public key, else every covered call would 401.
+      const derived = bs58.encode(rsk.slice(32));
+      const declared = (
+        signer as { publicKey: { toBase58: () => string } }
+      ).publicKey.toBase58();
+      if (derived !== declared) {
+        throw new PactError(
+          PactErrorCode.CONFIG_INVALID,
+          `createPact: requestSigningSecretKey public key (${derived}) does ` +
+            `not match signer.publicKey (${declared})`,
+        );
+      }
     }
-    // ed25519 secret = seed(32) || pubkey(32). The trailing 32 bytes must
-    // match the signer's public key, else every covered call would 401.
-    const derived = bs58.encode(rsk.slice(32));
-    const declared = signer.publicKey.toBase58();
-    if (derived !== declared) {
+  }
+
+  // EVM signer must have a way to sign covered requests (private key on the
+  // signer OR an override). Without either, `signRequests: true` will silently
+  // degrade — surface that intent mismatch at construction time.
+  if (isEvmSigner(signer)) {
+    const wantsSigning = config.signRequests ?? true;
+    const hasSecret =
+      typeof signer.privateKey === "string" || rsk !== undefined;
+    if (wantsSigning && !hasSecret) {
       throw new PactError(
         PactErrorCode.CONFIG_INVALID,
-        `createPact: requestSigningSecretKey public key (${derived}) does ` +
-          `not match signer.publicKey (${declared})`,
+        "createPact: EVM signer requires a privateKey (on the signer) or " +
+          "requestSigningSecretKey to sign covered requests; pass " +
+          "`signRequests: false` to acknowledge bare-only mode",
       );
     }
   }
@@ -242,6 +359,7 @@ export function validateConfig(config: PactConfig): ResolvedConfig {
     defaultAllowanceUsdc,
     autoTopUp: config.autoTopUp,
     project: config.project ?? "default",
+    endpointNetwork: config.endpointNetwork,
     storagePath: config.storagePath ?? defaultStoragePath(),
     storage: config.storage,
     indexerPollIntervalMs,

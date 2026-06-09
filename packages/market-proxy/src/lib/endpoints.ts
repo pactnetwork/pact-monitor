@@ -2,6 +2,10 @@ import type { Pool } from "pg";
 
 export interface EndpointRow {
   slug: string;
+  /** Network identifier (e.g. "solana-devnet", "arc-testnet"). Added in
+   * WP-MN-03a. Rows created before the migration default to "solana-devnet"
+   * at the DB level (see Prisma migration). */
+  network: string;
   flatPremiumLamports: bigint;
   percentBps: number;
   slaLatencyMs: number;
@@ -19,11 +23,34 @@ export class EndpointRegistry {
 
   constructor(private readonly pg: Pick<Pool, "query">) {}
 
-  async get(slug: string): Promise<EndpointRow | undefined> {
+  async get(slug: string, network?: string): Promise<EndpointRow | undefined> {
     if (Date.now() - this.loadedAt > this.TTL_MS) {
       await this.reload();
     }
-    return this.cache.get(slug);
+    if (network) {
+      return this.cache.get(`${slug}::${network}`);
+    }
+    let match: EndpointRow | undefined;
+    for (const [key, row] of this.cache) {
+      if (key.startsWith(`${slug}::`)) {
+        if (match) return undefined; // multiple matches — ambiguous
+        match = row;
+      }
+    }
+    return match;
+  }
+
+  async getNetworksForSlug(slug: string): Promise<string[]> {
+    if (Date.now() - this.loadedAt > this.TTL_MS) {
+      await this.reload();
+    }
+    const networks: string[] = [];
+    for (const [key, _row] of this.cache) {
+      if (key.startsWith(`${slug}::`)) {
+        networks.push(key.split("::")[1]);
+      }
+    }
+    return networks;
   }
 
   async getAll(): Promise<EndpointRow[]> {
@@ -45,6 +72,7 @@ export class EndpointRegistry {
     // crashes the request handler with a generic 500.
     const { rows } = await this.pg.query(
       `SELECT slug,
+              network,
               "flatPremiumLamports",
               "percentBps",
               "slaLatencyMs",
@@ -57,8 +85,10 @@ export class EndpointRegistry {
     );
     this.cache.clear();
     for (const r of rows) {
-      this.cache.set(r.slug, {
+      const key = `${r.slug}::${r.network ?? "solana-devnet"}`;
+      this.cache.set(key, {
         slug: r.slug,
+        network: r.network ?? "solana-devnet",
         flatPremiumLamports: BigInt(r.flatPremiumLamports),
         percentBps: Number(r.percentBps),
         slaLatencyMs: Number(r.slaLatencyMs),

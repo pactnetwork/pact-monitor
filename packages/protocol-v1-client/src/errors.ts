@@ -145,6 +145,13 @@ export const PROTOCOL_V1_ERRORS: Record<
     message:
       "Protocol kill switch is engaged — settle_batch is refusing all events until ProtocolConfig.paused is cleared via pause_protocol(0).",
   },
+  // SOL-01 fix (2026-05-29): settle_batch now validates the SettlementAuthority
+  // account's canonical PDA + program ownership before trusting its fields.
+  6033: {
+    name: "InvalidSettlementAuthority",
+    message:
+      "Supplied SettlementAuthority is not the canonical [b\"settlement_authority\"] PDA, or is not owned by this program.",
+  },
 };
 
 /**

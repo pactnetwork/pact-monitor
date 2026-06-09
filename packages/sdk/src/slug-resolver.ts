@@ -30,6 +30,7 @@ export interface SlugEntry {
   slug: string;
   premiumBps: number;
   paused: boolean;
+  network?: string;
 }
 
 export type SlugResolution =
@@ -133,6 +134,7 @@ export class SlugResolver {
         slug: ep.slug,
         premiumBps: Number(ep.premiumBps ?? 0),
         paused: Boolean(ep.paused),
+        network: (ep as { network?: string }).network,
       };
       for (const h of ep.hostnames ?? []) {
         next.set(h.toLowerCase().replace(/\.+$/, ""), entry);

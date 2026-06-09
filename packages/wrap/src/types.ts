@@ -47,4 +47,13 @@ export interface SettlementEvent {
   outcome: Outcome;
   /** ISO-8601 timestamp of when the wrapped call completed. */
   ts: string;
+  /**
+   * Network identifier (WP-MN-03a). Optional during the migration window;
+   * consumers default to `'solana-devnet'` when absent so legacy pre-MN
+   * settlers can still publish events.
+   *
+   * Values come from `getChain(name).network` in `@pact-network/shared`.
+   * Examples: "solana-devnet", "solana-mainnet", "arc-testnet".
+   */
+  network?: string;
 }

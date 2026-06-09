@@ -10,6 +10,7 @@ const CACHE_TTL_SEC = 3600;
 
 export interface DiscoveryEndpoint {
   slug: string;
+  network: string;
   hostnames: string[];
   premiumBps: number;
   paused: boolean;
@@ -27,6 +28,7 @@ export async function wellKnownEndpointsRoute(c: Context): Promise<Response> {
   const endpoints: DiscoveryEndpoint[] = rows
     .map((r) => ({
       slug: r.slug,
+      network: r.network,
       hostnames: hostnamesForSlug(r.slug),
       premiumBps: r.percentBps,
       paused: r.paused,

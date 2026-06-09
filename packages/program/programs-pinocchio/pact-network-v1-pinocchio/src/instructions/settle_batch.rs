@@ -58,7 +58,8 @@ use crate::{
     error::PactError,
     pda::{
         derive_call_record, derive_coverage_pool, derive_endpoint_config,
-        verify_protocol_config, SEED_COVERAGE_POOL, SEED_CALL, SEED_SETTLEMENT_AUTHORITY,
+        verify_protocol_config, verify_settlement_authority, SEED_COVERAGE_POOL, SEED_CALL,
+        SEED_SETTLEMENT_AUTHORITY,
     },
     state::{
         CallRecord, CoveragePool, EndpointConfig, FeeRecipient, ProtocolConfig,
@@ -115,6 +116,13 @@ pub fn process(accounts: &[AccountView], data: &[u8]) -> ProgramResult {
     }
 
     // Verify settler_signer matches SettlementAuthority.signer and read bump.
+    // Prove the supplied SettlementAuthority is the canonical
+    // [b"settlement_authority"] PDA + program-owned BEFORE trusting its
+    // `signer`/`bump` fields — otherwise a caller could forge an account with
+    // their own pubkey in the `signer` slot and bypass the UnauthorizedSettler
+    // gate (SOL-01). Mirrors the verify_protocol_config(protocol_config)? guard
+    // above.
+    verify_settlement_authority(settlement_auth)?;
     let sa_bump;
     {
         let sa_data = settlement_auth.try_borrow()?;
