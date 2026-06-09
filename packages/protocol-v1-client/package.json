@@ -1,6 +1,6 @@
 {
   "name": "@q3labs/pact-protocol-v1-client",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "TypeScript client for pact-network-v1-pinocchio (PDA derivers, account decoders, instruction builders, fee-recipient helpers).",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

@@ -1,6 +1,6 @@
 {
   "name": "@pact-network/wrap",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Network-core fetch-call wrap library: any interface (Pact Market, BYO SDK, x402 facilitator, etc.) consumes this to insure a fetch call against Pact Network.",
   "main": "dist/index.js",
