@@ -14,6 +14,8 @@ const EXPECTED_CODES = [
   6027, 6028, 6029, 6030, 6031,
   // mainnet kill-switch (2026-05-06):
   6032,
+  // SOL-01 fix (#245): settle_batch validates the SettlementAuthority PDA + owner.
+  6033,
 ];
 
 describe("error decoder", () => {
