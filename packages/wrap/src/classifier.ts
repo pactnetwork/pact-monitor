@@ -87,6 +87,10 @@ export const defaultClassifier: Classifier = {
         // 2xx-within-SLA and 1xx/3xx/other both map to ok (premium, no refund).
         outcome = "ok";
         break;
+      default:
+        // Exhaustiveness check: all Outcome union members handled above.
+        const _: never = category;
+        outcome = _;
     }
 
     const econ = computeEconomics({
