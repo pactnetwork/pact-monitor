@@ -53,6 +53,15 @@ const Env = z.object({
     .string()
     .regex(/^\d+$/)
     .default("5000000"),
+  // agent-tasks#10: abuse gate for the CLIENT-ATTESTED verdict path. 3-value
+  // for shadow rollout. "off" (default) = today's zero-friction behaviour, no
+  // evaluation, no DB reads. "log_only" = evaluate + log would-throttles but
+  // still publish (collect signal). "enforce" = decline anomalous client-attested
+  // refunds (downgrade to uncovered, don't publish). The gateway/self-observed
+  // path is never gated. See packages/facilitator/src/lib/attestation-controls.ts.
+  PACT_VERDICT_ATTESTATION_GATE: z
+    .enum(["off", "log_only", "enforce"])
+    .default("off"),
   PORT: z.string().default("8080"),
 });
 

@@ -373,4 +373,57 @@ describe("wrapFetch", () => {
     const parsed = new Date(sink.events[0].ts).getTime();
     expect(parsed).toBe(1_700_000_000_100);
   });
+
+  // agent-tasks#10: the gateway path self-observes, so every event it publishes
+  // must be stamped verdictSource:"pact_observed", and that verdict must be
+  // derived from the RESPONSE wrap fetched — never from any caller-supplied value.
+  describe("verdict provenance (agent-tasks#10)", () => {
+    async function eventFor(status: number, latencyMs: number) {
+      const sink = new MemoryEventSink();
+      const probe = timedFetch(status, latencyMs);
+      const clock = clockFromFetch(probe);
+      await wrapFetch(baseOpts({ sink, fetchImpl: probe.fetchImpl, now: clock.now }));
+      await new Promise((res) => setImmediate(res));
+      return sink.events[0];
+    }
+
+    it("stamps pact_observed on a healthy (ok) call", async () => {
+      const ev = await eventFor(200, 100);
+      expect(ev.verdictSource).toBe("pact_observed");
+      expect(ev.outcome).toBe("ok");
+    });
+
+    it("stamps pact_observed on a server_error breach", async () => {
+      const ev = await eventFor(500, 100);
+      expect(ev.verdictSource).toBe("pact_observed");
+      expect(ev.outcome).toBe("server_error");
+    });
+
+    it("stamps pact_observed on a latency breach", async () => {
+      const ev = await eventFor(200, 5_000); // > sla 500
+      expect(ev.verdictSource).toBe("pact_observed");
+      expect(ev.outcome).toBe("latency_breach");
+    });
+
+    it("verdict tracks the observed Response, not the caller — same wallet gets server_error from 500 and ok from 200", async () => {
+      const a = await eventFor(500, 10);
+      const b = await eventFor(200, 10);
+      expect(a.agentPubkey).toBe(b.agentPubkey); // identical caller
+      expect(a.outcome).toBe("server_error");
+      expect(b.outcome).toBe("ok");
+      expect(a.verdictSource).toBe("pact_observed");
+      expect(b.verdictSource).toBe("pact_observed");
+    });
+
+    it("network error (no response) is still pact_observed", async () => {
+      const sink = new MemoryEventSink();
+      const fetchImpl = vi.fn(async () => {
+        throw new Error("connreset");
+      });
+      await wrapFetch(baseOpts({ sink, fetchImpl: fetchImpl as unknown as typeof fetch }));
+      await new Promise((res) => setImmediate(res));
+      expect(sink.events[0].outcome).toBe("network_error");
+      expect(sink.events[0].verdictSource).toBe("pact_observed");
+    });
+  });
 });
