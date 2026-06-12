@@ -134,13 +134,27 @@ curl -si "http://localhost:8080/v1/dummy/anything?fail=1" -H "x-pact-network: ar
 
 - **Settle tx (refund on Arbitrum Sepolia):** _TBD — captured during E2E run_
 
+## Live deployment (Railway — project `pact-arbitrum-sepolia`)
+
+7 services + managed Postgres + Redis, all healthy. Public:
+- **Dashboard:** https://market-dashboard-production-0489.up.railway.app
+- **Insured proxy:** https://market-proxy-production-29f9.up.railway.app
+- **Indexer API:** https://indexer-production-52a9.up.railway.app
+- Railway project: https://railway.com/project/dcbc2c7d-c5fc-4f11-b54c-84e2311402f7
+
+Env-reference scheme: `PG_URL=${{Postgres.DATABASE_URL}}`, `REDIS_URL=${{Redis.REDIS_URL}}`,
+internal `INDEXER_URL=http://indexer.railway.internal:3001`, `upstreamBase=http://dummy-upstream.railway.internal:8080`.
+Each service uses `railwayConfigFile=packages/<svc>/railway.json` (Railway does not auto-detect it).
+Contract addresses auto-resolve from `DEPLOYMENTS[421614]` (no address env vars). Proxy runs `PACT_PROXY_INSECURE_DEMO=1`
+to allow the `?pact_wallet=` demo path. GCP alternative: deploy the same Dockerfiles via the `q3labs-deployment` skill (Cloud Run + Cloud SQL).
+
 ## Submission artifacts
 
-- Deployed contract (Arbitrum Sepolia): PactRegistry `0x79A91E5965094266d221Aaef8E66d6C364819edb`
-- Public repo: this repo, branch `feat/arbitrum-sepolia-deploy` -> PR to `develop`
-- Dashboard: local `http://localhost:3100` (read-only Arbitrum panes)
-- Settle tx (insured-call breach refund): _TBD_
-- Demo video + writeup: _TBD_
+- Deployed contract (Arbitrum Sepolia): PactRegistry `0x79A91E5965094266d221Aaef8E66d6C364819edb` (Arbiscan-verified)
+- Public repo: this repo, branch `feat/arbitrum-sepolia-deploy` -> PR #267 to `develop`
+- Live dashboard: https://market-dashboard-production-0489.up.railway.app
+- Settle tx (insured-call breach refund): _TBD — needs test USDC_
+- Demo video + writeup (SUBMISSION.md): _TBD_
 
 ## Cleanup
 
