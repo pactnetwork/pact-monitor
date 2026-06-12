@@ -132,7 +132,10 @@ curl -si "http://localhost:8080/v1/dummy/anything?fail=1" -H "x-pact-network: ar
 # 4. settler picks up the breach event -> settleBatch on-chain -> refund. Capture tx on sepolia.arbiscan.io
 ```
 
-- **Settle tx (refund on Arbitrum Sepolia):** _TBD — captured during E2E run_
+- **Settle tx (refund on Arbitrum Sepolia):** `0x4754ee52f0fd04bb3383897a4ae772f3a6dae1c331ad167565e6499db310b6b1`
+  (https://sepolia.arbiscan.io/tx/0x4754ee52f0fd04bb3383897a4ae772f3a6dae1c331ad167565e6499db310b6b1) —
+  `settleBatch` on PactSettler, block 276472305. Call `c7f9957b` via the public proxy `/v1/dummy/quote/AAPL?fail=1`:
+  503 breach → premium 1000, refund 11000, treasury 100. Agent USDC 200000→210000, pool 1000000→989900. Submitted by the Railway settler.
 
 ## Live deployment (Railway — project `pact-arbitrum-sepolia`)
 
@@ -153,8 +156,8 @@ to allow the `?pact_wallet=` demo path. GCP alternative: deploy the same Dockerf
 - Deployed contract (Arbitrum Sepolia): PactRegistry `0x79A91E5965094266d221Aaef8E66d6C364819edb` (Arbiscan-verified)
 - Public repo: this repo, branch `feat/arbitrum-sepolia-deploy` -> PR #267 to `develop`
 - Live dashboard: https://market-dashboard-production-0489.up.railway.app
-- Settle tx (insured-call breach refund): _TBD — needs test USDC_
-- Demo video + writeup (SUBMISSION.md): _TBD_
+- Settle tx (insured-call breach refund): https://sepolia.arbiscan.io/tx/0x4754ee52f0fd04bb3383897a4ae772f3a6dae1c331ad167565e6499db310b6b1
+- Writeup: SUBMISSION.md · Demo video: _TBD (yours)_
 
 ## Cleanup
 

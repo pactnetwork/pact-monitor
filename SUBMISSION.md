@@ -49,7 +49,9 @@ Settlement is in Circle test **USDC** (`0x75faf114eafb1BDbe2F0316DF893fd58CE46AA
 5. The indexer ingests the settlement; the dashboard shows pools, premiums,
    refunds, and breach rate.
 
-**Live settle tx (insured-call breach → on-chain refund):** _TBD_
+**Live settle tx (insured-call breach → on-chain refund):**
+[`0x4754ee52f0fd04bb3383897a4ae772f3a6dae1c331ad167565e6499db310b6b1`](https://sepolia.arbiscan.io/tx/0x4754ee52f0fd04bb3383897a4ae772f3a6dae1c331ad167565e6499db310b6b1)
+— a real insured call to a forced-503 endpoint through the public proxy: agent paid 1000 premium, received an 11000 refund (imputed cost + premium), network treasury earned 100 (10% cut), all settled on Arbitrum Sepolia by the live settler. Visible on the public dashboard.
 
 ## Architecture
 
@@ -68,7 +70,7 @@ Settlement is in Circle test **USDC** (`0x75faf114eafb1BDbe2F0316DF893fd58CE46AA
 - **Live dashboard (Railway):** https://market-dashboard-production-0489.up.railway.app
 - **Live insured proxy (Railway):** https://market-proxy-production-29f9.up.railway.app (`/health`, insured `/v1/dummy/*`)
 - **Live indexer API (Railway):** https://indexer-production-52a9.up.railway.app (`/api/stats`, `/api/endpoints`)
-- **Settle tx:** _TBD_
+- **Settle tx:** https://sepolia.arbiscan.io/tx/0x4754ee52f0fd04bb3383897a4ae772f3a6dae1c331ad167565e6499db310b6b1
 - **Runbook:** [`DEPLOY-ARBITRUM-SEPOLIA.md`](./DEPLOY-ARBITRUM-SEPOLIA.md)
 - **Demo video:** _TBD_
 
