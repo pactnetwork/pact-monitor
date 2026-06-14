@@ -243,11 +243,16 @@ export async function fetchStats(): Promise<Stats> {
   return mapStats(wire);
 }
 
-export async function fetchCalls(_limit = 50): Promise<CallEvent[]> {
-  // Indexer does not currently expose a global recent-calls firehose route.
-  // Returning [] keeps the homepage from crashing; the "Recent Events" table
-  // simply renders empty until the route lands.
-  return [];
+export async function fetchCalls(limit = 50): Promise<CallEvent[]> {
+  // The multi-network indexer exposes a global recent-calls route
+  // (GET /api/calls?limit=N). Powers the homepage "Recent Events" table and
+  // the /agents aggregation. Falls back to [] if the route is unavailable.
+  try {
+    const wire = await getJson<IndexerCall[]>(`/api/calls?limit=${limit}`);
+    return wire.map(mapCall);
+  } catch {
+    return [];
+  }
 }
 
 export async function fetchCall(id: string): Promise<CallEvent | null> {
