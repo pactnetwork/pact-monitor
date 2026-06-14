@@ -3,7 +3,7 @@
 Copy-paste answers for the "Submission Project" form. Char-limited fields kept under 300.
 
 ## Select the Project to Submit*
-Pact (your HackQuest project entry — create/select "Pact" if not listed)
+Pact Network (your HackQuest project entry — create/select "Pact Network" if not listed)
 
 ## What is your contract address?*
 ```
@@ -12,7 +12,7 @@ Pact (your HackQuest project entry — create/select "Pact" if not listed)
 (PactRegistry — the protocol entry point, deployed + verified on Arbitrum Sepolia, chainId 421614)
 
 ## Which Prize Track Do You Belong To* (select all that apply)
-- ✅ **Best Agentic Project** (primary — Pact is financial infra *for* AI agents)
+- ✅ **Best Agentic Project** (primary — Pact Network is financial infra *for* AI agents)
 - ✅ **Overall prize** (also eligible)
 - ⬜ **Grants** (optional — select if requesting Arbitrum Foundation grant consideration)
 
@@ -37,12 +37,12 @@ PactPool: 0xe685b4d5d2AaF0a54f988AF6F44Ca799Cb0660cc — per-endpoint USDC cover
 
 ### Project name / tagline
 ```
-Pact — on-chain parametric insurance for AI-agent API calls
+Pact Network — on-chain parametric insurance for AI-agent API calls
 ```
 
 ### Short description (1–2 lines)
 ```
-AI agents pay for API calls (RPC, data, inference) on every step. When a paid call fails its SLA (5xx, timeout, network drop) the agent has already paid with no recourse. Pact debits a small USDC premium per call and automatically refunds the agent on-chain when the call breaches — no claim, no human.
+AI agents pay for API calls (RPC, data, inference) on every step. When a paid call fails its SLA (5xx, timeout, network drop) the agent has already paid with no recourse. Pact Network debits a small USDC premium per call and automatically refunds the agent on-chain when the call breaches — no claim, no human.
 ```
 
 ### Full description / how it works
@@ -78,15 +78,15 @@ Arbitrum Sepolia (chainId 421614)
 
 We build AI agents. Every agent step now costs money. It pays for RPC calls, market data, inference, and search. When a paid call fails, the money is already gone. The agent gets a 503, a timeout, or no response, and it does not get the money back. One failed call is small. But agents do not make one call. They make thousands, with no person watching. The small losses add up, and tasks do not finish.
 
-So we built Pact: on-chain insurance for agent API calls.
+So we built Pact Network: on-chain insurance for agent API calls.
 
-Each insured endpoint has a USDC coverage pool. When an agent makes a call through Pact, it pays a small premium. If the call succeeds, the premium is split on-chain: most stays in the pool, a part goes to the network treasury, and a part goes to the integrator. If the call fails its SLA (a 5xx error, no response, or too slow), Pact refunds the agent on-chain. The agent gets back the cost of the failed call plus the premium. There is no claim form and no person in the loop.
+Each insured endpoint has a USDC coverage pool. When an agent makes a call through Pact Network, it pays a small premium. If the call succeeds, the premium is split on-chain: most stays in the pool, a part goes to the network treasury, and a part goes to the integrator. If the call fails its SLA (a 5xx error, no response, or too slow), Pact Network refunds the agent on-chain. The agent gets back the cost of the failed call plus the premium. There is no claim form and no person in the loop.
 
-We built Pact for Arbitrum. Arbitrum has low fees and fast finality, which is what per-call insurance needs. You cannot settle a $0.001 premium on Ethereum mainnet. To get there, we first built a chain-agnostic EVM layer, then deployed our protocol on Arbitrum. The three contracts (registry, pool, settler) are live and verified on Arbitrum Sepolia. The full off-chain stack (proxy, settler, indexer, dashboard) runs live against it. We proved it end to end: a real insured call to an endpoint we forced to return 503, an automatic on-chain refund to the agent, and the treasury taking its cut. All of it landed in one Arbitrum transaction you can open and read.
+We built Pact Network for Arbitrum. Arbitrum has low fees and fast finality, which is what per-call insurance needs. You cannot settle a $0.001 premium on Ethereum mainnet. To get there, we first built a chain-agnostic EVM layer, then deployed our protocol on Arbitrum. The three contracts (registry, pool, settler) are live and verified on Arbitrum Sepolia. The full off-chain stack (proxy, settler, indexer, dashboard) runs live against it. We proved it end to end: a real insured call to an endpoint we forced to return 503, an automatic on-chain refund to the agent, and the treasury taking its cut. All of it landed in one Arbitrum transaction you can open and read.
 
 ## Progress timeline — Arbitrum Open House London
 
-Our goal was to deploy Pact on Arbitrum. To do that, we first built a chain-agnostic EVM layer, then launched on Arbitrum. The buildathon ran May 25 – June 14; our Arbitrum design started just before it (May 15). Every step is anchored to a real git commit.
+Our goal was to deploy Pact Network on Arbitrum. To do that, we first built a chain-agnostic EVM layer, then launched on Arbitrum. The buildathon ran May 25 – June 14; our Arbitrum design started just before it (May 15). Every step is anchored to a real git commit.
 
 - **Before the buildathon (May 15) — EVM plan for Arbitrum.** We wrote the EVM-expansion design, compared chains, and chose Arbitrum as the target. We then locked the work-package plan. (The core protocol, written in Pinocchio on Solana, already existed. This was the plan to port it to EVM.)
 - **May 26 — Agent identity on EVM.** We added secp256k1 / EIP-191 signing to the SDK, taught the proxy to accept network-tagged signed payloads, and made the indexer sync EVM endpoints from the on-chain registry.
@@ -102,7 +102,7 @@ Our goal was to deploy Pact on Arbitrum. To do that, we first built a chain-agno
 
 ### List your Token Contract Address (if applicable)* (≤300)
 ```
-N/A — Pact has no project token. Settlement is in Circle's test USDC (0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d, 6 decimals) on Arbitrum Sepolia.
+N/A — Pact Network has no project token. Settlement is in Circle's test USDC (0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d, 6 decimals) on Arbitrum Sepolia.
 ```
 
 ### Which parts of your code have been produced during the Buildathon?* (≤300)
