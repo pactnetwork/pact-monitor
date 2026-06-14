@@ -109,7 +109,7 @@ N/A — Pact Network has no project token. Settlement is in Circle's test USDC (
 
 ### Which parts of your code have been produced during the Buildathon?* (≤300)
 ```
-We used our existing public repo. In the buildathon we built the whole Arbitrum part: we added Arbitrum Sepolia support, deployed and verified the 3 contracts (PR #267), built the on-chain settler, added agent sign-in on EVM, and linked the proxy and indexer. Commits run May 26 to June 14. The Solana core is older.
+We used our existing public repo. In the buildathon we built the Arbitrum part: Arbitrum Sepolia support, deployed and verified 3 contracts (PR #267), the on-chain settler, EVM agent sign-in, and the proxy and indexer link. Commits: May 26 to June 14. Solana core is older.
 ```
 
 > Repo is **public** (`github.com/pactnetwork/pact-monitor`) with conventional/structured commits, so judges can verify progress directly — no `engineering-AF` invite needed. Buildathon work lands in PR #267 (Arbitrum deploy) + the EVM/multi-network commits May 26–Jun 14; the Solana core protocol predates the buildathon.
