@@ -249,7 +249,7 @@ export async function fetchCalls(limit = 50): Promise<CallEvent[]> {
   // the /agents aggregation. Falls back to [] if the route is unavailable.
   try {
     const wire = await getJson<IndexerCall[]>(`/api/calls?limit=${limit}`);
-    return wire.map(mapCall);
+    return wire.map((c) => mapCall(c));
   } catch {
     return [];
   }
