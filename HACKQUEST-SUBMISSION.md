@@ -23,12 +23,14 @@ https://market-dashboard-production-0489.up.railway.app
 
 ## List your Core Protocol / Smart Contract Addresses* (≤300)
 ```
-PactRegistry: 0x79A91E5965094266d221Aaef8E66d6C364819edb | PactPool: 0xe685b4d5d2AaF0a54f988AF6F44Ca799Cb0660cc | PactSettler: 0x8b8D5baF16bB15D5950d2C4cC76879D5b8a74043 — Arbitrum Sepolia (421614), all Arbiscan-verified
+Arbitrum Sepolia: 0x79A91E5965094266d221Aaef8E66d6C364819edb — PactRegistry (endpoints + fees)
+Arbitrum Sepolia: 0xe685b4d5d2AaF0a54f988AF6F44Ca799Cb0660cc — PactPool (coverage pools)
+Arbitrum Sepolia: 0x8b8D5baF16bB15D5950d2C4cC76879D5b8a74043 — PactSettler (settlement)
 ```
 
 ## List your Factory/Pool Contracts (if applicable)* (≤300)
 ```
-PactPool: 0xe685b4d5d2AaF0a54f988AF6F44Ca799Cb0660cc — per-endpoint USDC coverage pools (one balance per insured endpoint slug); topUp/payout/debit gated to PactSettler via SETTLER_ROLE.
+Arbitrum Sepolia: 0xe685b4d5d2AaF0a54f988AF6F44Ca799Cb0660cc — PactPool (per-endpoint USDC coverage pools; one balance per endpoint slug)
 ```
 
 ---
