@@ -26,7 +26,7 @@ export default async function HomePage() {
       <div>
         <h1 className="font-serif text-3xl text-[#f5f0eb] mb-1">Pact Network</h1>
         <p className="text-sm text-[#8a7a70]">
-          Parametric API coverage for AI agents on Arbitrum Sepolia
+          Parametric API coverage for AI agents
         </p>
       </div>
 
