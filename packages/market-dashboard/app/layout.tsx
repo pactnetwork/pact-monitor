@@ -4,8 +4,8 @@ import { SolanaWalletProvider } from "@/components/wallet-provider";
 import { SiteHeader } from "@/components/site-header";
 
 export const metadata: Metadata = {
-  title: "Pact Market Dashboard",
-  description: "Parametric API coverage for Solana agents",
+  title: "Pact Network Dashboard",
+  description: "Parametric API coverage for AI agents on Arbitrum",
 };
 
 export default function RootLayout({
