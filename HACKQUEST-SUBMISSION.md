@@ -109,8 +109,10 @@ N/A — Pact Network has no project token. Settlement is in Circle's test USDC (
 
 ### Which parts of your code have been produced during the Buildathon?* (≤300)
 ```
-The whole EVM/multi-network layer: Arbitrum Sepolia integration, contract deploy + Arbiscan verification, the EVM settler (local-sign settleBatch), EVM agent identity (secp256k1/EIP-191), the proxy/indexer EVM adapters, per-network isolation, and the Railway deployment. The Solana core protocol predates it.
+Existing public monorepo. Built during the buildathon: the whole EVM/Arbitrum layer. Arbitrum Sepolia integration, deploy + Arbiscan verify (PR #267), EVM settler, EVM agent identity (secp256k1/EIP-191), proxy/indexer EVM adapters, per-network isolation. Structured commits May 26 to Jun 14. Solana core predates it.
 ```
+
+> Repo is **public** (`github.com/pactnetwork/pact-monitor`) with conventional/structured commits, so judges can verify progress directly — no `engineering-AF` invite needed. Buildathon work lands in PR #267 (Arbitrum deploy) + the EVM/multi-network commits May 26–Jun 14; the Solana core protocol predates the buildathon.
 
 ### Which sponsor/partner technologies have you used?* (select)
 - ✅ **OpenZeppelin** — contracts use OZ AccessControl + SafeERC20 (foundry remapping `@openzeppelin/`).
