@@ -124,3 +124,39 @@ We used our existing public repo. In the buildathon we built the Arbitrum part: 
 ## Where the separate (mandatory) fields live
 - **Description** → the "Humanized project description (founder voice)" section above.
 - **Progress during Hackathon** → the "Progress timeline — Arbitrum Open House London" section above.
+
+---
+
+## PLAIN-TEXT versions (no markdown — paste into the HackQuest fields)
+
+The form does not render markdown. Use these. No asterisks, backticks, or `#`.
+
+### Description (plain text)
+```
+We build AI agents. Every agent step now costs money. It pays for RPC calls, market data, inference, and search. When a paid call fails, the money is already gone. The agent gets a 503, a timeout, or no response, and it does not get the money back. One failed call is small. But agents do not make one call. They make thousands, with no person watching. The small losses add up, and tasks do not finish.
+
+So we built Pact Network: on-chain insurance for agent API calls.
+
+Each insured endpoint has a USDC coverage pool. When an agent makes a call through Pact Network, it pays a small premium. If the call succeeds, the premium is split on-chain: most stays in the pool, a part goes to the network treasury, and a part goes to the integrator. If the call fails its SLA (a 5xx error, no response, or too slow), Pact Network refunds the agent on-chain. The agent gets back the cost of the failed call plus the premium. There is no claim form and no person in the loop.
+
+We built Pact Network for Arbitrum. Arbitrum has low fees and fast finality, which is what per-call insurance needs. You cannot settle a $0.001 premium on Ethereum mainnet. To get there, we first built a chain-agnostic EVM layer, then deployed our protocol on Arbitrum. The three contracts (registry, pool, settler) are live and verified on Arbitrum Sepolia. The full off-chain stack (proxy, settler, indexer, dashboard) runs live against it. We proved it end to end: a real insured call to an endpoint we forced to return 503, an automatic on-chain refund to the agent, and the treasury taking its cut. All of it landed in one Arbitrum transaction you can open and read.
+```
+
+### Progress timeline (plain text)
+```
+Our goal was to deploy Pact Network on Arbitrum. To do that, we first built a chain-agnostic EVM layer, then launched on Arbitrum. Every step is anchored to a real git commit.
+
+Before the buildathon (May 15) - EVM plan for Arbitrum. We wrote the EVM-expansion design, compared chains, and chose Arbitrum as the target. We then locked the work-package plan. The core protocol, written in Pinocchio on Solana, already existed; this was the plan to port it to EVM.
+
+May 26 - Agent identity on EVM. We added secp256k1 / EIP-191 signing to the SDK, taught the proxy to accept network-tagged signed payloads, and made the indexer sync EVM endpoints from the on-chain registry.
+
+May 27 to 29 - On-chain settlement on EVM. We ran multi-network smoke tests. The EVM settler now signs settleBatch locally and submits it with eth_sendRawTransaction. We moved chains.json into a typed constant with a CI drift guard, fixed the Docker images, redacted secrets from logs, and closed an EVM replay-cache bypass.
+
+June 2 to 4 - One image, many chains. We removed the old V2 stack, isolated the build, and added per-network isolation. One fleet can now run several chains at once with no crosstalk.
+
+June 5 to 9 - Multi-network release. We gated the legacy Solana path behind PACT_ENABLED_NETWORKS so a single chain can boot on its own. We then merged multi-network 0.3.0 to main.
+
+June 11 - Isolation hardening. We made the Solana env config depend on the enabled networks, and added tests that prove an isolated settler skips events from other networks.
+
+June 12 to 14 - Arbitrum launch. We added Arbitrum Sepolia as a chain entry, deployed and Arbiscan-verified the three contracts, and stood up the full stack on Railway with public URLs. We registered an endpoint and ran the full proof: insured call, forced 503 breach, and on-chain refund settled by the live settler (tx 0x4754ee52...b6b1), shown on the public dashboard.
+```
