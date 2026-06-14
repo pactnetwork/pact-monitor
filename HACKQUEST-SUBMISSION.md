@@ -98,3 +98,28 @@ buildathon; Arbitrum was the chain we shipped it on at the end.
 - **June 5–9 — Multi-network ships.** Gated the legacy Solana path behind `PACT_ENABLED_NETWORKS` so a chain can boot standalone; merged multi-network 0.3.0 to main (multi-VM, Arc Testnet, Base Sepolia, CLI/SDK headers).
 - **June 11 — Isolation hardening.** Conditionalized the Solana env contract on enabled networks; added tests proving an isolated settler ack-skips foreign-network events.
 - **June 12–14 — Arbitrum.** Added Arbitrum Sepolia as a chain entry (drift-tested across all three sources), deployed + Arbiscan-verified the three contracts, stood up the full stack on Railway with public URLs, registered an endpoint, and ran the end-to-end proof: insured call → forced 503 breach → on-chain refund settled by the live settler (tx `0x4754ee52…b6b1`), reflected on the public dashboard.
+
+---
+
+## Bottom-of-form fields (confirmed from the form)
+
+### List your Token Contract Address (if applicable)* (≤300)
+```
+N/A — Pact has no project token. Settlement is in Circle's test USDC (0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d, 6 decimals) on Arbitrum Sepolia.
+```
+
+### Which parts of your code have been produced during the Buildathon?* (≤300)
+```
+The whole EVM/multi-network layer: Arbitrum Sepolia integration, contract deploy + Arbiscan verification, the EVM settler (local-sign settleBatch), EVM agent identity (secp256k1/EIP-191), the proxy/indexer EVM adapters, per-network isolation, and the Railway deployment. The Solana core protocol predates it.
+```
+
+### Which sponsor/partner technologies have you used?* (select)
+- ✅ **OpenZeppelin** — contracts use OZ AccessControl + SafeERC20 (foundry remapping `@openzeppelin/`).
+- (Optional/weak: **Alchemy** — only used its faucet for testnet ETH, not integrated in code. Select only if faucet use counts.)
+- Not used: GMX, Robinhood Chain, Dune Analytics, ZeroDev, Fhenix, AWS.
+
+---
+
+## Where the separate (mandatory) fields live
+- **Description** → the "Humanized project description (founder voice)" section above.
+- **Progress during Hackathon** → the "Progress timeline — Arbitrum Open House London" section above.
