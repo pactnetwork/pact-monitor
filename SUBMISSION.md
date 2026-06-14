@@ -1,4 +1,4 @@
-# Pact — on-chain insurance for AI-agent API calls (Arbitrum Sepolia)
+# Pact Network — on-chain insurance for AI-agent API calls (Arbitrum Sepolia)
 
 **Arbitrum Open House London — Online Buildathon · Agentic AI track**
 
@@ -10,15 +10,15 @@ latency blow-out), the agent has already paid and has no recourse. At agent
 scale (thousands of calls per task, run unattended), that unreliability compounds
 into wasted spend and broken workflows, with no way to price or hedge the risk.
 
-## What Pact does
+## What Pact Network does
 
-Pact is a parametric insurance layer for agent API calls, settled entirely
+Pact Network is a parametric insurance layer for agent API calls, settled entirely
 on-chain. Each insured endpoint has a USDC **coverage pool**. On every call the
 agent pays a small **premium** (split on-chain between the pool, the network
-treasury, and the integrator). If the call **breaches its SLA**, Pact
+treasury, and the integrator). If the call **breaches its SLA**, Pact Network
 **automatically refunds** the agent the imputed cost of the failed call plus the
 premium — no claim, no adjuster, no human. The agent just calls the API through
-Pact and is made whole when the upstream fails.
+Pact Network and is made whole when the upstream fails.
 
 This is a clean fit for the **Agentic AI track**: it's financial infrastructure
 *for* agents — letting an autonomous agent treat unreliable paid APIs as a
@@ -38,7 +38,7 @@ Settlement is in Circle test **USDC** (`0x75faf114eafb1BDbe2F0316DF893fd58CE46AA
 
 ## How it works (the E2E flow)
 
-1. An agent makes an insured API call through the Pact proxy (`/v1/:slug/*`).
+1. An agent makes an insured API call through the Pact Network proxy (`/v1/:slug/*`).
 2. The wrap layer checks the agent's USDC balance + allowance on-chain, forwards
    the call, and times it.
 3. A classifier decides the outcome: 5xx / no-response / over-SLA = **covered
