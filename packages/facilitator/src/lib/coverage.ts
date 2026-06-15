@@ -125,23 +125,15 @@ export function computeCoverage(
   // (routes/coverage.ts). `imputedCostLamports` is the per-call refund ceiling
   // the facilitator advertises (env PAY_DEFAULT_IMPUTED_COST_LAMPORTS,
   // "...capped at this value so a single large claim can't drain the pool").
-  // That cap was DOCUMENTED but never enforced — the refund principal was the
-  // raw claimed amount, so one register call with a huge `amountBaseUnits`
-  // could drain the whole hourly exposure cap in a single shot. Clamp the
-  // principal to the ceiling here so the refund is `min(amountPaid, imputed) +
-  // flatPremium`. Note: the gateway/wrap path already uses `imputedCost` as the
-  // principal, so this makes the worst-case x402 claim equal to the gateway's.
-  const principal =
-    amountPaidBaseUnits > pool.imputedCostLamports
-      ? pool.imputedCostLamports
-      : amountPaidBaseUnits;
-  // Delegate the money math to wrap's single source of truth. Passing
-  // `amountPaid` selects it as the principal: a covered-breach refund is the
-  // canonical `amountPaid + flatPremium` (agent-tasks#11), now ceiling-capped.
+  // The C-1 imputed-cost cap now lives in `computeEconomics` (the single source
+  // of truth): the raw claimed amount is passed straight through and clamped to
+  // `imputedCostLamports` there, so the refund is `min(amountPaid, imputed) +
+  // flatPremium`. Behaviour is identical to the previous pre-clamp here — this
+  // just removes the duplicate so the cap can't drift between the two paths.
   return computeEconomics({
     outcome,
     pool,
-    amountPaid: principal,
+    amountPaid: amountPaidBaseUnits,
   });
 }
 
