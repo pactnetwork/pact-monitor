@@ -47,6 +47,11 @@ const _chainsJson: Record<
     usdcAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
     usdcDecimals: 6,
   },
+  "arbitrum-sepolia": {
+    chainId: 421614,
+    usdcAddress: "0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d",
+    usdcDecimals: 6,
+  },
 };
 
 /** Arc Testnet EVM chain id (sourced from chains.json["arc-testnet"].chainId). */
@@ -67,6 +72,12 @@ export const BASE_MAINNET_CHAIN_ID = _chainsJson["base-mainnet"].chainId;
 
 /** Base Mainnet USDC token (sourced from chains.json["base-mainnet"].usdcAddress). */
 export const BASE_MAINNET_USDC: Address = _chainsJson["base-mainnet"].usdcAddress as Address;
+
+/** Arbitrum Sepolia EVM chain id (sourced from chains.json["arbitrum-sepolia"].chainId). */
+export const ARBITRUM_SEPOLIA_CHAIN_ID = _chainsJson["arbitrum-sepolia"].chainId;
+
+/** Arbitrum Sepolia USDC token (sourced from chains.json["arbitrum-sepolia"].usdcAddress). */
+export const ARBITRUM_SEPOLIA_USDC: Address = _chainsJson["arbitrum-sepolia"].usdcAddress as Address;
 
 /**
  * USDC decimals Pact's premium math assumes (Solana 6-decimal parity). The

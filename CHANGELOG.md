@@ -9,6 +9,8 @@ The repo is a workspace, so entries are grouped by package where it helps. Works
 ### Added
 
 - `packages/sdk/skills/pact-sdk/SKILL.md` — agent-skill teaching coding agents (Claude Code, Cursor, etc.) how to integrate `@q3labs/pact-sdk` into a project: install command, canonical fetch-replacement diff, signer cases, one-time `setup()` rules, B1 devnet/localnet caveat, and the golden-rule do-not-list. Mirrors the structure of `packages/cli/skills/pact-pay/SKILL.md`.
+- `"./package.json"` subpath in the `exports` map of both `@q3labs/pact-sdk` and `@q3labs/pact-protocol-v1-client`. Lets build tooling read the package version programmatically (`require("@q3labs/pact-sdk/package.json")`) — previously threw `ERR_PACKAGE_PATH_NOT_EXPORTED`. Surfaced by the post-publish external smoke against the live `0.1.0` install.
+- README + skill note on `pact.stats()` returning `bigint` counters. Naive `JSON.stringify(pact.stats())` throws `TypeError: Do not know how to serialize a BigInt`; both docs now show the replacer pattern. Also surfaced by the post-publish smoke.
 
 ## 2026-05-20 — SDK 0.1.0 release
 

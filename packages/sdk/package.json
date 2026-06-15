@@ -17,7 +17,8 @@
     "./merchant": {
       "types": "./dist/merchant/index.d.ts",
       "default": "./dist/merchant/index.js"
-    }
+    },
+    "./package.json": "./package.json"
   },
   "files": [
     "dist",

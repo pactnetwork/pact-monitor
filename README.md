@@ -51,6 +51,35 @@ Earlier deploys that should not be referenced by any client. Listed only so log 
 
 These addresses are also exported as constants in `packages/protocol-v1-client/src/constants.ts` (`PROGRAM_ID`, `ORPHAN_PROGRAM_ID_PRE_STEP_C`, `ORPHAN_PROGRAM_ID_DEVNET_STEP_C`).
 
+### EVM — Arbitrum Sepolia (testnet)
+
+Full-stack EVM deployment on **Arbitrum Sepolia** (chainId **421614**), built for the Arbitrum Open House London Online Buildathon. The EVM stack is chain-agnostic — this is a new chain entry plus a new deployment of the existing contracts, no forked code. Full runbook in [`DEPLOY-ARBITRUM-SEPOLIA.md`](./DEPLOY-ARBITRUM-SEPOLIA.md).
+
+| Contract | Address |
+|---|---|
+| **PactRegistry** | [`0x79A91E5965094266d221Aaef8E66d6C364819edb`](https://sepolia.arbiscan.io/address/0x79A91E5965094266d221Aaef8E66d6C364819edb) |
+| **PactPool** | [`0xe685b4d5d2AaF0a54f988AF6F44Ca799Cb0660cc`](https://sepolia.arbiscan.io/address/0xe685b4d5d2AaF0a54f988AF6F44Ca799Cb0660cc) |
+| **PactSettler** | [`0x8b8D5baF16bB15D5950d2C4cC76879D5b8a74043`](https://sepolia.arbiscan.io/address/0x8b8D5baF16bB15D5950d2C4cC76879D5b8a74043) |
+| **USDC** (Circle test) | [`0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d`](https://sepolia.arbiscan.io/address/0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d) |
+
+| Role / value | Address |
+|---|---|
+| Deployer / authority (permanent, no setter) | `0xFaFE88B744B53e66CD2896E77EAB3De0D9Ab3f53` |
+| Treasury vault (permanent, no setter) | `0x130bcfAd4d405dB3EF296B76a052180bB5a9c176` |
+| Off-chain settler signer (`SETTLER_ROLE`) | `0x232132df53665D3E6987E40Bab6Ee59E0d043822` |
+
+- **Deploy block:** `276425280` · **Deploy tx:** [`0x1034450c…`](https://sepolia.arbiscan.io/tx/0x1034450c958fcaa7932e6c3133d30c078681c17a63c032deeae09db60c837817) · all 3 contracts Arbiscan-verified.
+- **E2E proof — insured call → SLA breach → on-chain refund:** [`0x4754ee52…`](https://sepolia.arbiscan.io/tx/0x4754ee52f0fd04bb3383897a4ae772f3a6dae1c331ad167565e6499db310b6b1) (`settleBatch`, block 276472305).
+- Chain entry synced across `config/chains.json`, `packages/shared/src/chains.ts`, `packages/protocol-evm-v1-client/src/constants.ts`; addresses in `addresses.ts` `DEPLOYMENTS[421614]`.
+
+Live stack (Railway, project `pact-arbitrum-sepolia`):
+
+| Service | URL |
+|---|---|
+| Dashboard | https://market-dashboard-production-0489.up.railway.app |
+| Insured proxy | https://market-proxy-production-29f9.up.railway.app |
+| Indexer API | https://indexer-production-52a9.up.railway.app |
+
 ## Monorepo Structure
 
 ```

@@ -216,6 +216,23 @@ the only things to wrap in try/catch.
 - **Static-CDN GETs, health checks, telemetry pings, internal RPC** —
   same as free APIs. No coverage to add.
 
+## Gotcha — `pact.stats()` returns `bigint` counters
+
+The `totalPremiumLamportsObserved` / `totalRefundLamportsObserved` fields on
+`pact.stats()` are JavaScript `bigint`, not `number`. A naive
+`JSON.stringify(pact.stats())` throws `TypeError: Do not know how to serialize
+a BigInt`. If you need to serialize stats (e.g., to log or to ship to a
+dashboard), pass a replacer:
+
+```ts
+const safe = JSON.stringify(pact.stats(), (_, v) =>
+  typeof v === "bigint" ? v.toString() : v,
+);
+```
+
+This is the only place the SDK leaks `bigint` into a consumer-facing return
+value. Everything else is plain JSON-safe types.
+
 ## Verification
 
 After integrating, run this one-liner from the project root:
