@@ -9,7 +9,7 @@ export function SiteHeader() {
       <div className="max-w-7xl mx-auto px-4 h-14 flex items-center justify-between">
         <nav className="flex items-center gap-6">
           <Link href="/" className="font-serif text-lg text-[#B87333] hover:no-underline">
-            Pact Market
+            Pact Network
           </Link>
           <Link href="/endpoints" className="text-sm text-[#8a7a70] hover:text-[#f5f0eb]">
             Endpoints

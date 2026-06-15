@@ -131,13 +131,14 @@ describe("addresses — Base chain DEPLOYMENTS (WP-BASE T2)", () => {
     expect(d.settler).toBe("0xe461CE50ef53BFC10945B101FB94b11Ec5eB591f");
   });
 
-  it("Base Mainnet entry exists with null contract addresses (pre-deploy placeholder)", () => {
+  it("Base Mainnet entry exists with deployed contract addresses", () => {
     const d = DEPLOYMENTS[8453];
     expect(d).toBeDefined();
     expect(d.chainId).toBe(8453);
     expect(d.usdc).toBe("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913");
-    expect(d.registry).toBeNull();
-    expect(d.pool).toBeNull();
-    expect(d.settler).toBeNull();
+    // Deployed on Base mainnet (8453) 2026-06-04, deploy block 46880730.
+    expect(d.registry).toBe("0x8cf7Dd83877a6a254bf05E31A79d50bC7169221D");
+    expect(d.pool).toBe("0xA3245C40d9C8448eeA03847CD2BFdDe41f7c14A4");
+    expect(d.settler).toBe("0x21adb7C1aD28b332661DaB8d52d765610dBF162A");
   });
 });
