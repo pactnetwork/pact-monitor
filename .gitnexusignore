@@ -1,0 +1,4 @@
+# GitNexus index exclusions — keep these in the repo but out of the code graph
+# (they are documentation/coordination, not source symbols). Reduces index cost.
+docs/
+.planning/

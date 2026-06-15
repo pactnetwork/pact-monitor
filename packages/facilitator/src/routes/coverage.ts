@@ -238,14 +238,15 @@ export async function registerCoverageRoute(c: Context): Promise<Response> {
   }
 
   // ---- (7) Compute the coverage math -------------------------------------
-  // On a covered breach the refund equals what the agent says it paid the
-  // merchant (`amountBaseUnits`), capped at the pool's per-call ceiling. In the
-  // VERIFIED path we additionally confirmed on-chain that the payee received AT
-  // LEAST `amountBaseUnits`; we still use the *claimed* amount (not the larger
+  // On a covered breach the refund is the canonical `principal + flatPremium`
+  // (agent-tasks#11): what the agent says it paid the merchant
+  // (`amountBaseUnits`) plus the premium just charged. In the VERIFIED path we
+  // additionally confirmed on-chain that the payee received AT LEAST
+  // `amountBaseUnits`; we still use the *claimed* amount (not the larger
   // chain-observed delta) so the refund the CLI is told to expect matches what
   // it claimed, not an unrelated bigger transfer in the same tx. In the
   // UNVERIFIED path there's nothing to cross-check against — the on-chain
-  // hourly exposure cap (and the $1/call imputed-cost ceiling) is the bound.
+  // hourly exposure cap is the bound that protects the pool.
   const outcome = verdictToOutcome(body.verdict);
   const math = computeCoverage(
     outcome,

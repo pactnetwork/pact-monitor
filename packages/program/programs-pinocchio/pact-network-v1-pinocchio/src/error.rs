@@ -69,6 +69,12 @@ pub enum PactError {
     /// token transfer. Cleared by `pause_protocol(0)` from the protocol
     /// authority. Mainnet-launch addition.
     ProtocolPaused = 6032,
+    /// 6033 — supplied SettlementAuthority is not the canonical
+    /// [b"settlement_authority"] PDA, or is not owned by this program.
+    /// Same vuln class as `InvalidProtocolConfig`/`InvalidTreasury`:
+    /// `settle_batch` must prove the account is the canonical, program-owned
+    /// singleton BEFORE trusting its `signer`/`bump` fields (SOL-01).
+    InvalidSettlementAuthority = 6033,
 }
 
 impl From<PactError> for ProgramError {

@@ -2,7 +2,7 @@ import { Connection, PublicKey } from "@solana/web3.js";
 import {
   getAgentInsurableState,
   getSettlementAuthorityPda,
-} from "@pact-network/protocol-v1-client";
+} from "@q3labs/pact-protocol-v1-client";
 import { loadOrCreateWallet } from "../lib/wallet.ts";
 import { resolveClusterConfig } from "../lib/solana.ts";
 import type { Envelope } from "../lib/envelope.ts";

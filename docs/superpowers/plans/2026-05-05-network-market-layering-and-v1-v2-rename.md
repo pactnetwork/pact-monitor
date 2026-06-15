@@ -23,7 +23,7 @@
 - `@pact-network/market-dashboard` is the human-facing surface for Market specifically.
 - Market is registered on-chain as an `integrator` on each endpoint it adds — earns the integrator share of every premium settled through its proxy.
 
-**Acceptance test:** another team — without touching the Market codebase — could install `@pact-network/wrap` + `@pact-network/protocol-v1-client`, register their own endpoint with their own integrator pubkey, and start collecting insured calls. That is the proof Pact Network core is real.
+**Acceptance test:** another team — without touching the Market codebase — could install `@pact-network/wrap` + `@q3labs/pact-protocol-v1-client`, register their own endpoint with their own integrator pubkey, and start collecting insured calls. That is the proof Pact Network core is real.
 
 ## 0. Context
 
@@ -67,7 +67,7 @@ Alternative crate name considered: `pact-protocol-v1-pinocchio` / `pact-protocol
 
 | Today | Target | Layer |
 |---|---|---|
-| `@pact-network/market-client` (Codama) | **`@pact-network/protocol-v1-client`** | Network rails |
+| `@pact-network/market-client` (Codama) | **`@q3labs/pact-protocol-v1-client`** | Network rails |
 | (no v2 client today; v2 has its own SDK at `@pact-network/insurance`) | rename to **`@pact-network/protocol-v2-client`** when it gets refreshed | Network rails |
 | `@pact-network/db` | unchanged | Network rails ✓ |
 | `@pact-network/settler` | unchanged | Network rails ✓ |
@@ -129,7 +129,7 @@ This lets clients/settler resolve the pool without re-deriving the PDA every cal
 
 ### 3.4 Off-chain ripple effects
 
-- **`@pact-network/protocol-v1-client`** (renamed Codama client): regen with new instruction signatures, expose `getCoveragePoolPda(endpointSlug)` helper.
+- **`@q3labs/pact-protocol-v1-client`** (renamed Codama client): regen with new instruction signatures, expose `getCoveragePoolPda(endpointSlug)` helper.
 - **Settler (#62):** before signing `settle_batch`, group events by `endpoint_slug`, derive pool PDAs, build the accounts list including one CoveragePool + USDC vault per unique slug in the batch. Update batcher to either (a) keep batches mixed but compute per-pool account groups, or (b) split batches by endpoint to keep account lists predictable. **Recommendation: (a) — keep batches mixed; the on-chain handler iterates events and resolves pools.**
 - **Indexer schema (#59):** `PoolState` table changes from singleton to one row per endpoint:
   ```prisma
@@ -212,7 +212,7 @@ Revoke any time: a "Stop insurance" button calls SPL Token `Revoke` directly. No
 ### 4.6 Off-chain ripple
 
 - **`@pact-network/wrap`** balance check: reads the agent's USDC ATA balance AND the ATA's `delegated_amount` (allowance remaining). Both must exceed the premium for the call to be insured.
-- **`@pact-network/protocol-v1-client`**: removes builders for `initialize_agent_wallet`, `deposit_usdc`, `request_withdrawal`, `execute_withdrawal`, `claim_refund`. Adds helper `buildApproveIx(agent, settlementAuthority, allowance)` — wraps the standard SPL Token Approve. Adds helper `getAgentInsurableState(agent)` — returns `{ ataBalance, allowance, eligible }`.
+- **`@q3labs/pact-protocol-v1-client`**: removes builders for `initialize_agent_wallet`, `deposit_usdc`, `request_withdrawal`, `execute_withdrawal`, `claim_refund`. Adds helper `buildApproveIx(agent, settlementAuthority, allowance)` — wraps the standard SPL Token Approve. Adds helper `getAgentInsurableState(agent)` — returns `{ ataBalance, allowance, eligible }`.
 - **Settler (#62)**: builds settle_batch txs using SettlementAuthority as delegate signer for the agent ATA → CoveragePool transfers; CoveragePool authority signer for the fan-out and refund transfers.
 - **Indexer (#59)**: per-agent stats now live in a denormalized `Agent` table fed by `CallRecord` aggregation. No on-chain `AgentWallet` to read.
 - **Dashboard (#60)**: `useAgentWallet` hook becomes `useAgentInsurableState` — reads ATA balance + allowance via SPL Token program calls. Removes `useRefundClaimer` (no auto-claim needed). Adds approve/re-approve/revoke buttons.
@@ -433,7 +433,7 @@ Mandatory before redeploy:
 
 ### 5.8 Off-chain ripple
 
-- **`@pact-network/protocol-v1-client`**: regen exposes new types (`FeeRecipient`, `FeeRecipientKind` enum) + helpers `defaultFeeRecipients(affiliateAta?)`, `validateFeeRecipients(recipients)`, `accountListForBatch(events)` (returns the de-duplicated tx accounts list, each endpoint's CoveragePool marked mutable, fee recipient ATAs/PDAs included).
+- **`@q3labs/pact-protocol-v1-client`**: regen exposes new types (`FeeRecipient`, `FeeRecipientKind` enum) + helpers `defaultFeeRecipients(affiliateAta?)`, `validateFeeRecipients(recipients)`, `accountListForBatch(events)` (returns the de-duplicated tx accounts list, each endpoint's CoveragePool marked mutable, fee recipient ATAs/PDAs included).
 - **Settler (#62)**: account-list builder iterates events, deduplicates `(kind, destination)` tuples across the batch, ensures each endpoint's CoveragePool vault is `mutable` (destination of premium-in AND source of fee payouts AND source of refunds within the same tx). Settler doesn't compute the split itself — the program reads the EndpointConfig fee_recipients array on-chain and does the channel-then-fan-out.
 - **Indexer schema (#59)**: switch from fixed `totalPoolLamports / totalTreasuryLamports / totalIntegratorLamports` columns to a generic per-recipient breakdown that tracks gross premium-in to the pool plus each non-pool outflow:
   ```prisma
@@ -506,7 +506,7 @@ This is the heaviest step. Three on-chain changes bundled into one program updat
 - C.3 **Implement per-endpoint pool refactor** (§3): seed change, EndpointConfig `coverage_pool` field, instruction signatures, handler logic
 - C.4 **Implement premium split + treasury** (§5): `Treasury` PDA + `initialize_treasury` instruction; `ProtocolConfig` defaults; `EndpointConfig` adds `integrator` + `pool_bps` + `treasury_bps` + `integrator_bps`; `register_endpoint` accepts split overrides; `update_endpoint_config` allows split updates; `settle_batch` computes three-way transfer per event
 - C.5 Update LiteSVM tests: existing 29 + new per-pool tests (§3.3) + new split tests (§5.6) + treasury init/double-init guards
-- C.6 TS client dir + name: `packages/market-client/` → `packages/protocol-v1-client/`, `@pact-network/market-client` → `@pact-network/protocol-v1-client`
+- C.6 TS client dir + name: `packages/market-client/` → `packages/protocol-v1-client/`, `@pact-network/market-client` → `@q3labs/pact-protocol-v1-client`
 - C.7 Codama regen against new IDL: new builders for `initialize_treasury`, updated `register_endpoint` signature, helpers `getCoveragePoolPda(slug)` + `getTreasuryPda()`
 - C.8 `cargo build-sbf` clean
 - C.9 Redeploy to devnet (same program ID `DhWibM…` if upgrade authority intact)
@@ -542,7 +542,7 @@ This is the heaviest step. Three on-chain changes bundled into one program updat
 *PR #62 (settler):*
 - Rebase on new #48 base
 - Drop the copied `packages/market-client/` directory (the Wave 2 TODO)
-- Update workspace dep: `@pact-network/market-client` → `@pact-network/protocol-v1-client`
+- Update workspace dep: `@pact-network/market-client` → `@q3labs/pact-protocol-v1-client`
 - Update all imports in `apps/settler/src/**`
 - **Per-pool account-list builder** (§3.7): group batch events by slug, derive pool PDAs, append one CoveragePool + USDC vault per unique slug
 - **Per-integrator account-list builder** (§5.5): resolve each endpoint's `integrator` pubkey + USDC ATA; append per unique integrator in batch
@@ -555,13 +555,13 @@ This is the heaviest step. Three on-chain changes bundled into one program updat
 - **Update `Settlement` schema for split totals** (§5.7) + add `IntegratorEarnings` aggregate table
 - Migration applies to empty devnet DB cleanly
 - Add aggregate views for dashboard hero stats (across pools, total treasury earned, top integrators)
-- `ops.controller.ts`: import path → `@pact-network/protocol-v1-client`
+- `ops.controller.ts`: import path → `@q3labs/pact-protocol-v1-client`
 
 *PR #60 (dashboard → market-dashboard):*
 - Rebase on new #48 base; package now at `packages/market-dashboard/`
 - Update `package.json` name → `@pact-network/market-dashboard`
 - Update Vercel project name + env var prefixes
-- Replace `lib/solana.ts` placeholder builders with `@pact-network/protocol-v1-client` imports
+- Replace `lib/solana.ts` placeholder builders with `@q3labs/pact-protocol-v1-client` imports
 - `/endpoints` table: add "Pool balance" + "Integrator" + "Split" columns
 - `/` hero stats: aggregate-across-pools + Treasury earned + top integrator earnings
 - Per-agent page unchanged (agents only see their own premiums + refunds)

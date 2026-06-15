@@ -1,6 +1,6 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { INestApplication } from "@nestjs/common";
-import * as request from "supertest";
+import request from "supertest";
 import { CallsController } from "../src/api/calls.controller";
 import { PrismaService } from "../src/prisma/prisma.service";
 
@@ -52,7 +52,8 @@ const makePrisma = () => {
       findMany: jest.fn(async (args: { take: number; orderBy: unknown }) =>
         calls.slice(0, args.take),
       ),
-      findUnique: jest.fn(async ({ where: { callId } }) => {
+      findUnique: jest.fn(async ({ where }) => {
+        const callId = where.network_callId?.callId ?? where.callId;
         if (callId === "call-001") return makeCallRow();
         if (callId === "call-other-batch")
           return makeCallRow({

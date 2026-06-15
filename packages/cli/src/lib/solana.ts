@@ -2,7 +2,7 @@ import { Connection, PublicKey } from "@solana/web3.js";
 import {
   PROGRAM_ID,
   USDC_MINT_MAINNET,
-} from "@pact-network/protocol-v1-client";
+} from "@q3labs/pact-protocol-v1-client";
 
 // v0.1.0 is mainnet-only — the SDK is the single source of truth for the
 // program ID (baked to 5bCJcdWdK… by develop's PR #71) and the USDC mint.

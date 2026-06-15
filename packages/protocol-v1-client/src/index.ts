@@ -1,5 +1,5 @@
 /**
- * `@pact-network/protocol-v1-client` — TypeScript client for
+ * `@q3labs/pact-protocol-v1-client` — TypeScript client for
  * `pact-network-v1-pinocchio`.
  *
  * Exports:

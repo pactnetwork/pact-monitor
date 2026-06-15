@@ -39,6 +39,11 @@ export interface WrapFetchOptions {
   callId?: string;
   /** Optional pool slug surfaced in X-Pact-Pool. */
   pool?: string;
+  /**
+   * Network identifier stamped onto SettlementEvent (WP-MN-03a). Optional;
+   * defaults to "solana-devnet" if not provided.
+   */
+  network?: string;
 }
 
 export interface WrapFetchResult {
@@ -170,6 +175,7 @@ export async function wrapFetch(opts: WrapFetchOptions): Promise<WrapFetchResult
     latencyMs,
     outcome: classified.outcome,
     ts: new Date(tEnd).toISOString(),
+    network: opts.network ?? "solana-devnet",
   };
   try {
     void Promise.resolve(opts.sink.publish(event)).catch(() => {

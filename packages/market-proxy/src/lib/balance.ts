@@ -21,6 +21,7 @@ import {
   createDefaultBalanceCheck,
   type BalanceCheck,
 } from "@pact-network/wrap";
+import type { ChainAdapter } from "@pact-network/shared";
 
 export interface BalanceCheckOptions {
   /** Solana JSON-RPC endpoint URL. */
@@ -48,6 +49,35 @@ export function createBalanceCheck(opts: BalanceCheckOptions): BalanceCheck {
     cacheTtlMs: opts.cacheTtlMs,
     resolveAta,
   });
+}
+
+/**
+ * Adapter-backed BalanceCheck — delegates to adapter.checkAgentEligibility
+ * and translates the EligibilityCheckResult into wrap's BalanceCheckResult
+ * shape so proxy.ts can pass it directly to wrapFetch.
+ *
+ * Reason mapping: adapter uses "no_account"; wrap uses "no_ata". All other
+ * reasons ("insufficient_balance", "insufficient_allowance") are identical.
+ */
+export function adapterToBalanceCheck(adapter: ChainAdapter): BalanceCheck {
+  return {
+    async check(walletPubkey: string, requiredLamports: bigint) {
+      const result = await adapter.checkAgentEligibility(walletPubkey, requiredLamports);
+      if (result.eligible) {
+        return {
+          eligible: true,
+          ataBalance: result.balance,
+          allowance: result.allowance,
+        };
+      }
+      return {
+        eligible: false,
+        reason: result.reason === "no_account" ? ("no_ata" as const) : result.reason,
+        ataBalance: result.balance,
+        allowance: result.allowance,
+      };
+    },
+  };
 }
 
 /**

@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    "types": ["node"],
+    "declaration": true,
+    // Clear the base source-aliases so @pact-network/* deps resolve from
+    // their built dist .d.ts (via node_modules) rather than being pulled
+    // into this package's program (TS6059). Deps build first via _build:deps.
+    "paths": {}
+  },
+  "include": ["src"],
+  "exclude": ["node_modules", "dist", "src/**/__tests__/**"]
+}

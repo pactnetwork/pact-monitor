@@ -1,5 +1,8 @@
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  // Required for the "view" keyword used by settlement_reorg_audit (WP-MN-04 T3).
+  // Remove once Prisma stabilises views in a future release.
+  previewFeatures = ["views"]
 }
 
 datasource db {
@@ -11,7 +14,8 @@ datasource db {
 // and per-recipient settlement breakdown.
 
 model Endpoint {
-  slug                       String   @id @db.VarChar(16)
+  slug                       String   @db.VarChar(16)
+  network                    String   @default("solana-devnet") @db.VarChar(24)
   flatPremiumLamports        BigInt
   percentBps                 Int
   slaLatencyMs               Int
@@ -25,6 +29,8 @@ model Endpoint {
   lastUpdated                DateTime
   calls                      Call[]
   poolState                  PoolState?
+
+  @@id([network, slug])
 }
 
 model Agent {
@@ -36,11 +42,21 @@ model Agent {
   callCount             BigInt     @default(0)
   lastCallAt            DateTime?
   createdAt             DateTime
+  // Optional per-agent refund-push webhook. The indexer POSTs settled calls
+  // here (signed ed25519 with the indexer's key; the agent verifies a pinned
+  // pubkey — NO shared secret column). Registered via the bs58-ed25519
+  // signed POST /api/agents/:pubkey/webhook. All nullable/defaulted →
+  // additive, non-breaking migration.
+  webhookUrl            String?
+  webhookRegisteredAt   DateTime?
+  webhookFailCount      Int        @default(0)
+  webhookLastDeliveryAt DateTime?
   calls                 Call[]
 }
 
 model Call {
-  callId          String   @id @db.VarChar(36)
+  callId          String   @db.VarChar(36)
+  network         String   @default("solana-devnet") @db.VarChar(24)
   agentPubkey     String   @db.VarChar(44)
   endpointSlug    String   @db.VarChar(16)
   premiumLamports BigInt
@@ -59,55 +75,66 @@ model Call {
   signature       String   @db.VarChar(88)
 
   agent    Agent    @relation(fields: [agentPubkey], references: [pubkey])
-  endpoint Endpoint @relation(fields: [endpointSlug], references: [slug])
+  endpoint Endpoint @relation(fields: [network, endpointSlug], references: [network, slug])
 
-  @@index([agentPubkey, ts(sort: Desc)])
-  @@index([endpointSlug, ts(sort: Desc)])
+  @@id([network, callId])
+  @@index([network, agentPubkey, ts(sort: Desc)])
+  @@index([network, endpointSlug, ts(sort: Desc)])
   @@index([ts(sort: Desc)])
-  @@index([breach, ts(sort: Desc)])
+  @@index([network, breach, ts(sort: Desc)])
 }
 
 model Settlement {
-  signature             String                     @id @db.VarChar(88)
+  signature             String                     @db.VarChar(88)
+  network               String                     @default("solana-devnet") @db.VarChar(24)
   batchSize             Int
   totalPremiumsLamports BigInt
   totalRefundsLamports  BigInt
   ts                    DateTime
   shares                SettlementRecipientShare[]
+
+  @@id([network, signature])
 }
 
 // Per-recipient breakdown of a settlement batch's fee outflows.
 // recipientKind ∈ FeeRecipientKind: 0=Treasury, 1=AffiliateAta, 2=AffiliatePda.
 model SettlementRecipientShare {
   id              String     @id @default(cuid())
+  network         String     @default("solana-devnet") @db.VarChar(24)
   settlementSig   String     @db.VarChar(88)
   recipientKind   Int
   recipientPubkey String     @db.VarChar(44)
   amountLamports  BigInt
-  settlement      Settlement @relation(fields: [settlementSig], references: [signature])
+  settlement      Settlement @relation(fields: [network, settlementSig], references: [network, signature])
 
-  @@index([recipientPubkey])
-  @@index([settlementSig])
+  @@index([network, recipientPubkey])
+  @@index([network, settlementSig])
 }
 
 // Per-endpoint pool state — replaces the old singleton PoolState.
 model PoolState {
-  endpointSlug           String   @id @db.VarChar(16)
+  endpointSlug           String   @db.VarChar(16)
+  network                String   @default("solana-devnet") @db.VarChar(24)
   currentBalanceLamports BigInt
   totalDepositsLamports  BigInt
   totalPremiumsLamports  BigInt   // gross in, before fees
   totalFeesPaidLamports  BigInt   // sum of fee outflows
   totalRefundsLamports   BigInt
   lastUpdated            DateTime
-  endpoint               Endpoint @relation(fields: [endpointSlug], references: [slug])
+  endpoint               Endpoint @relation(fields: [network, endpointSlug], references: [network, slug])
+
+  @@id([network, endpointSlug])
 }
 
 // Lifetime earnings per fee recipient — used for integrator leaderboards.
 model RecipientEarnings {
-  recipientPubkey        String   @id @db.VarChar(44)
+  recipientPubkey        String   @db.VarChar(44)
+  network                String   @default("solana-devnet") @db.VarChar(24)
   recipientKind          Int
   lifetimeEarnedLamports BigInt
   lastUpdated            DateTime
+
+  @@id([network, recipientPubkey])
 }
 
 model DemoAllowlist {
@@ -120,4 +147,34 @@ model OperatorAllowlist {
   walletPubkey String   @id @db.VarChar(44)
   addedAt      DateTime @default(now())
   note         String?
+}
+
+/// Per-network config-sync cursor (multi-EVM WP T3). Lets the indexer's 5-min
+/// EndpointConfig refresh resume its EndpointRegistered log scan from the last
+/// finalized block it scanned, instead of re-walking from `deploymentBlock`
+/// every tick (cost otherwise scales with chain HEIGHT). `lastScannedBlock` is
+/// the highest finalized block fully scanned in the last successful pass; the
+/// next pass resumes at `lastScannedBlock + 1`. Cold start (no row) walks from
+/// the chain's `deploymentBlock`.
+model SyncCursor {
+  network          String   @id @db.VarChar(24)
+  lastScannedBlock BigInt
+  updatedAt        DateTime @updatedAt
+}
+
+/// Read-only audit view of settlements flagged by ReorgService.runReconcile
+/// as potentially orphaned (DB Call row exists but no canonical-chain
+/// CallSettled event in the last reconcile window). Populated externally;
+/// the static SELECT FALSE below is the schema-shape definition only.
+/// Local docker only — production migration is a separate ops step per Tu's
+/// directive (2026-05-20).
+view settlement_reorg_audit {
+  network    String   @db.VarChar(24)
+  callId     String   @db.VarChar(36)
+  signature  String   @db.VarChar(88)
+  amount     BigInt
+  detectedAt DateTime
+
+  @@id([network, callId])
+  @@map("settlement_reorg_audit")
 }

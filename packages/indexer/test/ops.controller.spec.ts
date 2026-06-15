@@ -1,6 +1,6 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { INestApplication, UnauthorizedException } from "@nestjs/common";
-import * as request from "supertest";
+import request from "supertest";
 import { OpsController } from "../src/ops/ops.controller";
 import { OpsDisabledInProdGuard } from "../src/ops/ops-disabled-in-prod.guard";
 import { OpsService } from "../src/ops/ops.service";

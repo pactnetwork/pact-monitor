@@ -14,6 +14,8 @@ export const PROVIDER_HOSTNAMES: Record<string, string[]> = {
   jupiter: ["api.jup.ag", "lite-api.jup.ag", "quote-api.jup.ag"],
   elfa: ["api.elfa.ai"],
   fal: ["fal.run", "queue.fal.run"],
+  moralis: ["deep-index.moralis.io"],
+  covalent: ["api.covalenthq.com", "api.goldrush.dev"],
   // Demo upstream — so `pact https://dummy.pactnetwork.io/quote/AAPL?fail=1`
   // resolves to slug `dummy` and routes via /v1/dummy/*. See docs/premium-coverage-mvp.md.
   dummy: ["dummy.pactnetwork.io"],

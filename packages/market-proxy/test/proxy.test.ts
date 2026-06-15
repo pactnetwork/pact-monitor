@@ -21,6 +21,7 @@ import { MemoryEventSink, type BalanceCheck } from "@pact-network/wrap";
 
 const defaultEndpoint = {
   slug: "helius",
+  network: "solana-devnet",
   flatPremiumLamports: 500n,
   percentBps: 10,
   slaLatencyMs: 1200,
@@ -31,7 +32,7 @@ const defaultEndpoint = {
   displayName: "Helius RPC",
 };
 
-const mockRegistry = { get: vi.fn(), size: 1 };
+const mockRegistry = { get: vi.fn(), getNetworksForSlug: vi.fn().mockResolvedValue([]), size: 1 };
 const mockDemoAllowlist = { has: vi.fn() };
 const mockBalanceCheck: BalanceCheck = {
   check: vi.fn(),
@@ -45,6 +46,10 @@ vi.mock("../src/lib/context.js", () => ({
     operatorAllowlist: { has: vi.fn().mockResolvedValue(false) },
     balanceCheck: mockBalanceCheck,
     sink: memorySink,
+    // WP-MN-03b T4: legacy-direct=true so existing tests keep using
+    // mockBalanceCheck directly without needing an adapter stub.
+    adapters: new Map(),
+    legacyDirectSolana: true,
   })),
   initContext: vi.fn(),
   setContext: vi.fn(),

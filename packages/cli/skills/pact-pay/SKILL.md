@@ -49,9 +49,11 @@ endpoints not on that list.
   environment. If it's not set, the call returns
   `{"status":"client_error","body":{"error":"v0.1.0 is mainnet-only and requires PACT_MAINNET_ENABLED=1 (closed beta gate)"}}` —
   tell the user to `export PACT_MAINNET_ENABLED=1` and stop; do not retry.
-- **Testing / no real money:** add a sandbox flag — `pact pay curl --sandbox https://...` —
+- **Testing / no real money:** add a sandbox flag — `pact pay --sandbox curl https://...` —
   which routes to a localnet wallet auto-funded with fake SOL/USDC and bypasses
-  the mainnet gate. Use this when the user just wants to see it work.
+  the mainnet gate. `--sandbox` is a `pay` global flag, so it must come before the
+  wrapped tool (`pact pay --sandbox curl ...`, not `pact pay curl --sandbox ...`).
+  Use this when the user just wants to see it work.
 - **First run on this Mac:** the first `pact pay` triggers pay.sh's `pay setup`
   (a Touch ID prompt to store a Solana keypair in the Keychain) — `pact pay`
   prints a one-line heads-up to stderr first, so it's expected, not an error.
