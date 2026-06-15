@@ -127,7 +127,7 @@ config validation throw.
 | `pact.policy()` | Agent insurable state (ATA balance, allowance, eligibility) + indexer aggregates. |
 | `pact.claims({since?,limit?})` | Settled refund records (from the indexer). |
 | `pact.estimate(host)` | Quote from the on-chain `EndpointConfig`. |
-| `pact.stats()` | Local buffer aggregate (sync). |
+| `pact.stats()` | Local buffer aggregate (sync). Lamport totals are `bigint` — `JSON.stringify` will throw `TypeError: Do not know how to serialize a BigInt` unless you pass a replacer. |
 | `pact.on(event, cb)` | `failure` `refund` `billed` `low-balance` `degraded`. |
 | `pact.shutdown()` | Optional hard flush (CLIs/serverless/tests). |
 
