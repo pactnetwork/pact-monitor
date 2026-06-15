@@ -157,7 +157,7 @@ to allow the `?pact_wallet=` demo path. GCP alternative: deploy the same Dockerf
 - Public repo: this repo, branch `feat/arbitrum-sepolia-deploy` -> PR #267 to `develop`
 - Live dashboard: https://market-dashboard-production-0489.up.railway.app
 - Settle tx (insured-call breach refund): https://sepolia.arbiscan.io/tx/0x4754ee52f0fd04bb3383897a4ae772f3a6dae1c331ad167565e6499db310b6b1
-- Writeup: SUBMISSION.md · Demo video: _TBD (yours)_
+- Writeup: this doc + the EVM section in `README.md` · Demo video: _TBD (yours)_
 
 ## Cleanup
 
