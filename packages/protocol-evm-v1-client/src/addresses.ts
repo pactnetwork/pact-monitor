@@ -13,7 +13,7 @@
  */
 import { getAddress, isAddress, type Address } from "viem";
 
-import { ARC_TESTNET_CHAIN_ID, ARC_TESTNET_USDC, BASE_SEPOLIA_CHAIN_ID, BASE_SEPOLIA_USDC, BASE_MAINNET_CHAIN_ID, BASE_MAINNET_USDC } from "./constants.js";
+import { ARC_TESTNET_CHAIN_ID, ARC_TESTNET_USDC, BASE_SEPOLIA_CHAIN_ID, BASE_SEPOLIA_USDC, BASE_MAINNET_CHAIN_ID, BASE_MAINNET_USDC, ARBITRUM_SEPOLIA_CHAIN_ID, ARBITRUM_SEPOLIA_USDC } from "./constants.js";
 
 /** Arc Testnet chain id (registry key). */
 export const ARC_TESTNET = ARC_TESTNET_CHAIN_ID;
@@ -58,6 +58,15 @@ export const DEPLOYMENTS: Record<number, PactDeployment> = {
     registry: "0x8cf7Dd83877a6a254bf05E31A79d50bC7169221D",
     pool: "0xA3245C40d9C8448eeA03847CD2BFdDe41f7c14A4",
     settler: "0x21adb7C1aD28b332661DaB8d52d765610dBF162A",
+  },
+  [ARBITRUM_SEPOLIA_CHAIN_ID]: {
+    chainId: ARBITRUM_SEPOLIA_CHAIN_ID,
+    usdc: ARBITRUM_SEPOLIA_USDC,
+    // Deployed on Arbitrum Sepolia (421614) 2026-06-12, deploy block 276425280.
+    // Arbitrum Open House London buildathon. EIP-55 checksummed.
+    registry: "0x79A91E5965094266d221Aaef8E66d6C364819edb",
+    pool: "0xe685b4d5d2AaF0a54f988AF6F44Ca799Cb0660cc",
+    settler: "0x8b8D5baF16bB15D5950d2C4cC76879D5b8a74043",
   },
 };
 
