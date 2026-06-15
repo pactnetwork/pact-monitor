@@ -31,6 +31,7 @@ import {
   PROGRAM_ID,
   USDC_MINT_MAINNET,
   USDC_MINT_DEVNET,
+  resolveDevnetProgramId,
 } from "@q3labs/pact-protocol-v1-client";
 
 export type Network = "mainnet" | "devnet" | "localnet";
@@ -55,8 +56,10 @@ export const NETWORK_CONFIGS: Record<Network, NetworkConfig> = {
   devnet: {
     // No static default: the devnet deploy is live for reads but its binary's
     // declare_id! is the mainnet id, so settle_batch reverts InvalidSeeds
-    // (B1 NOT resolved). Pass programId explicitly to opt in. See header.
-    programId: null,
+    // (B1 NOT resolved). Pass programId explicitly to opt in, or — post-FS9
+    // redeploy (agent-tasks#15) — export PACT_DEVNET_PROGRAM_ID=5jBQb7fL… and
+    // resolveDevnetProgramId() picks it up here. Stays null when unset.
+    programId: resolveDevnetProgramId()?.toBase58() ?? null,
     usdcMint: USDC_MINT_DEVNET.toBase58(),
     proxyBaseUrl: "https://market.pactnetwork.io",
     indexerBaseUrl: "https://indexer.pactnetwork.io",

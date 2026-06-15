@@ -49,6 +49,27 @@ export const PROGRAM_ID_DEVNET = new PublicKey(
 );
 
 /**
+ * Resolve the devnet program ID from the `PACT_DEVNET_PROGRAM_ID` environment
+ * variable, falling back to `null` when it is unset.
+ *
+ * FS9 (agent-tasks#15): until devnet is redeployed from a binary whose
+ * `declare_id!` == its deploy address, `settle_batch` reverts `InvalidSeeds`
+ * there (see {@link PROGRAM_ID_DEVNET}). We therefore do NOT hardcode a devnet
+ * default — operators opt in explicitly by exporting
+ * `PACT_DEVNET_PROGRAM_ID=5jBQb7fL…` once the redeploy is settlement-proven.
+ * Returns `null` in browser bundles (no `process`) so the SDK config layer can
+ * keep its existing null default. Mainnet (`PROGRAM_ID`) is unaffected.
+ */
+export function resolveDevnetProgramId(): PublicKey | null {
+  const env =
+    typeof process !== "undefined"
+      ? process.env?.PACT_DEVNET_PROGRAM_ID
+      : undefined;
+  const trimmed = env?.trim();
+  return trimmed ? new PublicKey(trimmed) : null;
+}
+
+/**
  * Orphaned program ID from an earlier deploy. Kept here only so off-chain log
  * scrapers and migration tooling can recognise legacy traffic. New code MUST
  * NOT send transactions to this program ID.

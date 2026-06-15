@@ -23,7 +23,18 @@ pinocchio::entrypoint!(process_instruction);
 // `protocol-v1-client/src/constants.ts::PROGRAM_ID` to a per-environment
 // pubkey, then rebuilding the SBF binary. The smoke harness at
 // `scripts/smoke-tier2/01-deploy.sh` does this automatically with a revert trap.
+//
+// FS9 (agent-tasks#15): the devnet deploy `5jBQ…` was built from a binary whose
+// `declare_id!` was this MAINNET id, so PDAs derived from `crate::ID` did not
+// match the deploy address and `settle_batch` reverted `InvalidSeeds`. The
+// build-time `devnet-id` cargo feature emits the devnet program ID instead, so
+// `cargo build-sbf --features bpf-entrypoint,devnet-id` produces a binary whose
+// `declare_id!` == its devnet deploy address. The DEFAULT build (no feature)
+// stays mainnet `5bCJ…` — never ship a devnet-id binary to mainnet.
+#[cfg(not(feature = "devnet-id"))]
 solana_address::declare_id!("5bCJcdWdKLJ7arrMVMFh3z99rQDxV785fnD9XGcr3xwc");
+#[cfg(feature = "devnet-id")]
+solana_address::declare_id!("5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5");
 
 /// Discriminator allocation policy: see `discriminator.rs`. Slots 0, 5, 6, 7,
 /// 8, 11 are intentionally left as gaps (deleted instructions reserve their
