@@ -38,17 +38,23 @@ export interface NetworkStats {
 @Injectable()
 export class StatsService {
   private cache: NetworkStats | null = null;
+  private _cacheKey: string = "__all__";
   private cacheExpiresAt = 0;
   private readonly CACHE_TTL_MS = 5_000;
   private readonly TOP_INTEGRATORS_N = 10;
 
   constructor(private readonly prisma: PrismaService) {}
 
-  async getStats(): Promise<NetworkStats> {
+  async getStats(opts: { network?: string } = {}): Promise<NetworkStats> {
     const now = Date.now();
-    if (this.cache && now < this.cacheExpiresAt) {
+    // Cache key includes the network filter so per-network queries don't
+    // collide with the aggregate result in the shared cache slot.
+    const cacheKey = opts.network ?? "__all__";
+    if (this.cache && now < this.cacheExpiresAt && this._cacheKey === cacheKey) {
       return this.cache;
     }
+
+    const networkFilter = opts.network ? { network: opts.network } : {};
 
     const [
       callAgg,
@@ -60,19 +66,20 @@ export class StatsService {
       topIntegrators,
     ] = await Promise.all([
       this.prisma.call.aggregate({
+        where: networkFilter,
         _count: { callId: true },
         _sum: { premiumLamports: true, refundLamports: true },
       }),
-      this.prisma.call.count({ where: { breach: true } }),
-      this.prisma.endpoint.count(),
+      this.prisma.call.count({ where: { breach: true, ...networkFilter } }),
+      this.prisma.endpoint.count({ where: networkFilter }),
       this.prisma.agent.count(),
-      this.prisma.poolState.findMany(),
+      this.prisma.poolState.findMany({ where: networkFilter }),
       this.prisma.recipientEarnings.aggregate({
-        where: { recipientKind: FEE_RECIPIENT_TREASURY },
+        where: { recipientKind: FEE_RECIPIENT_TREASURY, ...networkFilter },
         _sum: { lifetimeEarnedLamports: true },
       }),
       this.prisma.recipientEarnings.findMany({
-        where: { recipientKind: { not: FEE_RECIPIENT_TREASURY } },
+        where: { recipientKind: { not: FEE_RECIPIENT_TREASURY }, ...networkFilter },
         orderBy: { lifetimeEarnedLamports: "desc" },
         take: this.TOP_INTEGRATORS_N,
       }),
@@ -128,6 +135,7 @@ export class StatsService {
     };
 
     this.cache = stats;
+    this._cacheKey = cacheKey;
     this.cacheExpiresAt = now + this.CACHE_TTL_MS;
     return stats;
   }

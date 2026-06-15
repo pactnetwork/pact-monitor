@@ -56,7 +56,7 @@ The codebase is split into two layers. **Every contributor must respect this rul
 
 **Wrap-mechanism layering rule:** the *protocol* of wrapping a fetch call (time it, check balance, forward, classify, emit event, attach `X-Pact-*` headers) lives in Network (`@pact-network/wrap`). *Per-endpoint classifier plugins* (how a JSON-RPC response vs a REST 4xx maps to ok/breach/no-charge) live in the consuming interface — Market ships its 5 provider plugins; future BYO integrators ship their own.
 
-**Acceptance test for the layering:** an external integrator can install `@pact-network/wrap` + `@pact-network/protocol-v1-client`, register their endpoint with their own affiliate pubkey, and start collecting insured calls — without touching any Market code. If that works, Network rails are real.
+**Acceptance test for the layering:** an external integrator can install `@pact-network/wrap` + `@q3labs/pact-protocol-v1-client`, register their endpoint with their own affiliate pubkey, and start collecting insured calls — without touching any Market code. If that works, Network rails are real.
 
 ---
 
@@ -153,7 +153,7 @@ A separate Pinocchio crate at `packages/program/programs-pinocchio/pact-market-p
 
 **Security invariants** (per PRD §11): all 7 hold, plus invariant 4 (hourly exposure cap) is enforced in-program via the new fields above.
 
-**Build target:** Pinocchio 0.10. Codama-generated TS client published as `@pact-network/protocol-v1-client` (renamed from `@pact-network/pact-market-client`).
+**Build target:** Pinocchio 0.10. Codama-generated TS client published as `@q3labs/pact-protocol-v1-client` (renamed from `@pact-network/pact-market-client`).
 
 #### 3.1.1 Per-endpoint coverage pools
 

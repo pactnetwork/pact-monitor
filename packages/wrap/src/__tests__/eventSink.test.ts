@@ -3,7 +3,9 @@ import {
   MemoryEventSink,
   HttpEventSink,
   PubSubEventSink,
+  RedisStreamsEventSink,
   type PubSubTopicPublisher,
+  type RedisStreamPublisher,
 } from "../eventSink";
 import type { SettlementEvent } from "../types";
 
@@ -112,7 +114,22 @@ describe("PubSubEventSink", () => {
     const topic: PubSubTopicPublisher = { publishMessage };
     const sink = new PubSubEventSink({ topic });
     await sink.publish(sampleEvent);
-    expect(publishMessage).toHaveBeenCalledWith({ json: sampleEvent });
+    expect(publishMessage).toHaveBeenCalledWith({
+      json: sampleEvent,
+      attributes: undefined,
+    });
+  });
+
+  it("publishes a `network` Pub/Sub attribute when the event carries one", async () => {
+    const publishMessage = vi.fn().mockResolvedValue("msg-456");
+    const topic: PubSubTopicPublisher = { publishMessage };
+    const sink = new PubSubEventSink({ topic });
+    const evt = { ...sampleEvent, network: "base-mainnet" };
+    await sink.publish(evt);
+    expect(publishMessage).toHaveBeenCalledWith({
+      json: evt,
+      attributes: { network: "base-mainnet" },
+    });
   });
 
   it("swallows publish failures and reports via onError", async () => {
@@ -130,6 +147,48 @@ describe("PubSubEventSink", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const publishMessage = vi.fn().mockRejectedValue(new Error("x"));
     const sink = new PubSubEventSink({ topic: { publishMessage } });
+    await sink.publish(sampleEvent);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+});
+
+describe("RedisStreamsEventSink", () => {
+  it("publishes via publisher.publish with default stream name", async () => {
+    const publish = vi.fn().mockResolvedValue("1700000000-0");
+    const publisher: RedisStreamPublisher = { publish };
+    const sink = new RedisStreamsEventSink({ publisher });
+    await sink.publish(sampleEvent);
+    expect(publish).toHaveBeenCalledWith("pact-settle-events", sampleEvent);
+  });
+
+  it("honors a custom stream name", async () => {
+    const publish = vi.fn().mockResolvedValue("1700000000-0");
+    const publisher: RedisStreamPublisher = { publish };
+    const sink = new RedisStreamsEventSink({
+      publisher,
+      stream: "custom-stream-name",
+    });
+    await sink.publish(sampleEvent);
+    expect(publish).toHaveBeenCalledWith("custom-stream-name", sampleEvent);
+  });
+
+  it("swallows publish failures and reports via onError", async () => {
+    const publish = vi.fn().mockRejectedValue(new Error("redis down"));
+    const onError = vi.fn();
+    const sink = new RedisStreamsEventSink({
+      publisher: { publish },
+      onError,
+    });
+    await expect(sink.publish(sampleEvent)).resolves.toBeUndefined();
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect((onError.mock.calls[0][0] as Error).message).toBe("redis down");
+  });
+
+  it("default onError logs to console.warn", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const publish = vi.fn().mockRejectedValue(new Error("x"));
+    const sink = new RedisStreamsEventSink({ publisher: { publish } });
     await sink.publish(sampleEvent);
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();

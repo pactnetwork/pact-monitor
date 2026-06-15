@@ -245,7 +245,8 @@ describe("facilitator app", () => {
     };
     expect(json.status).toBe("settlement_pending");
     expect(json.premiumBaseUnits).toBe("1000");
-    expect(json.refundBaseUnits).toBe("1000000");
+    // canonical refund = amountPaid (1_000_000) + premium (1_000) = 1_001_000
+    expect(json.refundBaseUnits).toBe("1001000");
     expect(json.poolSlug).toBe("pay-default");
     expect(json.outcome).toBe("server_error");
     expect(json.observedPaymentBaseUnits).toBe("1000000");
@@ -259,7 +260,8 @@ describe("facilitator app", () => {
     expect(ev.endpointSlug).toBe("pay-default");
     expect(ev.agentPubkey).toBe(AGENT);
     expect(ev.premiumLamports).toBe("1000");
-    expect(ev.refundLamports).toBe("1000000");
+    // canonical refund = amountPaid (1_000_000) + premium (1_000) = 1_001_000
+    expect(ev.refundLamports).toBe("1001000");
     expect(ev.outcome).toBe("server_error");
     expect(ev.payee).toBe(PAYEE);
     expect(ev.resource).toBe(RESOURCE);
@@ -314,7 +316,8 @@ describe("facilitator app", () => {
     expect(out.status).toBe("settlement_pending");
     expect(out.verified).toBe(false);
     expect(out.premiumBaseUnits).toBe("1000");
-    expect(out.refundBaseUnits).toBe("1000000");
+    // canonical refund = amountPaid (1_000_000) + premium (1_000) = 1_001_000
+    expect(out.refundBaseUnits).toBe("1001000");
     expect(out.observedPaymentBaseUnits).toBeNull();
     expect(out.outcome).toBe("server_error");
     expect(out.coverageId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);

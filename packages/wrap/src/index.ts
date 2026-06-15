@@ -13,6 +13,9 @@ export type { WrapFetchOptions, WrapFetchResult } from "./wrapFetch";
 export { defaultClassifier, composeWithDefault } from "./classifier";
 export type { Classifier, ClassifierInput, ClassifierResult } from "./classifier";
 
+export { computeEconomics, isCoveredBreach } from "./economics";
+export type { Economics, EconomicsPool } from "./economics";
+
 export { createDefaultBalanceCheck } from "./balanceCheck";
 export type {
   BalanceCheck,
@@ -25,12 +28,15 @@ export {
   MemoryEventSink,
   HttpEventSink,
   PubSubEventSink,
+  RedisStreamsEventSink,
 } from "./eventSink";
 export type {
   EventSink,
   HttpEventSinkOptions,
   PubSubEventSinkOptions,
   PubSubTopicPublisher,
+  RedisStreamsEventSinkOptions,
+  RedisStreamPublisher,
 } from "./eventSink";
 
 export { HEADERS, attachPactHeaders } from "./headers";

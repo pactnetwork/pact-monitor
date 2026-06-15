@@ -1,22 +1,24 @@
 {
   "name": "@q3labs/pact-cli",
-  "version": "0.2.6",
+  "version": "0.3.0",
   "type": "module",
   "bin": {
-    "pact": "bin/pact.cjs"
+    "pact": "dist/pact.js"
   },
   "files": [
-    "bin",
+    "dist",
     "README.md",
     "LICENSE"
   ],
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "dev": "bun run src/index.ts",
-    "_build:deps": "pnpm --filter @pact-network/protocol-v1-client build",
+    "_build:deps": "pnpm --filter @q3labs/pact-protocol-v1-client build",
     "_check:version": "node -e \"const a=require('./package.json').version,b=require('fs').readFileSync('src/index.ts','utf8').match(/VERSION\\s*=\\s*\\\"([^\\\"]+)/)[1]; if(a!==b){console.error('VERSION drift: package.json='+a+' src/index.ts='+b);process.exit(1)}\"",
     "prebuild": "pnpm run _build:deps && pnpm run _check:version",
-    "build": "bun build src/index.ts --compile --target=bun --outfile dist/pact",
-    "build:platforms": "pnpm run _build:deps && pnpm run _check:version && bash scripts/build-platforms.sh",
+    "build": "bun build src/index.ts --target=node --format=esm --outfile dist/pact.js && node scripts/fix-shebang.mjs dist/pact.js && chmod +x dist/pact.js",
     "pretest": "pnpm run _build:deps",
     "test": "bun test",
     "pretypecheck": "pnpm run _build:deps",
@@ -36,7 +38,7 @@
   "license": "MIT",
   "author": "Pact Network",
   "devDependencies": {
-    "@pact-network/protocol-v1-client": "workspace:*",
+    "@q3labs/pact-protocol-v1-client": "workspace:*",
     "@q3labs/pact-monitor": "workspace:*",
     "@solana/kit": "^2.0.0",
     "@solana/web3.js": "^1.95.0",
@@ -49,6 +51,7 @@
     "hono": "^4.0.0",
     "js-yaml": "^4.1.0",
     "tweetnacl": "^1.0.3",
-    "typescript": "^5.4.0"
+    "typescript": "^5.4.0",
+    "viem": "^2.21.0"
   }
 }

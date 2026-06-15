@@ -15,8 +15,20 @@ deterministically without depending on a real upstream provider being down:
 - *arbitrary status / body echoes for ad-hoc cases* → `?status=`, `?body=`
 
 It's a tiny Hono service (`hono` + `@hono/node-server`), mirroring the
-conventions in `packages/market-proxy/` but far simpler — no DB, no Solana, no
-env beyond `PORT` (default `8080`).
+conventions in `packages/market-proxy/`. Has two modes for the `?x402=1`
+toggle:
+
+- **Emulation mode** (default, no env vars): emits a 402 challenge,
+  accepts any `PAYMENT-SIGNATURE` header as "paid" without verification.
+  For classifier-only testing — no real USDC moves. This is what runs
+  when `DUMMY_X402_USE_PAYAI` is unset.
+- **PayAI mode** (`DUMMY_X402_USE_PAYAI=1`): wires the x402 flow through
+  [PayAI's hosted facilitator](https://facilitator.payai.network), so the
+  retry's signed transaction is actually verified and settled on-chain.
+  Funds land in `DUMMY_X402_PAY_TO` (default: the Pact `pay-default`
+  coverage pool's USDC vault, `J55fpAi…`) — which means a refund-on-breach
+  flow repays from the same vault the settlement just fed. Self-balancing.
+  See [PayAI mode](#payai-mode) below.
 
 ## Routes
 
@@ -102,6 +114,71 @@ Notes:
   *response* side.
 - `WWW-Authenticate: x402` is set so generic HTTP clients see a challenge
   scheme.
+
+## PayAI mode
+
+When `DUMMY_X402_USE_PAYAI=1` is set, the dummy promotes `?x402=1` from a
+no-op stamp to a real x402 settle flow via PayAI's hosted facilitator.
+
+### What changes
+
+| Scenario | Emulation mode (default) | PayAI mode |
+| --- | --- | --- |
+| `?x402=1` no payment header | 402 with hand-built challenge | 402 with PayAI-built challenge (SDK-generated) |
+| `?x402=1` with `PAYMENT-SIGNATURE` | accepted without checks | verified against PayAI; bad sig → 402 again |
+| `?x402=1` (happy path) | "PAYMENT-RESPONSE: accepted; demo=1" stamp, 200 | verify → return 200 → settle on-chain to `DUMMY_X402_PAY_TO`. Real USDC moves. |
+| `?x402=1&fail=1` (MODE C) | passes through to 503, no payment | verify → **settle first** (real USDC moves) → return 503. The "agent paid, got nothing" case Pact's refund insures. |
+| `?x402=1&status=5xx` | passes through to the status, no payment | verify → settle first → return that status |
+
+The MODE C settlement order is deliberate: Pact only refunds when a
+payment leg actually happened. Settling before the failure reproduces
+the real-world worst case (a merchant who eagerly settled then crashed)
+which is exactly what Pact's coverage protects against. Net cost to the
+agent in MODE C with `DUMMY_X402_PAY_TO = pay-default vault` is roughly
+just Pact's premium: the 0.005 USDC the agent pays gets refunded from
+the same vault the facilitator just credited.
+
+### Env vars
+
+| Var | Required | Default | What it does |
+| --- | --- | --- | --- |
+| `DUMMY_X402_USE_PAYAI` | yes | unset | Set to `1` to enable PayAI mode. Anything else = emulation. |
+| `DUMMY_X402_PAY_TO` | yes | `J55fpAivCj6LTy4DEK6WaeoTxhB2hCrLRWtkoS774Gon` | Where settled USDC lands. Default = mainnet `pay-default` pool vault. **NOT a derived ATA** — this is a raw keypair pre-allocated when the endpoint was registered. Read it off `CoveragePool.usdcVault` from chain. |
+| `DUMMY_X402_PAYAI_NETWORK` | no | `solana` | `solana` (mainnet) or `solana-devnet`. Mainnet pool vault won't accept devnet USDC; if you set this to devnet, override `DUMMY_X402_PAY_TO` to a devnet vault. |
+| `DUMMY_X402_RPC_URL` | no | public mainnet/devnet | Solana RPC the SDK uses for verification + settlement. Public endpoints rate-limit aggressively for production traffic; use Helius / QuickNode if real volume. |
+| `DUMMY_X402_FACILITATOR_URL` | no | `https://facilitator.payai.network` | PayAI facilitator. Swap to a local mock for tests. |
+| `PAYAI_API_KEY_ID` | no | — | PayAI auth key ID. Without this the SDK uses the free tier. |
+| `PAYAI_API_KEY_SECRET` | no | — | PayAI auth key secret (Ed25519 PKCS#8, raw base64 or `payai_sk_…`). Set both ID and secret to bypass free-tier rate limits. |
+
+### Vercel setup (production)
+
+In the dummy-upstream Vercel project's env vars:
+
+```
+DUMMY_X402_USE_PAYAI=1
+DUMMY_X402_PAY_TO=J55fpAivCj6LTy4DEK6WaeoTxhB2hCrLRWtkoS774Gon
+DUMMY_X402_PAYAI_NETWORK=solana
+DUMMY_X402_RPC_URL=https://api.mainnet-beta.solana.com   # or Helius
+PAYAI_API_KEY_ID=<your-payai-key-id>
+PAYAI_API_KEY_SECRET=<your-payai-key-secret>
+```
+
+After deploy, hit `https://dummy.pactnetwork.io/quote/AAPL?x402=1` and
+look for the startup log line: `[dummy-upstream] PayAI x402 enabled:
+network=solana treasury=J55fpAi… …`. If you see this, PayAI mode is on.
+If you see no such line, the env var isn't getting through and you're
+still in emulation.
+
+### Watching the pool vault on-chain
+
+The pay-default pool vault is `J55fpAivCj6LTy4DEK6WaeoTxhB2hCrLRWtkoS774Gon`.
+Open it on Solscan; every successful `pact pay curl …dummy.pactnetwork.io…?x402=1`
+should produce an incoming USDC transfer of `0.005`. Every breach
+(MODE C, i.e. `?fail=1` or `?status=5xx`) should produce that same
+transfer IN, then a matching `settle_batch`-issued transfer OUT shortly
+after as Pact's settler processes the refund. The net delta on the pool
+over a balanced demo run is approximately zero, minus Pact's premium
+(which the pool keeps).
 
 ## Local development
 

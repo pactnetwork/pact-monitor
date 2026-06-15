@@ -1,0 +1,35 @@
+{
+  "name": "@pact-network/protocol-evm-v1-client",
+  "version": "0.3.0",
+  "description": "TypeScript client (viem) for the Pact Network EVM v1 protocol contracts on Circle Arc. Mirrors @q3labs/pact-protocol-v1-client: deployed addresses, calldata encoders, view/event decoders, custom-error selector map, constants, fee-recipient helpers.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "coverage": "vitest run --coverage",
+    "gen:abi": "node scripts/gen-abi.mjs",
+    "check:abi": "node scripts/check-abi-drift.mjs"
+  },
+  "dependencies": {
+    "viem": "^2.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "@vitest/coverage-v8": "^3.0.4",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.4"
+  }
+}

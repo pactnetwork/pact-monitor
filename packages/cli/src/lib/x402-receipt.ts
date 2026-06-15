@@ -1,5 +1,5 @@
 // Builds the coverage-registration payload `pact pay` posts to
-// facilitator.pact.network from the post-pay classifier output.
+// facilitator.pactnetwork.io from the post-pay classifier output.
 //
 // Context — the side-call model (see docs/premium-coverage-mvp.md §B.1):
 // `pay` has already settled the payment directly with the merchant; this

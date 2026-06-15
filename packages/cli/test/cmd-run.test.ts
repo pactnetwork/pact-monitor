@@ -307,3 +307,118 @@ describe("cmd/run: --raw direct upstream call", () => {
     expect(upstreamHits).toBe(0);
   });
 });
+
+// EVM wallet-init parity with Solana lazy-gen (project_cli_evm_wallet_init):
+// the first `pact <slug> --network <evm-chain>` call with no wallet on disk
+// must generate + persist a shared EVM key, print a funding hint, and exit
+// without touching the gateway. Re-runs fall through to the normal call path.
+import { existsSync as _existsSync } from "node:fs";
+import { sharedEvmWalletPath } from "../src/lib/evm-wallet.ts";
+
+describe("cmd/run: EVM wallet halt-on-first-gen", () => {
+  let dir: string;
+  let server: ReturnType<typeof Bun.serve>;
+  let port: number;
+  let gatewayHits = 0;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "pact-evm-init-test-"));
+    gatewayHits = 0;
+    const app = new Hono();
+    app.get("/.well-known/endpoints", (c) => {
+      gatewayHits++;
+      return c.json(ENDPOINTS);
+    });
+    app.all("/v1/helius/*", (c) => {
+      gatewayHits++;
+      return c.json({ ok: true });
+    });
+    server = Bun.serve({ port: 0, fetch: app.fetch });
+    port = server.port!;
+    delete process.env.PACT_EVM_PRIVATE_KEY;
+  });
+
+  afterEach(() => {
+    server.stop();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("first --network arc-testnet call generates wallet, halts before gateway", async () => {
+    const lines: string[] = [];
+    const env = await runCommand({
+      url: "https://api.helius.xyz/v0/balances",
+      method: "GET",
+      headers: {},
+      configDir: dir,
+      gatewayUrl: `http://localhost:${port}`,
+      project: "test",
+      network: "arc-testnet",
+      skipBalanceCheck: true,
+      printEvmInitHint: (m) => lines.push(m),
+    });
+    expect(env.status).toBe("ok");
+    const body = env.body as {
+      evm_wallet_created: boolean;
+      address: string;
+      network: string;
+    };
+    expect(body.evm_wallet_created).toBe(true);
+    expect(body.address).toMatch(/^0x[0-9a-fA-F]{40}$/);
+    expect(body.network).toBe("arc-testnet");
+    // No gateway round-trip happened — we halted before discovery/signing.
+    expect(gatewayHits).toBe(0);
+    // The funding hint must mention the address + faucet URL.
+    expect(lines.length).toBe(1);
+    expect(lines[0]).toContain(body.address);
+    expect(lines[0]).toContain("faucet.circle.com");
+    // The shared wallet file was persisted under the per-project configDir.
+    expect(_existsSync(sharedEvmWalletPath(dir))).toBe(true);
+  });
+
+  test("second --network call with wallet present falls through to gateway", async () => {
+    await runCommand({
+      url: "https://api.helius.xyz/v0/balances",
+      method: "GET",
+      headers: {},
+      configDir: dir,
+      gatewayUrl: `http://localhost:${port}`,
+      project: "test",
+      network: "arc-testnet",
+      skipBalanceCheck: true,
+      printEvmInitHint: () => {},
+    });
+    const beforeHits = gatewayHits;
+    const env = await runCommand({
+      url: "https://api.helius.xyz/v0/balances",
+      method: "GET",
+      headers: {},
+      configDir: dir,
+      gatewayUrl: `http://localhost:${port}`,
+      project: "test",
+      network: "arc-testnet",
+      skipBalanceCheck: true,
+      printEvmInitHint: () => {
+        throw new Error("hint should not print on re-run");
+      },
+    });
+    expect(env.status).toBe("ok");
+    expect((env.body as { evm_wallet_created?: boolean }).evm_wallet_created).toBeUndefined();
+    expect(gatewayHits).toBeGreaterThan(beforeHits);
+  });
+
+  test("--network <solana-cluster> is unaffected — Solana path still runs", async () => {
+    const env = await runCommand({
+      url: "https://api.helius.xyz/v0/balances",
+      method: "GET",
+      headers: {},
+      configDir: dir,
+      gatewayUrl: `http://localhost:${port}`,
+      project: "test",
+      network: "devnet",
+      skipBalanceCheck: true,
+    });
+    expect(env.status).toBe("ok");
+    expect((env.body as { evm_wallet_created?: boolean }).evm_wallet_created).toBeUndefined();
+    expect(_existsSync(sharedEvmWalletPath(dir))).toBe(false);
+  });
+});

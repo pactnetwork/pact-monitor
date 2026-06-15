@@ -7,7 +7,7 @@ import {
   RecipientShare,
   SettlementOutcome,
 } from "../submitter/submitter.service";
-import { FeeRecipientKind } from "@pact-network/protocol-v1-client";
+import { FeeRecipientKind } from "@q3labs/pact-protocol-v1-client";
 
 vi.mock("axios");
 
@@ -118,5 +118,55 @@ describe("IndexerPusherService", () => {
     const body = mockedPost.mock.calls[0][1] as Record<string, unknown>;
     const calls = body["calls"] as Array<Record<string, unknown>>;
     expect(calls[0]["outcome"]).toBe("latency_breach");
+  });
+
+  // Finding 5a — the pusher stamps a batch-level network so the indexer can
+  // tag the Settlement / Endpoint-FK / PoolState / recipient-share aggregate
+  // rows (keyed on network) instead of falling back to its solana-devnet
+  // default.
+  it("stamps batch-level network from an arc-testnet batch", async () => {
+    mockedPost.mockResolvedValueOnce({ status: 200 });
+    const batch = makeBatch(2);
+    for (const m of batch.messages) {
+      (m.data as Record<string, unknown>)["network"] = "arc-testnet";
+    }
+    await service.push(makeOutcome("sig_arc", batch), batch);
+    const body = mockedPost.mock.calls[0][1] as Record<string, unknown>;
+    expect(body["network"]).toBe("arc-testnet");
+  });
+
+  // Regression: an unstamped (legacy Solana) batch still resolves to
+  // solana-devnet — Solana ingest must keep landing under solana-devnet.
+  it("defaults batch-level network to solana-devnet for unstamped batches", async () => {
+    mockedPost.mockResolvedValueOnce({ status: 200 });
+    const batch = makeBatch(2); // messages carry no `network` field
+    await service.push(makeOutcome("sig_sol", batch), batch);
+    const body = mockedPost.mock.calls[0][1] as Record<string, unknown>;
+    expect(body["network"]).toBe("solana-devnet");
+  });
+
+  // Single-network invariant: the batcher partitions by network before flush,
+  // so a mixed-network batch reaching the pusher is a regression — fail loud.
+  it("throws on a mixed-network batch (single-network invariant)", async () => {
+    const batch = makeBatch(2);
+    (batch.messages[0].data as Record<string, unknown>)["network"] = "arc-testnet";
+    (batch.messages[1].data as Record<string, unknown>)["network"] = "solana-devnet";
+    await expect(
+      service.push(makeOutcome("sig_mixed", batch), batch),
+    ).rejects.toThrow(/mixed-network batch/);
+  });
+
+  // Single-slug invariant (review #226 F5): the batcher now partitions by
+  // (network, slug) before flush, but the submitter routes the whole adapter
+  // batch by the first message's slug. A mixed-slug batch reaching the pusher
+  // means a direct caller or a batcher regression — fail loud rather than
+  // mis-indexing the batch under one slug's endpoint config.
+  it("throws on a mixed-slug batch (single-slug invariant)", async () => {
+    const batch = makeBatch(2);
+    (batch.messages[0].data as Record<string, unknown>)["endpointSlug"] = "helius";
+    (batch.messages[1].data as Record<string, unknown>)["endpointSlug"] = "birdeye";
+    await expect(
+      service.push(makeOutcome("sig_mixed_slug", batch), batch),
+    ).rejects.toThrow(/mixed-slug batch/);
   });
 });

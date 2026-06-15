@@ -15,7 +15,7 @@
 //   - stdin is inherited so the wrapped tool can prompt (e.g. curl -u
 //     prompting for a password).
 
-import type { Subprocess } from "bun";
+import { spawn } from "node:child_process";
 
 export interface PayShellResult {
   exitCode: number;
@@ -119,15 +119,13 @@ export function withCurlStatusMarker(args: string[]): string[] {
 }
 
 /**
- * Default implementation: spawn `pay <args>` via Bun.spawn with stdin
- * inherited. stdout/stderr are tee'd to the user's terminal and an
+ * Default implementation: spawn `pay <args>` via node:child_process with
+ * stdin inherited. stdout/stderr are tee'd to the user's terminal and an
  * internal buffer for post-classification.
  */
 export const DEFAULT_PAY_SHELL: PayShellFn = async (args) => {
-  const proc: Subprocess = Bun.spawn(["pay", ...args], {
-    stdin: "inherit",
-    stdout: "pipe",
-    stderr: "pipe",
+  const proc = spawn("pay", args, {
+    stdio: ["inherit", "pipe", "pipe"],
   });
 
   // Tee each stream as it arrives: write to the user's tty AND accumulate
@@ -135,30 +133,19 @@ export const DEFAULT_PAY_SHELL: PayShellFn = async (args) => {
   const stdoutChunks: Uint8Array[] = [];
   const stderrChunks: Uint8Array[] = [];
 
-  const pump = async (
-    src: ReadableStream<Uint8Array> | null,
-    tty: NodeJS.WriteStream,
-    sink: Uint8Array[],
-  ): Promise<void> => {
-    if (!src) return;
-    const reader = src.getReader();
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (value) {
-        sink.push(value);
-        tty.write(value);
-      }
-    }
-  };
+  proc.stdout?.on("data", (chunk: Buffer) => {
+    stdoutChunks.push(new Uint8Array(chunk));
+    process.stdout.write(chunk);
+  });
+  proc.stderr?.on("data", (chunk: Buffer) => {
+    stderrChunks.push(new Uint8Array(chunk));
+    process.stderr.write(chunk);
+  });
 
-  const stdoutSrc = proc.stdout as ReadableStream<Uint8Array> | null;
-  const stderrSrc = proc.stderr as ReadableStream<Uint8Array> | null;
-  await Promise.all([
-    pump(stdoutSrc, process.stdout, stdoutChunks),
-    pump(stderrSrc, process.stderr, stderrChunks),
-  ]);
-  const exitCode = await proc.exited;
+  const exitCode: number = await new Promise((resolve, reject) => {
+    proc.on("error", reject);
+    proc.on("close", (code) => resolve(code ?? 0));
+  });
 
   return {
     exitCode,
@@ -201,15 +188,19 @@ const ACCOUNT_HEADER_RE = /^\s*(mainnet|localnet|devnet|testnet):/m;
 
 export const DEFAULT_PAY_PROBE: PayProbeFn = async () => {
   try {
-    const proc: Subprocess = Bun.spawn(["pay", "account", "list"], {
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
+    const proc = spawn("pay", ["account", "list"], {
+      stdio: ["ignore", "pipe", "pipe"],
     });
-    const stdoutText = await new Response(
-      proc.stdout as ReadableStream<Uint8Array>,
-    ).text();
-    await proc.exited;
+    const stdoutChunks: Buffer[] = [];
+    proc.stdout?.on("data", (c: Buffer) => stdoutChunks.push(c));
+    // Drain stderr to prevent the child from blocking on a full pipe;
+    // we don't need its contents for the probe.
+    proc.stderr?.on("data", () => {});
+    await new Promise<void>((resolve, reject) => {
+      proc.on("error", reject);
+      proc.on("close", () => resolve());
+    });
+    const stdoutText = Buffer.concat(stdoutChunks).toString("utf8");
     return { initialized: ACCOUNT_HEADER_RE.test(stdoutText) };
   } catch {
     // If we can't even spawn pay, the warning is moot — the real

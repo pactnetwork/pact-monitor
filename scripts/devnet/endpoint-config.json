@@ -1,0 +1,22 @@
+{
+  "$schema": "endpoint-config",
+  "_comment": "Endpoint configs for V1 devnet init. Amounts in USDC base units (6 decimals): 1_000 = $0.001. exposureCapPerHourLamports = max payout from this pool per rolling hour. `helius` mirrors the mainnet helius row (2026-05-15). `dummy` is the strict-E2E fixture endpoint — its on-chain params MUST stay byte-equal to scripts/devnet/seed-local-dummy.sql (the proxy prices off the DB row, settle_batch prices off this on-chain EndpointConfig; a mismatch desyncs premium/refund).",
+  "endpoints": [
+    {
+      "slug": "helius",
+      "flatPremiumLamports": "1000",
+      "percentBps": 0,
+      "slaLatencyMs": 1500,
+      "imputedCostLamports": "5000",
+      "exposureCapPerHourLamports": "10000000"
+    },
+    {
+      "slug": "dummy",
+      "flatPremiumLamports": "1000",
+      "percentBps": 0,
+      "slaLatencyMs": 2000,
+      "imputedCostLamports": "10000",
+      "exposureCapPerHourLamports": "1000000"
+    }
+  ]
+}

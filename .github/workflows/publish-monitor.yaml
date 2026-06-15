@@ -33,6 +33,14 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # @q3labs/pact-monitor resolves @pact-network/classifier via its package.json
+      # `main`/`types` (both point at `dist/`). The classifier is a workspace dep
+      # added by the extraction (PR #250); without pre-building it the isolated
+      # monitor test + build fail TS2307 in src/classifier.ts. Mirrors the
+      # backend-tests.yaml pre-build.
+      - name: Build @pact-network/classifier (workspace dep)
+        run: pnpm --filter @pact-network/classifier run build
+
       - name: Test
         run: pnpm --filter @q3labs/pact-monitor test
 

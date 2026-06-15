@@ -4,9 +4,11 @@ import { Keypair, PublicKey } from "@solana/web3.js";
 
 import {
   BatchSubmitError,
+  SkipBatchError,
   SubmitterService,
 } from "./submitter.service";
 import { SecretLoaderService } from "../config/secret-loader.service";
+import { AdaptersService } from "../adapters/adapters.service";
 import { SettleBatch } from "../batcher/batcher.service";
 import { SettleMessage } from "../consumer/consumer.service";
 import {
@@ -14,7 +16,7 @@ import {
   type EndpointConfig,
   type CoveragePool,
   type Treasury,
-} from "@pact-network/protocol-v1-client";
+} from "@q3labs/pact-protocol-v1-client";
 
 // ---------------------------------------------------------------------------
 // Mock the chain plumbing. We keep web3.js's PublicKey real so derivations and
@@ -42,9 +44,9 @@ const decodeCoveragePoolMock = vi.fn();
 const decodeTreasuryMock = vi.fn();
 const buildSettleBatchIxMock = vi.fn();
 
-vi.mock("@pact-network/protocol-v1-client", async (importOriginal) => {
+vi.mock("@q3labs/pact-protocol-v1-client", async (importOriginal) => {
   const actual = await importOriginal<
-    typeof import("@pact-network/protocol-v1-client")
+    typeof import("@q3labs/pact-protocol-v1-client")
   >();
   return {
     ...actual,
@@ -255,9 +257,15 @@ describe("SubmitterService", () => {
     }));
 
     devKeypair = Keypair.generate();
+    // Use legacyDirectSolana=true so existing tests exercise the pre-WP-MN-03b
+    // direct path unchanged. Adapter-path tests land at T5.
+    const stubAdapters = {
+      legacyDirectSolana: true,
+    } as unknown as AdaptersService;
     service = new SubmitterService(
       makeConfig(),
       { keypair: devKeypair } as unknown as SecretLoaderService,
+      stubAdapters,
     );
 
     // Derive PDAs the way the service derives them so the stub map keys match.
@@ -265,7 +273,7 @@ describe("SubmitterService", () => {
       "5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5",
     );
     const { getEndpointConfigPda, getCoveragePoolPda, getTreasuryPda, slugBytes } =
-      await import("@pact-network/protocol-v1-client");
+      await import("@q3labs/pact-protocol-v1-client");
     [heliusEpPda] = getEndpointConfigPda(programId, slugBytes("helius"));
     [heliusPoolPda] = getCoveragePoolPda(programId, slugBytes("helius"));
     [birdeyeEpPda] = getEndpointConfigPda(programId, slugBytes("birdeye"));
@@ -356,7 +364,7 @@ describe("SubmitterService", () => {
       "5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5",
     );
     const { getProtocolConfigPda } = await import(
-      "@pact-network/protocol-v1-client"
+      "@q3labs/pact-protocol-v1-client"
     );
     const [expectedPcPda] = getProtocolConfigPda(programId);
 
@@ -596,5 +604,110 @@ describe("SubmitterService", () => {
     // Pool vault came from on-chain CoveragePool, not env.
     expect(args.events[0].poolVault.toBase58()).toBe(HELIUS_POOL_VAULT.toBase58());
     expect(args.events[0].coveragePool.toBase58()).toBe(heliusPoolPda.toBase58());
+  });
+});
+
+// ---------------------------------------------------------------------------
+// EVM-only boot (multi-evm WP T5). The settler must bootstrap when no solana-*
+// network is enabled WITHOUT requiring SOLANA_RPC_URL or building the Solana
+// Connection/PDAs. When a Solana network IS enabled, the Solana path is built
+// exactly as today (fail-fast at construction on a missing SOLANA_RPC_URL).
+// ---------------------------------------------------------------------------
+
+describe("SubmitterService — boot without Solana (multi-evm WP T5)", () => {
+  const evmStubAdapters = {
+    legacyDirectSolana: false,
+  } as unknown as AdaptersService;
+  const solanaStubAdapters = {
+    legacyDirectSolana: true,
+  } as unknown as AdaptersService;
+
+  function makeSecretsStub(): SecretLoaderService {
+    return { keypair: Keypair.generate() } as unknown as SecretLoaderService;
+  }
+
+  it("boots EVM-only (no solana-* enabled) without requiring SOLANA_RPC_URL", async () => {
+    const env: Record<string, string | undefined> = {
+      PACT_ENABLED_NETWORKS: "arc-testnet",
+    };
+    const config = {
+      get: vi.fn((k: string) => env[k]),
+      // getOrThrow throws for EVERYTHING — proving the constructor never calls it.
+      getOrThrow: vi.fn((k: string) => {
+        throw new Error(`missing ${k}`);
+      }),
+    } as unknown as ConfigService;
+
+    const svc = new SubmitterService(config, makeSecretsStub(), evmStubAdapters);
+    await expect(svc.onModuleInit()).resolves.toBeUndefined();
+    expect(config.getOrThrow).not.toHaveBeenCalledWith("SOLANA_RPC_URL");
+  });
+
+  it("still builds the Solana path when a Solana network is enabled (default)", () => {
+    // makeConfig() sets SOLANA_RPC_URL and leaves PACT_ENABLED_NETWORKS unset,
+    // which defaults to solana-devnet -> Solana deps built exactly as today.
+    const svc = new SubmitterService(
+      makeConfig(),
+      makeSecretsStub(),
+      solanaStubAdapters,
+    );
+    expect(svc.derivedProtocolConfigPda).toBeDefined();
+    expect(svc.derivedSettlementAuthorityPda).toBeDefined();
+    expect(svc.derivedTreasuryPda).toBeDefined();
+  });
+
+  it("still fails fast at construction when Solana is enabled but SOLANA_RPC_URL is missing", () => {
+    const env: Record<string, string | undefined> = {
+      PACT_ENABLED_NETWORKS: "solana-devnet",
+    };
+    const config = {
+      get: vi.fn((k: string) => env[k]),
+      getOrThrow: vi.fn((k: string) => {
+        if (k === "SOLANA_RPC_URL") throw new Error("missing SOLANA_RPC_URL");
+        return "x";
+      }),
+    } as unknown as ConfigService;
+
+    expect(
+      () => new SubmitterService(config, makeSecretsStub(), solanaStubAdapters),
+    ).toThrow(/SOLANA_RPC_URL/);
+  });
+});
+
+describe("SubmitterService — per-network isolation (SkipBatchError)", () => {
+  function batchForNetwork(network: string): SettleBatch {
+    const msg = makeMessage({
+      callIdHex: "00".repeat(16),
+      agentPubkey: "Agent111",
+      slug: "helius",
+    });
+    (msg.data as Record<string, unknown>).network = network;
+    return { messages: [msg] } as unknown as SettleBatch;
+  }
+
+  function makeSvc(servedNetwork: string): SubmitterService {
+    // EVM-only instance: serves `servedNetwork`, no Solana deps.
+    const config = makeConfig({ PACT_ENABLED_NETWORKS: servedNetwork });
+    const adapters = {
+      legacyDirectSolana: false,
+      hasAdapter: (n: string) => n === servedNetwork,
+    } as unknown as AdaptersService;
+    const secrets = { keypair: Keypair.generate() } as unknown as SecretLoaderService;
+    return new SubmitterService(config, secrets, adapters);
+  }
+
+  it("throws SkipBatchError for a batch whose network this instance does not serve", async () => {
+    const svc = makeSvc("base-mainnet");
+    await expect(svc.submit(batchForNetwork("solana-mainnet"))).rejects.toBeInstanceOf(
+      SkipBatchError,
+    );
+  });
+
+  it("SkipBatchError carries the offending network for logging/ack", async () => {
+    const svc = makeSvc("base-mainnet");
+    await svc.submit(batchForNetwork("arc-testnet")).catch((e: unknown) => {
+      expect(e).toBeInstanceOf(SkipBatchError);
+      expect((e as SkipBatchError).network).toBe("arc-testnet");
+    });
   });
 });

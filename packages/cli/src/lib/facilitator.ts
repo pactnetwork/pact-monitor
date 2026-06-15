@@ -1,4 +1,4 @@
-// Client for facilitator.pact.network — the pay.sh-path coverage
+// Client for facilitator.pactnetwork.io — the pay.sh-path coverage
 // registrar (see docs/premium-coverage-mvp.md §B).
 //
 // `pact pay` makes a side-call here AFTER `pay` has already settled the
@@ -29,7 +29,7 @@ import bs58 from "bs58";
 import { buildSignaturePayload } from "./transport.ts";
 import type { CoverageRegistrationPayload } from "./x402-receipt.ts";
 
-export const DEFAULT_FACILITATOR_URL = "https://facilitator.pact.network";
+export const DEFAULT_FACILITATOR_URL = "https://facilitator.pactnetwork.io";
 
 export function resolveFacilitatorUrl(): string {
   const env = process.env.PACT_FACILITATOR_URL;

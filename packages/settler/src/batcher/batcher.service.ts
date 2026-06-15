@@ -48,7 +48,7 @@ export class BatcherService {
       this.logger.debug(
         `Skipping zero-premium event ${data["callId"]} outcome=${data["outcome"]}`,
       );
-      message.raw.ack();
+      message.ack();
       return;
     }
 
@@ -68,11 +68,63 @@ export class BatcherService {
     this.cancelTimer();
     if (this.pending.length === 0) return;
 
-    const batch: SettleBatch = { messages: this.pending.splice(0, this.pending.length) };
-    this.logger.log(`Flushing batch of ${batch.messages.length} events`);
+    const all = this.pending.splice(0, this.pending.length);
 
-    if (this.onFlush) {
-      await this.onFlush(batch);
+    // Partition by (network, endpointSlug) so every emitted batch is
+    // single-network AND single-slug (finding 4). The submitter routes a
+    // batch by its first message's network/slug; a mixed batch sent Arc
+    // events through a Solana message[0] (and vice-versa), and same-network
+    // mixed-slug events resolved fee config from the wrong endpoint.
+    // Insertion order is preserved for deterministic flush order.
+    const groups = new Map<string, SettleMessage[]>();
+    const order: string[] = [];
+    for (const m of all) {
+      const d = m.data as Record<string, unknown>;
+      const network =
+        typeof d["network"] === "string" ? d["network"] : "solana-devnet";
+      const slug = typeof d["endpointSlug"] === "string" ? d["endpointSlug"] : "";
+      const key = JSON.stringify([network, slug]);
+      let group = groups.get(key);
+      if (!group) {
+        group = [];
+        groups.set(key, group);
+        order.push(key);
+      }
+      group.push(m);
+    }
+
+    const cb = this.onFlush;
+    if (!cb) return;
+
+    // Dispatch the per-(network,slug) groups CONCURRENTLY (finding 4 partition
+    // preserved; insertion order within each group is preserved by `messages`).
+    // A serial `for await` here head-of-line-blocked every chain behind one
+    // slow/hung finality wait. Promise.allSettled isolates each group: a slow
+    // group no longer delays its siblings, and a rejected group does not abort
+    // them. Failure isolation is per-group — each batch is nack'd by its own
+    // PipelineService.processBatch (which catches BatchSubmitError and nacks
+    // that batch's messages); we surface any escaped rejection here without
+    // swallowing it, and without rejecting flush() (the timer/size-trigger
+    // callers fire-and-forget via `void this.flush()`).
+    //
+    // Concurrency is bounded by the count of distinct (network,slug) pairs in a
+    // single flush — small in practice (a handful of chains x slugs). No
+    // explicit cap added; see report if this assumption changes.
+    const results = await Promise.allSettled(
+      order.map((key) => {
+        const messages = groups.get(key)!;
+        this.logger.log(`Flushing batch of ${messages.length} events`);
+        return cb({ messages });
+      }),
+    );
+
+    for (let i = 0; i < results.length; i++) {
+      const r = results[i];
+      if (r.status === "rejected") {
+        this.logger.error(
+          `Flush group "${order[i]}" failed (isolated from siblings): ${r.reason}`,
+        );
+      }
     }
   }
 

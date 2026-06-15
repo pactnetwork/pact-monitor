@@ -1,6 +1,6 @@
 /**
  * Solana wiring for the dashboard. Pulls instruction builders, PDAs, and
- * constants from `@pact-network/protocol-v1-client` so the dashboard speaks
+ * constants from `@q3labs/pact-protocol-v1-client` so the dashboard speaks
  * directly to the deployed V1 program (`5jBQb7fL…` on devnet) without any
  * placeholder discriminators.
  */
@@ -17,7 +17,7 @@ import {
   buildRevokeIx,
   getSettlementAuthorityPda,
   deriveAssociatedTokenAccount,
-} from "@pact-network/protocol-v1-client";
+} from "@q3labs/pact-protocol-v1-client";
 
 export const SOLANA_RPC =
   process.env.NEXT_PUBLIC_SOLANA_RPC ?? "https://api.devnet.solana.com";

@@ -30,7 +30,7 @@ overview page's "Top Integrators" table.
 
 Live agent insurable state (balance + allowance) is NOT served by the indexer.
 The dashboard reads it directly via Solana RPC using
-`getAgentInsurableState` from `@pact-network/protocol-v1-client`. The
+`getAgentInsurableState` from `@q3labs/pact-protocol-v1-client`. The
 `useAgentInsurableState` hook handles polling.
 
 The indexer feeds the following SettlementRecipientShare-shaped fields used by
@@ -53,6 +53,6 @@ SettlementRecipientShare {
 | `NEXT_PUBLIC_INDEXER_URL` | unset (mock used)                    | `lib/api/index.ts` (when wired) |
 | `NEXT_PUBLIC_PROXY_URL`   | unset                                | reserved — wave 2 |
 
-The deployed program ID is now baked into `@pact-network/protocol-v1-client`
+The deployed program ID is now baked into `@q3labs/pact-protocol-v1-client`
 (canonical devnet `5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5`). Override via
 the SDK if needed; the dashboard does not hold a separate `NEXT_PUBLIC_PROGRAM_ID`.

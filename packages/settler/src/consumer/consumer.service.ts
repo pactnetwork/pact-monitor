@@ -1,72 +1,57 @@
-import { Injectable, OnModuleInit, OnModuleDestroy, Logger } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
-import { PubSub, Message, Subscription } from "@google-cloud/pubsub";
+// ConsumerService — NestJS facade over the backend-agnostic QueueConsumer.
+//
+// Backwards-compat shim: existing callers (BatcherService, pipeline tests)
+// import { ConsumerService, SettleMessage } from "./consumer.service". The
+// public surface is preserved; the actual queue implementation is selected
+// in ConsumerModule (see consumer.module.ts) based on QUEUE_BACKEND env.
+//
+// Default backend is PubSubQueueConsumer so mainnet's runtime behavior is
+// byte-identical to the pre-adapter code path.
 
-export interface SettleMessage {
-  id: string;
-  data: Record<string, unknown>;
-  raw: Message;
-}
+import {
+  Inject,
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+} from "@nestjs/common";
+import type { QueueConsumer, SettleMessage } from "./queue-consumer.interface";
+
+export type { SettleMessage } from "./queue-consumer.interface";
+
+export const QUEUE_CONSUMER = Symbol("QUEUE_CONSUMER");
 
 @Injectable()
 export class ConsumerService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(ConsumerService.name);
-  private subscription: Subscription | null = null;
-  private readonly queue: SettleMessage[] = [];
-  private onEnqueue: ((msg: SettleMessage) => void) | null = null;
 
-  constructor(
-    private readonly config: ConfigService,
-    private readonly pubsub: PubSub
-  ) {}
+  constructor(@Inject(QUEUE_CONSUMER) private readonly consumer: QueueConsumer) {}
 
-  onModuleInit() {
-    const projectId = this.config.getOrThrow<string>("PUBSUB_PROJECT");
-    const subscriptionName = this.config.getOrThrow<string>("PUBSUB_SUBSCRIPTION");
-    const fullName = `projects/${projectId}/subscriptions/${subscriptionName}`;
-    this.subscription = this.pubsub.subscription(fullName);
-
-    this.subscription.on("message", (msg: Message) => {
-      const settle: SettleMessage = {
-        id: msg.id,
-        data: JSON.parse(msg.data.toString("utf8")),
-        raw: msg,
-      };
-      this.queue.push(settle);
-      this.onEnqueue?.(settle);
-    });
-
-    this.subscription.on("error", (err) => {
-      this.logger.error("Pub/Sub subscription error", err);
-    });
+  async onModuleInit(): Promise<void> {
+    await this.consumer.init();
   }
 
-  onModuleDestroy() {
-    this.subscription?.removeAllListeners();
-    this.subscription?.close();
+  async onModuleDestroy(): Promise<void> {
+    await this.consumer.destroy();
   }
 
-  setEnqueueCallback(cb: (msg: SettleMessage) => void) {
-    this.onEnqueue = cb;
+  setEnqueueCallback(cb: (msg: SettleMessage) => void): void {
+    this.consumer.setEnqueueCallback(cb);
   }
 
   drain(): SettleMessage[] {
-    return this.queue.splice(0, this.queue.length);
+    return this.consumer.drain();
   }
 
-  ack(messages: SettleMessage[]) {
-    for (const m of messages) {
-      m.raw.ack();
-    }
+  ack(messages: SettleMessage[]): void {
+    this.consumer.ack(messages);
   }
 
-  nack(messages: SettleMessage[]) {
-    for (const m of messages) {
-      m.raw.nack();
-    }
+  nack(messages: SettleMessage[]): void {
+    this.consumer.nack(messages);
   }
 
   get queueLength(): number {
-    return this.queue.length;
+    return this.consumer.queueLength;
   }
 }

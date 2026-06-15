@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { Connection, PublicKey } from "@solana/web3.js";
 import { fetchEndpoints, resolveSlug, invalidateCache } from "../lib/discovery.ts";
 import { loadOrCreateWallet } from "../lib/wallet.ts";
+import { loadEvmWallet, type EvmWalletLoadResult } from "../lib/evm-wallet.ts";
+import { isEvmNetwork, faucetForNetwork } from "../lib/evm-faucets.ts";
 import { signedRequest, type SignedRequestResult } from "../lib/transport.ts";
 import { getUsdcAtaBalanceLamports, resolveClusterConfig } from "../lib/solana.ts";
 import { type Envelope, type Outcome } from "../lib/envelope.ts";
@@ -14,11 +16,62 @@ export interface RunOpts {
   configDir: string;
   gatewayUrl: string;
   project: string;
+  network?: string;
   rpcUrl?: string;
   raw?: boolean;
   skipBalanceCheck?: boolean;
   timeoutMs?: number;
   getBalanceLamports?: (pubkey: PublicKey) => Promise<bigint>;
+  /** Optional EVM keypair override (forwarded from `--keypair` on an EVM call). */
+  evmKeypairPath?: string;
+  /**
+   * Sink for the freshly-generated EVM wallet hint. Defaults to stderr so
+   * tests can inject a spy. Only invoked when the wallet was just created.
+   */
+  printEvmInitHint?: (msg: string) => void;
+}
+
+/**
+ * Result of the lazy EVM wallet check; exposed for tests. `halt:true` means
+ * the wallet was just generated and the caller should stop before issuing any
+ * network request so the user can fund the address.
+ */
+export interface EvmWalletInitResult {
+  wallet: EvmWalletLoadResult;
+  halt: boolean;
+  hint: string | null;
+}
+
+/**
+ * Resolve the EVM wallet for the call's --network, mirroring the Solana
+ * loadOrCreateWallet UX: lazy generation on first contact, halt with a
+ * funding hint, otherwise re-use silently. Returns null when --network is
+ * not an EVM chain (Solana path is unchanged).
+ */
+export function ensureEvmWalletForCall(opts: {
+  configDir: string;
+  network: string | undefined;
+  keypairPath?: string;
+  print?: (msg: string) => void;
+}): EvmWalletInitResult | null {
+  if (!isEvmNetwork(opts.network)) return null;
+  const wallet = loadEvmWallet({
+    configDir: opts.configDir,
+    network: opts.network,
+    keypairPath: opts.keypairPath,
+  });
+  if (!wallet.created) return { wallet, halt: false, hint: null };
+  const faucet = faucetForNetwork(opts.network) ?? "—";
+  const hint = [
+    "[pact] generated a new EVM wallet (shared across EVM chains):",
+    `       address: ${wallet.address}`,
+    `       file:    ${wallet.path}`,
+    `       chain:   ${opts.network}`,
+    `       faucet:  ${faucet}`,
+    "[pact] fund the address above, then re-run your command.",
+  ].join("\n");
+  (opts.print ?? ((m: string) => process.stderr.write(m + "\n")))(hint);
+  return { wallet, halt: true, hint };
 }
 
 export async function runCommand(opts: RunOpts): Promise<Envelope> {
@@ -30,6 +83,29 @@ export async function runCommand(opts: RunOpts): Promise<Envelope> {
   // raw call without the gate set never reaches this branch.
   if (opts.raw) {
     return rawDirectCall(opts);
+  }
+
+  // EVM lazy-gen parity with Solana (project_cli_evm_wallet_init): on the
+  // first --network <evm-chain> call with no wallet on disk, generate +
+  // persist the shared EVM key, print the funding hint to stderr, and
+  // return an `ok` envelope so the CLI exits 0 without touching the gateway.
+  // Re-runs (wallet present) fall through to the normal call path.
+  const evmInit = ensureEvmWalletForCall({
+    configDir: opts.configDir,
+    network: opts.network,
+    keypairPath: opts.evmKeypairPath,
+    print: opts.printEvmInitHint,
+  });
+  if (evmInit?.halt) {
+    return {
+      status: "ok",
+      body: {
+        evm_wallet_created: true,
+        address: evmInit.wallet.address,
+        network: opts.network,
+        next: "fund the address with native gas + USDC, then re-run",
+      },
+    };
   }
 
   let endpoints;
@@ -116,6 +192,7 @@ export async function runCommand(opts: RunOpts): Promise<Envelope> {
       body: opts.body,
       keypair: wallet.keypair,
       project: opts.project,
+      network: opts.network,
       timeoutMs: opts.timeoutMs,
     });
   } catch (err) {
@@ -169,6 +246,7 @@ export async function runCommand(opts: RunOpts): Promise<Envelope> {
         body: opts.body,
         keypair: wallet.keypair,
         project: opts.project,
+        network: opts.network,
         timeoutMs: opts.timeoutMs,
       });
       return buildEnvelope(retry, r2.slug);

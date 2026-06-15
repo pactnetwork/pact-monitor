@@ -2,7 +2,7 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from "@nestjs/commo
 import { Counter, Gauge, Histogram, register } from "prom-client";
 import { ConsumerService } from "../consumer/consumer.service";
 import { BatcherService, SettleBatch } from "../batcher/batcher.service";
-import { SubmitterService, BatchSubmitError } from "../submitter/submitter.service";
+import { SubmitterService, BatchSubmitError, SkipBatchError } from "../submitter/submitter.service";
 import { IndexerPusherService, IndexerPushError } from "../indexer/indexer-pusher.service";
 
 @Injectable()
@@ -108,6 +108,16 @@ export class PipelineService implements OnModuleInit, OnModuleDestroy {
     try {
       outcome = await this.submitter.submit(batch);
     } catch (err) {
+      if (err instanceof SkipBatchError) {
+        // Batch belongs to a network this settler does not serve (fan-out
+        // subscription delivered a foreign-network event). ACK to drop it —
+        // the settler that owns the network handles its own copy.
+        this.logger.log(
+          `Ack-skipping ${batch.messages.length} message(s) for unserved network "${err.network}"`,
+        );
+        this.consumer.ack(batch.messages);
+        return;
+      }
       if (err instanceof BatchSubmitError) {
         this.txFailuresCounter.inc();
         this.logger.error(`Batch submit failed permanently, nacking ${batch.messages.length} messages: ${err.message}`);

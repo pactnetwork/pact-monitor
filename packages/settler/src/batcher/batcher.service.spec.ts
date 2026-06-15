@@ -6,7 +6,8 @@ function makeMessage(n: number, premiumLamports = "1000"): SettleMessage {
   return {
     id: String(n),
     data: { n, premiumLamports, callId: `call-${n}`, outcome: "success" },
-    raw: { ack: vi.fn(), nack: vi.fn() } as unknown as import("@google-cloud/pubsub").Message,
+    ack: vi.fn(),
+    nack: vi.fn(),
   };
 }
 
@@ -84,11 +85,144 @@ describe("BatcherService", () => {
     service.push(msg);
 
     expect(service.pendingCount).toBe(0);
-    expect(msg.raw.ack).toHaveBeenCalledTimes(1);
-    expect(msg.raw.nack).not.toHaveBeenCalled();
+    expect(msg.ack).toHaveBeenCalledTimes(1);
+    expect(msg.nack).not.toHaveBeenCalled();
 
     // Confirm no flush is scheduled — advancing time produces no batch.
     await vi.advanceTimersByTimeAsync(5000);
     expect(flushed).toHaveLength(0);
+  });
+});
+
+// Multi-EVM WP T2: the flush loop must dispatch per-(network,slug) groups
+// CONCURRENTLY so one slow/hung chain's finality wait does not head-of-line-
+// block sibling groups, and a rejecting group must not take down its siblings
+// (each group nacks its own batch inside the pipeline). Real timers — these
+// assert dispatch behavior, not the 5s schedule.
+describe("BatcherService — concurrent cross-group flush (multi-evm WP T2)", () => {
+  function netMessage(network: string, slug: string, n: number): SettleMessage {
+    return {
+      id: String(n),
+      data: {
+        network,
+        endpointSlug: slug,
+        premiumLamports: "1000",
+        callId: `call-${n}`,
+        outcome: "ok",
+      },
+      ack: vi.fn(),
+      nack: vi.fn(),
+    };
+  }
+
+  it("dispatches groups concurrently: a hung group does not block siblings", async () => {
+    const service = new BatcherService();
+    const invoked: string[] = [];
+    let releaseA!: () => void;
+    const aGate = new Promise<void>((r) => {
+      releaseA = r;
+    });
+    service.setFlushCallback(async (batch) => {
+      const net = (batch.messages[0].data as Record<string, unknown>)
+        .network as string;
+      invoked.push(net);
+      if (net === "arc-testnet") await aGate; // hang group A indefinitely
+    });
+
+    // Group A (arc-testnet) is pushed FIRST so the serial loop would reach it
+    // before group B and block; the partition preserves insertion order.
+    service.push(netMessage("arc-testnet", "helius", 1));
+    service.push(netMessage("evm-test-2", "helius", 2));
+
+    const flushP = service.flush();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // Serial loop: B is never invoked while A hangs. Concurrent: B is invoked.
+    expect(invoked).toContain("evm-test-2");
+
+    releaseA();
+    await flushP;
+  });
+
+  it("isolates a rejecting group: siblings still complete and flush resolves", async () => {
+    const service = new BatcherService();
+    const completed: string[] = [];
+    service.setFlushCallback(async (batch) => {
+      const net = (batch.messages[0].data as Record<string, unknown>)
+        .network as string;
+      if (net === "arc-testnet") throw new Error("group A boom");
+      completed.push(net);
+    });
+
+    service.push(netMessage("arc-testnet", "helius", 1));
+    service.push(netMessage("evm-test-2", "helius", 2));
+
+    // A rejecting group must not reject the whole flush (it is surfaced, and the
+    // pipeline nacks that group's own batch); the sibling must still complete.
+    await expect(service.flush()).resolves.toBeUndefined();
+    expect(completed).toContain("evm-test-2");
+  });
+});
+
+// Review #226 F6: the (network, slug) partition key must be a robust structured
+// key (JSON.stringify([network, slug])) so a field containing the separator
+// char cannot collide two distinct (network, slug) pairs into one batch. The
+// pre-fix key joins with a single separator byte; for ANY single-char separator
+// SEP, the distinct pairs (X, SEP+Y) and (X+SEP, Y) both render X+SEP+SEP+Y and
+// merge into one batch. JSON.stringify quotes/escapes each field so distinct
+// pairs always produce distinct keys.
+describe("BatcherService — structured partition key (review #226 F6)", () => {
+  // The live pre-fix separator byte (verified 0x00 in the source). The
+  // collision construction below uses it directly so the test is RED against
+  // the actual code, not an assumed space separator.
+  const SEP = "\u0000";
+
+  function keyMessage(network: string, slug: string, n: number): SettleMessage {
+    return {
+      id: String(n),
+      data: {
+        network,
+        endpointSlug: slug,
+        premiumLamports: "1000",
+        callId: `call-${n}`,
+        outcome: "ok",
+      },
+      ack: vi.fn(),
+      nack: vi.fn(),
+    };
+  }
+
+  it("does not collide distinct (network,slug) pairs when a field contains the separator char", async () => {
+    const service = new BatcherService();
+    const batches: SettleBatch[] = [];
+    service.setFlushCallback(async (batch) => {
+      batches.push(batch);
+    });
+
+    // (X, SEP+Y) and (X+SEP, Y) both join to X+SEP+SEP+Y under a single-byte
+    // separator, merging two distinct (network,slug) pairs into one batch.
+    service.push(keyMessage("n", `${SEP}s`, 1));
+    service.push(keyMessage(`n${SEP}`, "s", 2));
+
+    await service.flush();
+
+    expect(batches).toHaveLength(2);
+  });
+
+  it("still groups identical (network,slug) messages into one batch", async () => {
+    const service = new BatcherService();
+    const batches: SettleBatch[] = [];
+    service.setFlushCallback(async (batch) => {
+      batches.push(batch);
+    });
+
+    service.push(keyMessage("arc-testnet", "helius", 1));
+    service.push(keyMessage("arc-testnet", "helius", 2));
+
+    await service.flush();
+
+    expect(batches).toHaveLength(1);
+    expect(batches[0].messages).toHaveLength(2);
   });
 });
