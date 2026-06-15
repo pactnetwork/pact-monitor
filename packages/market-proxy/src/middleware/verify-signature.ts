@@ -1,23 +1,35 @@
-// Verifies the ed25519 signature the pact-cli attaches to every request
-// (see packages/cli/src/lib/transport.ts:36-78). Only enforced when the
-// caller presents an `x-pact-agent` header — the dashboard demo path
-// using `?pact_wallet=…` is unaffected and remains unauthenticated.
+// Verifies the signature the pact-cli / SDK attaches to every request.
+// Only enforced when the caller presents an `x-pact-agent` header — the
+// dashboard demo path using `?pact_wallet=…` is unaffected and remains
+// unauthenticated.
 //
-// Canonical payload (UTF-8) — MUST match the CLI byte-for-byte:
+// Canonical payload (UTF-8) — two formats accepted during the one-release
+// compat window (see docs/superpowers/.../sdk-evm-signing.md §9):
 //
-//   v1\nMETHOD\nPATH\nTIMESTAMP\nNONCE\nBODY_HASH
+//   v2\nMETHOD\nPATH\nNETWORK\nTIMESTAMP\nNONCE\nBODY_HASH   (SDK ≥ G-5)
+//   v1\nMETHOD\nPATH\nTIMESTAMP\nNONCE\nBODY_HASH            (legacy CLI)
 //
 // where:
 //   - METHOD     is uppercase ("GET", "POST", ...)
 //   - PATH       is pathname + search exactly as sent
+//   - NETWORK    is `x-pact-network` header value, or "" when absent (v2 only)
 //   - TIMESTAMP  is milliseconds since epoch as a decimal string
-//   - NONCE      is the bs58-encoded random nonce from the CLI
+//   - NONCE      is the bs58-encoded random nonce from the signer
 //   - BODY_HASH  is sha256(body bytes) as a hex string, or "" for empty body
 
 import { createHash } from "node:crypto";
 import type { Context, MiddlewareHandler } from "hono";
 import bs58 from "bs58";
 import nacl from "tweetnacl";
+import { getAddress, isAddress, verifyMessage } from "viem";
+
+/** Auth VM family inferred from the agent key format / endpoint network. */
+type AuthVm = "evm" | "solana";
+
+/** Map a network id to its VM family (solana-* → solana; everything else → evm). */
+function networkToVm(network: string): AuthVm {
+  return network.startsWith("solana") ? "solana" : "evm";
+}
 
 export const PACT_AUTH_HEADERS = [
   "x-pact-agent",
@@ -67,6 +79,18 @@ export interface VerifyPactSignatureOptions {
   replayTtlMs?: number;
   replayCache?: ReplayCache;
   now?: () => number;
+  /**
+   * Optional endpoint-network resolver. When it returns a network, the auth
+   * mode is cross-checked against the endpoint's VM: an agent whose key type
+   * (evm vs solana) does not match the endpoint network is rejected
+   * (cross-mode guard). When omitted, or it returns undefined, the auth mode
+   * is selected purely by the agent key format. Wire this once the proxy
+   * registry carries EVM endpoints, so a 0x agent cannot authenticate against
+   * a Solana endpoint (and vice-versa).
+   */
+  getEndpointNetwork?: (
+    c: Context,
+  ) => string | undefined | Promise<string | undefined>;
 }
 
 export function verifyPactSignature(
@@ -76,6 +100,7 @@ export function verifyPactSignature(
   const replayTtlMs = opts.replayTtlMs ?? DEFAULT_REPLAY_TTL_MS;
   const now = opts.now ?? (() => Date.now());
   const replay = opts.replayCache ?? createInMemoryReplayCache(replayTtlMs);
+  const getEndpointNetwork = opts.getEndpointNetwork;
 
   return async function pactSignatureMiddleware(c, next) {
     const agent = c.req.header("x-pact-agent");
@@ -102,7 +127,23 @@ export function verifyPactSignature(
       return reject(c, "pact_auth_stale", "timestamp outside skew window");
     }
 
-    const replayKey = `${agent}:${nonce}`;
+    // Resolve the canonical agent identity BEFORE the replay check. EVM
+    // addresses are case-insensitive — viem's verifyMessage recovers the same
+    // signer for any casing — so an attacker can replay a captured request with
+    // a case-variant header (0xABC… -> 0xabc…): the signature still verifies but
+    // a case-sensitive replay key misses the cache, double-billing the victim
+    // within the skew window (PR #225 P0-3). Normalize EVM agents to a single
+    // canonical form for BOTH the replay key and the stashed identity; Solana
+    // bs58 pubkeys are case-sensitive and pass through unchanged. `{ strict:
+    // true }` (viem's default, made explicit) also rejects all-uppercase /
+    // bad-checksum EVM inputs at the door.
+    const agentVm: AuthVm = isAddress(agent, { strict: true })
+      ? "evm"
+      : "solana";
+    const normalizedAgent =
+      agentVm === "evm" ? getAddress(agent).toLowerCase() : agent;
+
+    const replayKey = `${normalizedAgent}:${nonce}`;
     if (replay.seen(replayKey, now())) {
       return reject(c, "pact_auth_replay", "nonce already seen");
     }
@@ -119,7 +160,19 @@ export function verifyPactSignature(
     const url = new URL(c.req.url);
     const path = url.pathname + url.search;
     const bodyHash = bodyBytes.length === 0 ? "" : sha256Hex(bodyBytes);
-    const payload = buildSignaturePayload({
+    // The signed bytes contain `x-pact-network` (or "" when absent). v2 bytes
+    // are tried first; v1 (no network field) is accepted for one release while
+    // the CLI catches up — see §9 of the spec.
+    const networkHeader = c.req.header("x-pact-network") ?? "";
+    const payloadV2 = buildSignaturePayload({
+      method: c.req.method,
+      path,
+      timestampMs: tsMs,
+      nonce,
+      bodyHash,
+      network: networkHeader,
+    });
+    const payloadV1 = buildSignaturePayload({
       method: c.req.method,
       path,
       timestampMs: tsMs,
@@ -127,27 +180,73 @@ export function verifyPactSignature(
       bodyHash,
     });
 
-    let pubkey: Uint8Array;
-    let sig: Uint8Array;
-    try {
-      pubkey = bs58.decode(agent);
-      sig = bs58.decode(signature);
-    } catch {
-      return reject(c, "pact_auth_bad_sig", "malformed signature or pubkey");
-    }
-    if (pubkey.length !== 32 || sig.length !== 64) {
-      return reject(c, "pact_auth_bad_sig", "wrong signature or pubkey length");
+    // Auth mode (`agentVm`) was resolved above with the replay-key
+    // normalization: a 0x EVM address uses secp256k1 / EIP-191 (personal_sign);
+    // anything else is treated as a Solana bs58 pubkey + Ed25519. This is what
+    // lets an EVM agent authenticate (finding 3) — the middleware was
+    // previously Ed25519-only.
+
+    // Cross-mode guard: when the endpoint's network is known, reject an agent
+    // whose VM does not match the endpoint (0x agent on a Solana endpoint, or
+    // an Ed25519 agent on an EVM endpoint).
+    const endpointNetwork = getEndpointNetwork
+      ? await getEndpointNetwork(c)
+      : undefined;
+    if (endpointNetwork && networkToVm(endpointNetwork) !== agentVm) {
+      return reject(
+        c,
+        "pact_auth_bad_sig",
+        `agent key type (${agentVm}) does not match endpoint network ${endpointNetwork}`,
+      );
     }
 
     let verified = false;
-    try {
-      verified = nacl.sign.detached.verify(
-        new TextEncoder().encode(payload),
-        sig,
-        pubkey,
-      );
-    } catch {
-      verified = false;
+    if (agentVm === "evm") {
+      // EVM: EIP-191 personal_sign. The agent header is the claimed 0x
+      // address and the signature is 0x-hex (65 bytes); viem recovers the
+      // signer and verifies it matches the claimed address. We do NOT
+      // hand-roll secp256k1. Try v2 first, fall back to v1 (compat window).
+      for (const payload of [payloadV2, payloadV1]) {
+        try {
+          verified = await verifyMessage({
+            address: normalizedAgent as `0x${string}`,
+            message: payload,
+            signature: signature as `0x${string}`,
+          });
+        } catch {
+          verified = false;
+        }
+        if (verified) break;
+      }
+    } else {
+      // Solana: Ed25519/bs58 path. Try v2 first, fall back to v1.
+      let pubkey: Uint8Array;
+      let sig: Uint8Array;
+      try {
+        pubkey = bs58.decode(agent);
+        sig = bs58.decode(signature);
+      } catch {
+        return reject(c, "pact_auth_bad_sig", "malformed signature or pubkey");
+      }
+      if (pubkey.length !== 32 || sig.length !== 64) {
+        return reject(c, "pact_auth_bad_sig", "wrong signature or pubkey length");
+      }
+      for (const payload of [payloadV2, payloadV1]) {
+        try {
+          if (
+            nacl.sign.detached.verify(
+              new TextEncoder().encode(payload),
+              sig,
+              pubkey,
+            )
+          ) {
+            verified = true;
+            break;
+          }
+        } catch {
+          // fall through and try the next payload
+        }
+      }
     }
     if (!verified) {
       return reject(c, "pact_auth_bad_sig", "signature verification failed");
@@ -155,20 +254,30 @@ export function verifyPactSignature(
 
     // Stash the verified identity for downstream handlers. The proxy
     // route reads it via c.get("verifiedAgent") and prefers it over
-    // any header re-read.
-    c.set("verifiedAgent", agent);
+    // any header re-read. Use the normalized form so downstream billing /
+    // eligibility keys on the same canonical identity as the replay cache.
+    c.set("verifiedAgent", normalizedAgent);
     return next();
   };
 }
 
+// When `network` is provided (including the empty string), produces the v2
+// payload that embeds the chain discriminator and closes the same-VM
+// cross-network replay window. When `network` is omitted, produces the
+// legacy v1 payload — kept for the one-release compat window while the CLI
+// catches up to the SDK.
 export function buildSignaturePayload(args: {
   method: string;
   path: string;
   timestampMs: number;
   nonce: string;
   bodyHash: string;
+  network?: string;
 }): string {
-  return `v1\n${args.method.toUpperCase()}\n${args.path}\n${args.timestampMs}\n${args.nonce}\n${args.bodyHash}`;
+  if (args.network === undefined) {
+    return `v1\n${args.method.toUpperCase()}\n${args.path}\n${args.timestampMs}\n${args.nonce}\n${args.bodyHash}`;
+  }
+  return `v2\n${args.method.toUpperCase()}\n${args.path}\n${args.network}\n${args.timestampMs}\n${args.nonce}\n${args.bodyHash}`;
 }
 
 function sha256Hex(bytes: Uint8Array): string {

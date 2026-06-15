@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Pact Network — Multi-Network Test Report — 2026-05-29</title>
+<style>
+  :root{
+    --bg:#151311; --panel:#1c1916; --panel2:#221e1a; --line:#332c25;
+    --copper:#B87333; --sienna:#C9553D; --slate:#5A6B7A;
+    --ink:#EDE6DD; --muted:#9c8f80; --faint:#6f655a;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:"Inria Sans",-apple-system,Segoe UI,Roboto,sans-serif;
+    line-height:1.55; font-size:15px;
+  }
+  .wrap{max-width:1080px;margin:0 auto;padding:48px 28px 96px}
+  h1,h2,h3{font-family:"Inria Serif",Georgia,serif;font-weight:700;line-height:1.15;margin:0}
+  h1{font-size:34px;letter-spacing:-.01em}
+  h2{font-size:22px;margin:54px 0 14px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+  h3{font-size:16px;margin:26px 0 8px;color:var(--copper)}
+  code,.mono{font-family:"JetBrains Mono",ui-monospace,Menlo,monospace;font-size:12.5px}
+  a{color:var(--copper);text-decoration:none;border-bottom:1px dotted var(--copper)}
+  p{margin:10px 0}
+  .sub{color:var(--muted);font-size:13.5px;margin-top:6px}
+  .meta{display:flex;flex-wrap:wrap;gap:8px 22px;margin-top:18px;font-size:12.5px;color:var(--muted)}
+  .meta b{color:var(--ink);font-weight:600}
+  .verdict{margin-top:26px;border:1px solid var(--line);background:var(--panel);padding:18px 20px}
+  .verdict .big{font-family:"Inria Serif",serif;font-size:19px}
+  .pill{display:inline-block;padding:2px 9px;font-size:11px;font-weight:700;letter-spacing:.04em;border:1px solid}
+  .green{color:var(--slate);border-color:var(--slate)}
+  .warn{color:var(--copper);border-color:var(--copper)}
+  .fail{color:var(--sienna);border-color:var(--sienna)}
+  .skip{color:var(--faint);border-color:var(--faint)}
+  table{width:100%;border-collapse:collapse;margin:14px 0;font-size:13px}
+  th,td{text-align:left;padding:9px 11px;border:1px solid var(--line);vertical-align:top}
+  th{background:var(--panel2);color:var(--muted);font-weight:600;font-size:11.5px;letter-spacing:.03em;text-transform:uppercase}
+  td.mono,th.mono{font-family:"JetBrains Mono",monospace}
+  tr:nth-child(even) td{background:rgba(255,255,255,.012)}
+  .copper{color:var(--copper)} .slate{color:var(--slate)} .sienna{color:var(--sienna)} .muted{color:var(--muted)}
+  .card{border:1px solid var(--line);background:var(--panel);padding:16px 18px;margin:14px 0}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .kpi{border:1px solid var(--line);background:var(--panel);padding:14px 16px}
+  .kpi .n{font-family:"JetBrains Mono",monospace;font-size:24px;color:var(--copper)}
+  .kpi .l{font-size:12px;color:var(--muted);margin-top:2px}
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:18px}
+  .hash{word-break:break-all}
+  .note{border-left:3px solid var(--copper);background:var(--panel2);padding:10px 14px;margin:12px 0;font-size:13px;color:var(--muted)}
+  .note.bad{border-left-color:var(--sienna)}
+  ul{margin:8px 0 8px 0;padding-left:20px} li{margin:4px 0}
+  .star{border:1px solid var(--copper)}
+  .star th{background:#2a2118;color:var(--copper)}
+  footer{margin-top:60px;padding-top:16px;border-top:1px solid var(--line);color:var(--faint);font-size:12px}
+  .deltas td:last-child{color:var(--slate)}
+  .neg{color:var(--sienna)} .pos{color:var(--slate)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Pact Network — Multi-Network Live Test Report</h1>
+  <p class="sub">End-to-end settlement verification across three chains, plus a settler bug found &amp; fixed mid-test.</p>
+  <div class="meta">
+    <span><b>Date:</b> 2026-05-29</span>
+    <span><b>Branch:</b> <code>feat/multi-network</code></span>
+    <span><b>Operator:</b> captain-delegated crews (local pnpm workspace)</span>
+    <span><b>Verification:</b> tx receipts read directly off each chain's RPC by the captain</span>
+  </div>
+
+  <div class="verdict">
+    <span class="pill green">ALL THREE CHAINS GREEN</span>
+    <p class="big" style="margin:12px 0 4px">Every chain completed a real signed call &rarr; premium debit &rarr; on-chain <code>settleBatch</code> with the exact per-recipient fee split.</p>
+    <p class="sub" style="margin-bottom:0">solana-devnet, arc-testnet, and base-sepolia each settled on-chain. The EVM half required fixing a real settler bug (PR&nbsp;#246, now merged) that had prevented EVM settlements from ever submitting.</p>
+  </div>
+
+  <div class="kpis">
+    <div class="kpi"><div class="n">3 / 3</div><div class="l">chains settled on-chain</div></div>
+    <div class="kpi"><div class="n">3</div><div class="l">real settle txs verified</div></div>
+    <div class="kpi"><div class="n">1</div><div class="l">real bug found + fixed (#246)</div></div>
+    <div class="kpi"><div class="n">0</div><div class="l">fund-loss / theft paths</div></div>
+  </div>
+
+  <!-- ============================ ENDPOINTS ============================ -->
+  <h2>1. Endpoints tested (the actual upstreams hit)</h2>
+  <p>Each insured call goes <span class="copper">agent &rarr; Pact proxy route <code>/v1/&lt;slug&gt;/…</code> &rarr; a real upstream API</span>. The proxy classifies the upstream response, debits the premium, and emits a settlement event. Below is exactly which upstream each chain's call reached.</p>
+
+  <table class="star">
+    <thead>
+      <tr><th>Chain</th><th>Proxy route called</th><th>Real upstream endpoint</th><th>Upstream result</th><th>Real / synthetic</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="copper">solana-devnet</td>
+        <td class="mono">POST /v1/dummy/<br><span class="muted">x-pact-network: solana-devnet<br>body: JSON-RPC getBalance</span></td>
+        <td class="mono">https://api.devnet.solana.com<br><span class="muted">(Solana devnet RPC)</span></td>
+        <td><span class="slate">HTTP 200</span> &rarr; classifier <code>ok</code></td>
+        <td><span class="pill green">REAL</span></td>
+      </tr>
+      <tr>
+        <td class="copper">arc-testnet</td>
+        <td class="mono">GET /v1/e2e-test-slug-01/price/v3?ids=So111…112<br><span class="muted">EIP-191 v2-signed, agent 0x1c84…4760</span></td>
+        <td class="mono">https://lite-api.jup.ag/price/v3<br><span class="muted">(Jupiter public price API — keyless)</span></td>
+        <td><span class="slate">HTTP 200 JSON</span> &rarr; classifier <code>ok</code></td>
+        <td><span class="pill green">REAL 3rd-party</span></td>
+      </tr>
+      <tr>
+        <td class="copper">base-sepolia</td>
+        <td class="mono">GET /v1/e2e-test-slug-01/price/v3?ids=So111…112<br><span class="muted">EIP-191 v2-signed, agent 0x1c84…4760</span></td>
+        <td class="mono">https://lite-api.jup.ag/price/v3<br><span class="muted">(Jupiter public price API — keyless)</span></td>
+        <td><span class="slate">HTTP 200 JSON</span> &rarr; classifier <code>ok</code></td>
+        <td><span class="pill green">REAL 3rd-party</span></td>
+      </tr>
+      <tr>
+        <td class="muted">base-sepolia<br><span class="muted">(earlier no-regression check)</span></td>
+        <td class="mono">POST /v1/helius/</td>
+        <td class="mono">Helius RPC<br><span class="muted">(requires API key — none configured)</span></td>
+        <td><span class="sienna">HTTP 401</span> &rarr; <code>client_error</code>, premium 0</td>
+        <td><span class="pill skip">REAL (auth-gated)</span></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="note">
+    <b>Why Jupiter?</b> Of the eight curated provider handlers (helius, birdeye, jupiter, moralis, covalent, elfa, fal, dummy), <b>jupiter</b> is the only keyless one that returns a real 200 from a real third-party API without a provider secret — so it is the genuine "real endpoint interaction" for the EVM chains. (Jupiter's <code>/price/v2</code> is now retired &rarr; <code>/price/v3</code> is the live route.)
+  </div>
+  <div class="note">
+    <b>Routing detail (smoke-only, reverted):</b> the on-chain-registered slug on the EVM chains is <code>e2e-test-slug-01</code>, which has no source handler. For the test it was temporarily mapped to the generic <code>dummyHandler</code> (which correctly strips the <code>/v1/&lt;slug&gt;</code> prefix for a REST GET) pointing at the real Jupiter upstream. That one-line map was reverted after the run — only the adapter fix is committed.
+  </div>
+
+  <!-- ============================ ON-CHAIN ============================ -->
+  <h2>2. On-chain settlement proof</h2>
+  <p>Every transaction below was independently verified by reading the receipt off the chain's own RPC: status <code>success</code>, sent by the settler signer, calling PactSettler / the on-chain program with the <code>settleBatch</code> selector.</p>
+
+  <table>
+    <thead>
+      <tr><th>Chain</th><th>Settle tx hash</th><th>Status</th><th>To (settler contract/program)</th><th>Verdict</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="copper">solana-devnet</td>
+        <td class="mono hash">4GksgECCXJn2h8inYxazuoSGuPFEDXnrLYrmHaQTzhKBJjzA2rpBG5rS1gSQNp5owZBwtWbiyQcBHw7P4CrMgsfp</td>
+        <td class="slate">Finalized</td>
+        <td class="mono">5jBQ… (program v1)</td>
+        <td><span class="pill green">GREEN</span></td>
+      </tr>
+      <tr>
+        <td class="copper">arc-testnet (5042002)</td>
+        <td class="mono hash">0x08060bc0fa1163a297e9a9d57c0bc7c52f56b342269bf4999e2f37b169de93fe</td>
+        <td class="slate">success · blk 44547014</td>
+        <td class="mono">0xe461ce50… PactSettler · eip1559 · gas 197983</td>
+        <td><span class="pill green">GREEN</span></td>
+      </tr>
+      <tr>
+        <td class="copper">base-sepolia (84532)</td>
+        <td class="mono hash">0xc480a7ca4e08a69a0c62b214f524731a5524b664d2da96b8397dfac1d5fb440c</td>
+        <td class="slate">success · blk 42132561</td>
+        <td class="mono">0xe461ce50… PactSettler · eip1559 · gas 252267</td>
+        <td><span class="pill green">GREEN</span></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>Fee split — arc-testnet (premium 10000)</h3>
+  <table class="deltas">
+    <thead><tr><th>Account</th><th>Before</th><th>After</th><th>Δ</th><th>Expected</th></tr></thead>
+    <tbody>
+      <tr><td>agent USDC</td><td class="mono">19988890</td><td class="mono">19978890</td><td class="mono neg">−10000</td><td>−10000 ✓</td></tr>
+      <tr><td>pool</td><td class="mono">67500</td><td class="mono">76000</td><td class="mono pos">+8500</td><td>+8500 ✓</td></tr>
+      <tr><td>affiliate 0xFc561C…</td><td class="mono">491673</td><td class="mono">492173</td><td class="mono pos">+500</td><td>+500 ✓</td></tr>
+      <tr><td>treasury 0x777…</td><td class="mono">19146642</td><td class="mono">19143681</td><td class="mono">+1000 fee − gas¹</td><td>+1000 ✓ (net of gas)</td></tr>
+    </tbody>
+  </table>
+  <p class="sub">¹ On Arc, the gas token <i>is</i> USDC and the treasury recipient equals the settler signer, so its raw USDC delta nets gas against the +1000 fee. The three independent accounts (agent, pool, affiliate) confirm the split exactly; base-sepolia (below) shows treasury +1000 cleanly because gas there is ETH.</p>
+
+  <h3>Fee split — base-sepolia (premium 10000)</h3>
+  <table class="deltas">
+    <thead><tr><th>Account</th><th>Before</th><th>After</th><th>Δ</th><th>Expected</th></tr></thead>
+    <tbody>
+      <tr><td>agent USDC</td><td class="mono">20000000</td><td class="mono">19990000</td><td class="mono neg">−10000</td><td>−10000 ✓</td></tr>
+      <tr><td>pool</td><td class="mono">0</td><td class="mono">8500</td><td class="mono pos">+8500</td><td>+8500 ✓</td></tr>
+      <tr><td>treasury 0x777…</td><td class="mono">20000000</td><td class="mono">20001000</td><td class="mono pos">+1000</td><td>+1000 ✓</td></tr>
+      <tr><td>affiliate 0xFc561C…</td><td class="mono">0</td><td class="mono">500</td><td class="mono pos">+500</td><td>+500 ✓</td></tr>
+    </tbody>
+  </table>
+
+  <!-- ============================ BUG ============================ -->
+  <h2>3. Bug found &amp; fixed during testing — PR #246 (merged)</h2>
+  <p>Driving the EVM chains to a real on-chain settle surfaced a genuine merge-blocker in the multi-network feature: <b>the settler's EVM auto-flush had never actually submitted a transaction on any EVM chain.</b></p>
+  <div class="card">
+    <h3 style="margin-top:0">Root cause</h3>
+    <p><code>EvmAdapter.submitSettleBatch</code> (<code>packages/shared/src/adapters/evm/index.ts</code>) passed <code>account: account.address</code> — a bare address string — to viem's <code>sendTransaction</code>. viem then treats it as a node-managed account and emits <code>wallet_sendTransaction</code>, asking the RPC to sign. Public testnet RPCs reject this — Arc replies literally <span class="sienna">"this request method is not supported"</span>.</p>
+    <h3>Fix</h3>
+    <p>Pass the local <code>PrivateKeyAccount</code> <b>object</b> (the key the wallet client already holds) so viem signs locally and submits via <code>eth_sendRawTransaction</code>. Surgical: 1 functional line + comment, plus a regression unit test. Both settle txs above are <code>eip1559</code> raw transactions — the exact behavior the fix introduces.</p>
+    <p class="sub" style="margin-bottom:0">Branch <code>fix/evm-settle-send-raw-transaction</code> · commit <code>a8afaea</code> · <b>PR #246 merged into feat/multi-network</b>. Build clean; <code>@pact-network/shared</code> tests 53/53 (incl. new regression). Blast radius: LOW (internal to EvmAdapter; Solana path untouched).</p>
+  </div>
+
+  <!-- ============================ OTHER CHECKS ============================ -->
+  <h2>4. Supporting checks (no regression)</h2>
+  <table>
+    <thead><tr><th>Check</th><th>Result</th></tr></thead>
+    <tbody>
+      <tr><td>3-adapter bootstrap (settler + indexer)</td><td class="slate">solana-devnet, base-sepolia, arc-testnet · legacyDirectSolana=false</td></tr>
+      <tr><td>PR #225 P0-2 — EVM chain table baked into TS const</td><td class="slate">PASS — no runtime chains.json read; all adapters boot</td></tr>
+      <tr><td>PR #225 P0-3 — EVM address case-normalize verify</td><td class="slate">PASS — real mixed-case EIP-191 verified; cross-VM guard rejects 4/4</td></tr>
+      <tr><td>PR #225 P0-4 — settler secret redaction</td><td class="slate">PASS — no key material in error logs</td></tr>
+      <tr><td>Cross-VM auth guard (wrong key type for network)</td><td class="slate">PASS — 4/4 probes reject verbatim</td></tr>
+      <tr><td>Mixed-batch partition (network,slug isolation)</td><td class="slate">PASS — distinct flush groups</td></tr>
+    </tbody>
+  </table>
+
+  <!-- ============================ SCOPE ============================ -->
+  <h2>5. Scope, cleanup &amp; known items</h2>
+  <ul>
+    <li><b>All smoke scaffolding reverted.</b> The temporary slug&rarr;handler map, the DB upstream repoint, and the temp Postgres container were removed; working tree shows only the committed fix.</li>
+    <li><b>One persistent testnet mutation:</b> base-sepolia needed an on-chain <code>registerEndpoint</code> (the settler signer is the registry authority) — tx <code class="mono">0xcda8703a…</code>. There is no unregister function, so this throwaway test registration is left in place; it is inert (its DB row was deleted, no committed code references it).</li>
+    <li><span class="warn">FS9 (Solana, pre-mainnet):</span> the deployed devnet program <code>5jBQ</code> predates the <code>protocol_config</code> kill-switch, so the settler's 5-account ix needs a 4-account workaround on devnet. This does <b>not</b> affect mainnet <code>5bCJ</code> (which has the kill-switch). Pre-mainnet devnet redeploy item.</li>
+    <li><span class="warn">SOL-01 (draft PR #245):</span> a separate HIGH finding on the Solana program (settle_batch settlement-authority validation) — code-complete, deferred pending the mainnet redeploy. No fund-theft path.</li>
+    <li><b>No mainnet transactions were sent.</b> All settlements above are devnet / testnet.</li>
+  </ul>
+
+  <div class="note">
+    <b>Mainnet readiness read:</b> the off-chain rails (proxy classify &rarr; premium debit &rarr; settler auto-flush &rarr; on-chain settleBatch with exact fee split) are now proven end-to-end on three chains with real upstreams. The remaining gates before a mainnet run are on-chain/operational (Solana program redeploy bundling FS9 + SOL-01, and confirming a funded mainnet agent/signer + a spend ceiling), not the settlement code path itself.
+  </div>
+
+  <footer>
+    Pact Network · multi-network live test · generated 2026-05-29 · source reports under <code>.planning/smoke/</code> · tx hashes independently verified against arc-testnet, base-sepolia, and solana-devnet RPCs.
+  </footer>
+
+</div>
+</body>
+</html>

@@ -11,7 +11,11 @@ import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import * as path from "path";
 import { fileURLToPath } from "url";
 
-export const PROGRAM_ID = new PublicKey("5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5");
+// Must equal `declare_id!` in src/lib.rs. Bumped to the mainnet ID in commit
+// 28b3777; LiteSVM deploys the .so at this address and the program derives all
+// PDAs + runs `owned_by(&ID)` against its baked `crate::ID`, so the two must
+// match or every PDA/owner check (including SOL-01's) fails to set up.
+export const PROGRAM_ID = new PublicKey("5bCJcdWdKLJ7arrMVMFh3z99rQDxV785fnD9XGcr3xwc");
 
 // Devnet USDC mint — must equal USDC_DEVNET in src/constants.rs
 export const USDC_MINT_PUBKEY = new PublicKey("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU");

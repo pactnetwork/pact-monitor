@@ -1,9 +1,11 @@
 import { z } from "zod";
+import { hasSolanaNetwork } from "./enabled-networks.js";
 
 /**
  * Settler env contract — see Step D #62 of the layering refactor:
  *   docs/superpowers/plans/2026-05-05-network-market-layering-and-v1-v2-rename.md
  * Backend selection (QUEUE_BACKEND) added per plan/devnet-mirror-build §4.4.
+ * Solana-conditional requireds added per agent-tasks#12.
  *
  * Notable points:
  *   - POOL_VAULT_PUBKEY removed: per-endpoint coverage pools mean each event
@@ -19,14 +21,36 @@ import { z } from "zod";
  *     key. Same as the pre-existing SecretLoaderService contract.
  *   - USDC_MINT (optional) overrides the devnet default for mainnet runs.
  *   - QUEUE_BACKEND: "pubsub" (default — mainnet) | "redis-streams" (devnet
- *     on Railway). Each backend has its own required-field set enforced via
- *     superRefine so mainnet ENV_PROD (which has no QUEUE_BACKEND key)
+ *     on Railway) | "memory" (in-process, local dev only — no required
+ *     companion env). Each backend has its own required-field set enforced
+ *     via superRefine so mainnet ENV_PROD (which has no QUEUE_BACKEND key)
  *     parses unchanged with the existing PUBSUB_* fields required.
+ *   - PACT_ENABLED_NETWORKS: comma-separated network slugs. Unset defaults to
+ *     "solana-devnet" (mirrors enabled-networks.ts default). SOLANA_RPC_URL and
+ *     SETTLEMENT_AUTHORITY_KEY are required via superRefine only when a
+ *     solana-* network is enabled. An EVM-only settler (e.g.
+ *     PACT_ENABLED_NETWORKS=base-mainnet) may omit both Solana vars.
+ *     Mainnet ENV_PROD has no PACT_ENABLED_NETWORKS key → defaults to
+ *     solana-devnet → Solana vars remain required (byte-identical behavior).
+ *
+ * NOTE: parseEnv is NOT wired into ConfigModule.forRoot (no validate callback).
+ * This schema is the documented env contract and the spec fixture only — it does
+ * NOT gate boot. This mirrors the pre-existing pattern (see QUEUE_BACKEND
+ * superRefine) and avoids behavior change risk for prod. Wire validation into
+ * boot as a separate follow-up.
  */
 const envSchema = z
   .object({
-    SOLANA_RPC_URL: z.string().url(),
-    SETTLEMENT_AUTHORITY_KEY: z.string().min(1),
+    // Multi-network selector. Drives the Solana-conditional requireds below.
+    // Unset defaults to "solana-devnet" — mirrors enabled-networks.ts default
+    // so existing mainnet ENV_PROD (no PACT_ENABLED_NETWORKS key) continues to
+    // require SOLANA_RPC_URL + SETTLEMENT_AUTHORITY_KEY unchanged.
+    PACT_ENABLED_NETWORKS: z.string().optional(),
+
+    // Solana-only config. Optional at the type layer; required via superRefine
+    // when a solana-* network is enabled (or PACT_ENABLED_NETWORKS is unset).
+    SOLANA_RPC_URL: z.string().url().optional(),
+    SETTLEMENT_AUTHORITY_KEY: z.string().min(1).optional(),
     PROGRAM_ID: z.string().default("5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5"),
     USDC_MINT: z.string().optional(),
     INDEXER_URL: z.string().url(),
@@ -36,7 +60,9 @@ const envSchema = z
 
     // Queue backend selector. Default "pubsub" preserves mainnet behavior
     // byte-for-byte when QUEUE_BACKEND is unset in ENV_PROD.
-    QUEUE_BACKEND: z.enum(["pubsub", "redis-streams"]).default("pubsub"),
+    QUEUE_BACKEND: z
+      .enum(["pubsub", "redis-streams", "memory"])
+      .default("pubsub"),
 
     // Pub/Sub fields — required only when QUEUE_BACKEND is "pubsub" or
     // unset. Made optional at the type layer; the superRefine below
@@ -51,6 +77,29 @@ const envSchema = z
     REDIS_CONSUMER_GROUP: z.string().default("settler"),
   })
   .superRefine((val, ctx) => {
+    // Solana-conditional requireds (agent-tasks#12). When a solana-* network is
+    // enabled (or PACT_ENABLED_NETWORKS is unset → defaults to solana-devnet),
+    // SOLANA_RPC_URL and SETTLEMENT_AUTHORITY_KEY are mandatory. An EVM-only
+    // settler (e.g. PACT_ENABLED_NETWORKS=base-mainnet) may omit both.
+    if (hasSolanaNetwork(val.PACT_ENABLED_NETWORKS)) {
+      if (!val.SOLANA_RPC_URL) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["SOLANA_RPC_URL"],
+          message:
+            "SOLANA_RPC_URL is required when a solana-* network is enabled (or PACT_ENABLED_NETWORKS is unset)",
+        });
+      }
+      if (!val.SETTLEMENT_AUTHORITY_KEY) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["SETTLEMENT_AUTHORITY_KEY"],
+          message:
+            "SETTLEMENT_AUTHORITY_KEY is required when a solana-* network is enabled (or PACT_ENABLED_NETWORKS is unset)",
+        });
+      }
+    }
+
     if (val.QUEUE_BACKEND === "pubsub") {
       if (!val.PUBSUB_PROJECT) {
         ctx.addIssue({

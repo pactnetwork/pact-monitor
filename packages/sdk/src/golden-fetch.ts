@@ -16,6 +16,7 @@
  */
 import { canonicalHostname } from "./hostname.js";
 import type { SlugResolver } from "./slug-resolver.js";
+import type { SignFn, Vm } from "./signer.js";
 import {
   buildProxiedUrl,
   buildAuthHeaders,
@@ -54,10 +55,14 @@ export interface GoldenFetchDeps {
   resolver: SlugResolver;
   proxyBaseUrl: string;
   project: string;
+  network?: string;
   signRequests: boolean;
   agentPubkey: string;
-  /** null when the signer cannot expose a raw secret (wallet adapter). */
-  secretKey: Uint8Array | null;
+  vm: Vm;
+  /** null when the signer cannot expose a raw secret (wallet adapter, or
+   *  EVM signer without a private key). Either resolves to ed25519/bs58 or
+   *  EIP-191/0x-hex depending on `vm`. */
+  sign: SignFn | null;
   fetchImpl: typeof fetch;
   now?: () => number;
 }
@@ -87,7 +92,7 @@ export async function goldenFetch(
 
   // Covered calls require an identity signature — without it the proxy
   // cannot attribute the call to the agent's pool, so coverage is moot.
-  if (!deps.signRequests || deps.secretKey == null) {
+  if (!deps.signRequests || deps.sign == null) {
     return bare(deps, url, init, "unsigned", host, slug, premiumBps);
   }
 
@@ -104,8 +109,10 @@ export async function goldenFetch(
       proxiedUrl,
       bodyBytes,
       agentPubkey: deps.agentPubkey,
-      secretKey: deps.secretKey,
+      sign: deps.sign,
+      vm: deps.vm,
       project: deps.project,
+      network: deps.network,
       now: deps.now,
     });
   } catch {

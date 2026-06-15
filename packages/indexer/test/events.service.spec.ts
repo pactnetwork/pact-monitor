@@ -31,16 +31,23 @@ interface PrismaMockOptions {
 function makePrismaMock(opts: PrismaMockOptions = {}): any {
   const captured: CapturedCall[] = [];
   const callRows = new Map<string, any>();
+  // Fake Postgres store for SettlementRecipientShare rows so the
+  // network-scoped idempotency check (review #226 F3) is observable: a
+  // same-signature batch on a different network must NOT find the first
+  // network's rows.
+  const recipientShareRows: any[] = [];
 
   const mock: any = {
     captured,
     callRows,
+    recipientShareRows,
     // EventsService runs everything inside a transaction. Our mock
     // immediately invokes the callback with `tx === self`. If the callback
     // throws, the captured ops are cleared to model rollback semantics.
     $transaction: jest.fn(async (cb: (tx: any) => Promise<any>) => {
       const snapshot = captured.length;
       const callsSnapshot = new Map(callRows);
+      const shareRowsSnapshot = recipientShareRows.length;
       try {
         return await cb(mock);
       } catch (e) {
@@ -48,6 +55,7 @@ function makePrismaMock(opts: PrismaMockOptions = {}): any {
         captured.length = snapshot;
         callRows.clear();
         for (const [k, v] of callsSnapshot.entries()) callRows.set(k, v);
+        recipientShareRows.length = shareRowsSnapshot;
         throw e;
       }
     }),
@@ -59,13 +67,20 @@ function makePrismaMock(opts: PrismaMockOptions = {}): any {
       }),
     },
     settlementRecipientShare: {
+      // count honors the `where` filter against stored rows so network-scoped
+      // idempotency (F3) is observable. A stored row matches when EVERY field
+      // in `where` equals the row's value — so a sig-only filter matches
+      // across networks (the bug), while a (network, sig) filter does not.
       count: jest.fn(async (args: any) => {
         captured.push({
           table: "settlementRecipientShare",
           op: "count",
           args,
         });
-        return 0; // pretend we have not stored shares yet
+        const where = args.where ?? {};
+        return recipientShareRows.filter((r) =>
+          Object.entries(where).every(([k, v]) => r[k] === v),
+        ).length;
       }),
       createMany: jest.fn(async (args: any) => {
         captured.push({
@@ -73,6 +88,7 @@ function makePrismaMock(opts: PrismaMockOptions = {}): any {
           op: "createMany",
           args,
         });
+        for (const row of args.data) recipientShareRows.push(row);
         return { count: args.data.length };
       }),
     },
@@ -95,29 +111,41 @@ function makePrismaMock(opts: PrismaMockOptions = {}): any {
     call: {
       // findUnique kept for any legacy callers / sanity checks; the service
       // itself now uses `create` + P2002 to detect duplicates.
-      findUnique: jest.fn(async (args: any) =>
-        callRows.get(args.where.callId) ?? null,
-      ),
+      // Key is composite `network:callId` to match @@id([network, callId]).
+      findUnique: jest.fn(async (args: any) => {
+        const nk = args.where.network_callId;
+        const key = nk
+          ? `${nk.network}:${nk.callId}`
+          : `solana-devnet:${args.where.callId}`;
+        return callRows.get(key) ?? null;
+      }),
       create: jest.fn(async (args: any) => {
         if (opts.throwOnCallCreate) throw opts.throwOnCallCreate;
-        if (callRows.has(args.data.callId)) {
+        // Composite dedup key matches the real @@id([network, callId]) PK.
+        const network = args.data.network ?? "solana-devnet";
+        const compositeKey = `${network}:${args.data.callId}`;
+        if (callRows.has(compositeKey)) {
           // Mirror the Prisma unique-constraint error shape so the service's
           // P2002 catch path is exercised.
           throw new Prisma.PrismaClientKnownRequestError(
-            "Unique constraint failed on the fields: (`callId`)",
-            { code: "P2002", clientVersion: "test", meta: { target: ["callId"] } },
+            "Unique constraint failed on the fields: (`network`, `callId`)",
+            { code: "P2002", clientVersion: "test", meta: { target: ["network", "callId"] } },
           );
         }
         captured.push({ table: "call", op: "create", args });
-        callRows.set(args.data.callId, args.data);
+        callRows.set(compositeKey, args.data);
         return args.data;
       }),
     },
     endpoint: {
-      findUnique: jest.fn(async (args: any) => ({ slug: args.where.slug })),
+      findUnique: jest.fn(async (args: any) => {
+        const slug = args.where.network_slug?.slug ?? args.where.slug;
+        return { slug };
+      }),
       upsert: jest.fn(async (args: any) => {
         captured.push({ table: "endpoint", op: "upsert", args });
-        return { slug: args.where.slug };
+        const slug = args.where.network_slug?.slug ?? args.where.slug;
+        return { slug };
       }),
     },
     poolState: {
@@ -279,7 +307,7 @@ describe("EventsService", () => {
     );
     expect(poolUpserts).toHaveLength(2);
     const slugs = poolUpserts
-      .map((u: CapturedCall) => u.args.where.endpointSlug)
+      .map((u: CapturedCall) => u.args.where.network_endpointSlug.endpointSlug)
       .sort();
     expect(slugs).toEqual(["birdeye", "helius"]);
   });
@@ -755,7 +783,7 @@ describe("EventsService", () => {
       (c: CapturedCall) => c.table === "poolState",
     );
     const bySlug = new Map<string, any>(
-      poolUpserts.map((p: CapturedCall) => [p.args.where.endpointSlug, p]),
+      poolUpserts.map((p: CapturedCall) => [p.args.where.network_endpointSlug.endpointSlug, p]),
     );
     expect(bySlug.get("helius")!.args.create.totalFeesPaidLamports).toBe(160n);
     expect(bySlug.get("birdeye")!.args.create.totalFeesPaidLamports).toBe(80n);
@@ -936,7 +964,7 @@ describe("EventsService", () => {
     );
     expect(endpointUpserts).toHaveLength(2); // deduped
     const endpointOrder = endpointUpserts.map(
-      (u: CapturedCall) => u.args.where.slug,
+      (u: CapturedCall) => u.args.where.network_slug.slug,
     );
     expect(endpointOrder).toEqual([...endpointOrder].sort()); // lex-sorted
 
@@ -954,7 +982,7 @@ describe("EventsService", () => {
       (c: CapturedCall) => c.table === "poolState",
     );
     const poolOrder = poolUpserts.map(
-      (u: CapturedCall) => u.args.where.endpointSlug,
+      (u: CapturedCall) => u.args.where.network_endpointSlug.endpointSlug,
     );
     expect(poolOrder).toEqual([...poolOrder].sort());
   });
@@ -991,5 +1019,375 @@ describe("EventsService", () => {
     expect(agentUpsert).toBeDefined();
     expect(agentUpsert!.args.create.walletPda).toBeUndefined();
     expect(agentUpsert!.args.update.walletPda).toBeUndefined();
+  });
+
+  // Finding 5b — the batch network (dto.network) must stamp every aggregate
+  // row (Settlement, Endpoint-FK, PoolState, recipient shares + earnings) and
+  // the per-call network must stamp the Call row, instead of defaulting to
+  // solana-devnet.
+  it("finding 5: an arc-testnet batch stamps every aggregate + call row under arc-testnet", async () => {
+    const dto: SettlementEventDto = {
+      signature: "sigArc",
+      network: "arc-testnet",
+      batchSize: 1,
+      totalPremiumsLamports: "1000",
+      totalRefundsLamports: "0",
+      ts: new Date().toISOString(),
+      calls: [
+        {
+          callId: "arc-c1",
+          network: "arc-testnet",
+          agentPubkey: "0xAgent000000000000000000000000000000000001",
+          endpointSlug: "helius",
+          premiumLamports: "1000",
+          refundLamports: "0",
+          latencyMs: 100,
+          outcome: "ok",
+          ts: new Date().toISOString(),
+          settledAt: new Date().toISOString(),
+          signature: "sigArc",
+          shares: [
+            {
+              kind: 0,
+              pubkey: "0xTreasury0000000000000000000000000000000001",
+              amountLamports: "100",
+            },
+          ],
+        },
+      ],
+    };
+
+    const res = await svc.ingest(dto);
+    expect(res.accepted).toBe(1);
+    assertAllRowsUnderNetwork(prisma, "arc-testnet");
+  });
+
+  // Regression: an unstamped batch (no dto.network, no call.network) must keep
+  // landing every row under solana-devnet.
+  it("regression: an unstamped batch lands every aggregate + call row under solana-devnet", async () => {
+    const dto: SettlementEventDto = {
+      signature: "sigSol",
+      batchSize: 1,
+      totalPremiumsLamports: "1000",
+      totalRefundsLamports: "0",
+      ts: new Date().toISOString(),
+      calls: [
+        {
+          callId: "sol-c1",
+          agentPubkey: "AgentP11111111111111111111111111111111111111",
+          endpointSlug: "helius",
+          premiumLamports: "1000",
+          refundLamports: "0",
+          latencyMs: 100,
+          outcome: "ok",
+          ts: new Date().toISOString(),
+          settledAt: new Date().toISOString(),
+          signature: "sigSol",
+          shares: [
+            {
+              kind: 0,
+              pubkey: "TreasuryPubkey11111111111111111111111111111",
+              amountLamports: "100",
+            },
+          ],
+        },
+      ],
+    };
+
+    const res = await svc.ingest(dto);
+    expect(res.accepted).toBe(1);
+    assertAllRowsUnderNetwork(prisma, "solana-devnet");
+  });
+
+  // Finding F2 (review #226) — dto.network and per-call call.network must not
+  // diverge. The batch resolves ONE network = dto.network ?? calls[0].network
+  // ?? solana-devnet; any call that explicitly resolves to a DIFFERENT network
+  // is a malformed/replayed payload that would split a single settlement's
+  // accounting across two networks. It must 400 with zero rows written.
+  it("F2: a call whose network diverges from dto.network is rejected 400 with no rows", async () => {
+    const dto = {
+      signature: "sigDiverge",
+      network: "solana-devnet",
+      batchSize: 1,
+      totalPremiumsLamports: "1000",
+      totalRefundsLamports: "0",
+      ts: new Date().toISOString(),
+      calls: [
+        {
+          callId: "diverge-1",
+          network: "arc-testnet", // diverges from dto.network
+          agentPubkey: "AgentP11111111111111111111111111111111111111",
+          endpointSlug: "helius",
+          premiumLamports: "1000",
+          refundLamports: "0",
+          latencyMs: 100,
+          outcome: "ok",
+          ts: new Date().toISOString(),
+          settledAt: new Date().toISOString(),
+          signature: "sigDiverge",
+          shares: [],
+        },
+      ],
+    } as SettlementEventDto;
+
+    await expect(svc.ingest(dto)).rejects.toBeInstanceOf(BadRequestException);
+
+    // Rejection happens before the transaction opens — NO rows of any kind.
+    expect(prisma.captured).toHaveLength(0);
+  });
+
+  // Finding F2 consistency: dto.network set, call.network omitted. The call
+  // must INHERIT the resolved batch network so the Call row lands under the
+  // same network as the aggregates. Previously the Call row defaulted to
+  // solana-devnet while aggregates landed under dto.network (the "vice versa"
+  // split in the finding).
+  it("F2: a call with no explicit network inherits the resolved batch network for every row", async () => {
+    const dto: SettlementEventDto = {
+      signature: "sigInherit",
+      network: "arc-testnet",
+      batchSize: 1,
+      totalPremiumsLamports: "1000",
+      totalRefundsLamports: "0",
+      ts: new Date().toISOString(),
+      calls: [
+        {
+          callId: "inherit-1",
+          // network omitted on purpose -> must inherit arc-testnet
+          agentPubkey: "0xAgent000000000000000000000000000000000001",
+          endpointSlug: "helius",
+          premiumLamports: "1000",
+          refundLamports: "0",
+          latencyMs: 100,
+          outcome: "ok",
+          ts: new Date().toISOString(),
+          settledAt: new Date().toISOString(),
+          signature: "sigInherit",
+          shares: [
+            {
+              kind: 0,
+              pubkey: "0xTreasury0000000000000000000000000000000001",
+              amountLamports: "100",
+            },
+          ],
+        },
+      ],
+    };
+
+    const res = await svc.ingest(dto);
+    expect(res.accepted).toBe(1);
+    assertAllRowsUnderNetwork(prisma, "arc-testnet");
+  });
+
+  // Finding F3 (review #226) — SettlementRecipientShare idempotency must be
+  // scoped by (network, settlementSig), not signature alone. The same tx/hash
+  // string can legitimately appear on two networks; each must create its OWN
+  // recipient-share + earnings rows instead of the second network's rows being
+  // skipped because the first network already used that signature.
+  it("F3: same signature on two networks creates recipient shares + earnings for BOTH networks", async () => {
+    const makeDto = (network: string, callId: string): SettlementEventDto => ({
+      signature: "sigSharedAcrossNets",
+      network,
+      batchSize: 1,
+      totalPremiumsLamports: "1000",
+      totalRefundsLamports: "0",
+      ts: new Date().toISOString(),
+      calls: [
+        {
+          callId,
+          network,
+          agentPubkey: "AgentP11111111111111111111111111111111111111",
+          endpointSlug: "helius",
+          premiumLamports: "1000",
+          refundLamports: "0",
+          latencyMs: 100,
+          outcome: "ok",
+          ts: new Date().toISOString(),
+          settledAt: new Date().toISOString(),
+          signature: "sigSharedAcrossNets",
+          shares: [
+            {
+              kind: 0,
+              pubkey: "TreasuryPubkey11111111111111111111111111111",
+              amountLamports: "100",
+            },
+          ],
+        },
+      ],
+    });
+
+    const r1 = await svc.ingest(makeDto("solana-devnet", "shared-sol"));
+    expect(r1.accepted).toBe(1);
+    const r2 = await svc.ingest(makeDto("arc-testnet", "shared-arc"));
+    expect(r2.accepted).toBe(1);
+
+    // Each network created its OWN SettlementRecipientShare batch.
+    const shareNetworks = prisma.captured
+      .filter(
+        (c: CapturedCall) =>
+          c.table === "settlementRecipientShare" && c.op === "createMany",
+      )
+      .flatMap((c: CapturedCall) => c.args.data.map((d: any) => d.network))
+      .sort();
+    expect(shareNetworks).toEqual(["arc-testnet", "solana-devnet"]);
+
+    // Each network created its OWN RecipientEarnings row.
+    const earningsNetworks = prisma.captured
+      .filter((c: CapturedCall) => c.table === "recipientEarnings")
+      .map((c: CapturedCall) => c.args.create.network)
+      .sort();
+    expect(earningsNetworks).toEqual(["arc-testnet", "solana-devnet"]);
+  });
+});
+
+/**
+ * Assert that every persisted aggregate row (Settlement, Endpoint, PoolState,
+ * SettlementRecipientShare, RecipientEarnings) and the Call row carry the
+ * expected network, and that NONE landed under any other network.
+ */
+function assertAllRowsUnderNetwork(
+  prisma: ReturnType<typeof makePrismaMock>,
+  expected: string,
+): void {
+  const networks: string[] = [];
+  for (const c of prisma.captured as CapturedCall[]) {
+    if (c.table === "agent") continue; // Agent rows are not network-keyed
+    if (c.op === "createMany") {
+      for (const row of c.args.data) networks.push(row.network);
+    } else if (c.table === "call") {
+      networks.push(c.args.data.network);
+    } else if (c.args.create?.network !== undefined) {
+      networks.push(c.args.create.network);
+    }
+  }
+  expect(networks.length).toBeGreaterThan(0);
+  for (const n of networks) expect(n).toBe(expected);
+}
+
+// ---------------------------------------------------------------------------
+// WP-MN-04 T3: EVM reorg-replay dedup regression
+// ---------------------------------------------------------------------------
+// D6 §4 mandates that a reorg-replay delivering the same (network, callId)
+// with a DIFFERENT on-chain signature is idempotent. This test locks the
+// existing behavior (@@id([network, callId]) + P2002 in tryInsertCall) so
+// that a future refactor cannot silently break EVM reorg safety.
+//
+// The test is a REGRESSION LOCK, not a behavior change. If it fails it means
+// the dedup path in tryInsertCall or the composite PK has been broken.
+// ---------------------------------------------------------------------------
+
+describe("EventsService.ingest — (network, callId) dedup regression for EVM reorg-replay (WP-MN-04 T3)", () => {
+  let svc: EventsService;
+  let prisma: ReturnType<typeof makePrismaMock>;
+
+  beforeEach(async () => {
+    prisma = makePrismaMock();
+    const mod = await Test.createTestingModule({
+      providers: [
+        EventsService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: RefundDeliveryService, useValue: deliveryMock },
+      ],
+    }).compile();
+    svc = mod.get(EventsService);
+  });
+
+  it("same (network, callId) with different signature is idempotent — EVM reorg-replay (Call PK dedup)", async () => {
+    // Simulate an EVM reorg: the settler delivers the same callId on
+    // arc-testnet but from a different block/signature (the original block
+    // was re-orged and re-mined). The second delivery must be a no-op: the
+    // Call row from the first delivery survives, no second row is created,
+    // and aggregate counters are NOT double-counted.
+
+    const NETWORK = "arc-testnet";
+    const CALL_ID = "evm-reorg-call-0000-0000-000000000001";
+    const AGENT = "AgentP11111111111111111111111111111111111111";
+
+    const makeDto = (sig: string): SettlementEventDto => ({
+      signature: sig,
+      batchSize: 1,
+      totalPremiumsLamports: "500",
+      totalRefundsLamports: "0",
+      ts: new Date().toISOString(),
+      calls: [
+        {
+          callId: CALL_ID,
+          network: NETWORK,
+          agentPubkey: AGENT,
+          endpointSlug: "helius",
+          premiumLamports: "500",
+          refundLamports: "0",
+          latencyMs: 120,
+          outcome: "ok",
+          ts: new Date().toISOString(),
+          settledAt: new Date().toISOString(),
+          signature: sig,
+          shares: [
+            {
+              kind: 0,
+              pubkey: "TreasuryPubkey11111111111111111111111111111",
+              amountLamports: "50",
+            },
+          ],
+        },
+      ],
+    });
+
+    // First delivery: original block, signature A.
+    const r1 = await svc.ingest(makeDto("sigReorgOriginal"));
+    expect(r1.accepted).toBe(1);
+
+    // Capture state after first delivery.
+    const callCreatesAfterFirst = prisma.captured.filter(
+      (c: CapturedCall) => c.table === "call" && c.op === "create",
+    );
+    expect(callCreatesAfterFirst).toHaveLength(1);
+    // The surviving row has the FIRST signature.
+    expect(callCreatesAfterFirst[0]!.args.data.signature).toBe("sigReorgOriginal");
+
+    const agentUpdatesAfterFirst = prisma.captured.filter(
+      (c: CapturedCall) => c.table === "agent" && c.op === "update",
+    );
+    expect(agentUpdatesAfterFirst).toHaveLength(1);
+
+    // Second delivery: reorg produced a new block with different signature
+    // but the same callId on the same network. Must be a complete no-op.
+    const r2 = await svc.ingest(makeDto("sigReorgReplacement"));
+    expect(r2.accepted).toBe(0);
+
+    // Exactly ONE call.create across both deliveries — the second P2002s.
+    const callCreatesTotal = prisma.captured.filter(
+      (c: CapturedCall) => c.table === "call" && c.op === "create",
+    );
+    expect(callCreatesTotal).toHaveLength(1);
+
+    // Agent counters incremented exactly once (no double-count).
+    const agentUpdatesTotal = prisma.captured.filter(
+      (c: CapturedCall) => c.table === "agent" && c.op === "update",
+    );
+    expect(agentUpdatesTotal).toHaveLength(1);
+
+    // PoolState upserted exactly once.
+    const poolUpserts = prisma.captured.filter(
+      (c: CapturedCall) => c.table === "poolState",
+    );
+    expect(poolUpserts).toHaveLength(1);
+
+    // Settlement + SettlementRecipientShare inserted exactly once.
+    const settlementUpserts = prisma.captured.filter(
+      (c: CapturedCall) => c.table === "settlement",
+    );
+    expect(settlementUpserts).toHaveLength(1);
+
+    const shareInserts = prisma.captured.filter(
+      (c: CapturedCall) =>
+        c.table === "settlementRecipientShare" && c.op === "createMany",
+    );
+    expect(shareInserts).toHaveLength(1);
+
+    // The surviving Call row has the first (pre-reorg) signature, not the
+    // replacement. The P2002 short-circuits — the second insert is skipped
+    // entirely, preserving the original row.
+    expect(callCreatesTotal[0]!.args.data.network).toBe(NETWORK);
+    expect(callCreatesTotal[0]!.args.data.callId).toBe(CALL_ID);
   });
 });
