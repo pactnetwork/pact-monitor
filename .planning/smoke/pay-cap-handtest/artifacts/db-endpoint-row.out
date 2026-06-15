@@ -1,0 +1,5 @@
+    slug     | flatPremiumLamports | imputedCostLamports | paused 
+-------------+---------------------+---------------------+--------
+ pay-default |                1000 |             1000000 | f
+(1 row)
+

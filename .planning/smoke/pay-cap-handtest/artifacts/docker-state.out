@@ -1,0 +1,6 @@
+=== docker ps (harness containers) ===
+pact-handtest-pubsub	Up 7 minutes	0.0.0.0:8685->8685/tcp, [::]:8685->8685/tcp
+pact-handtest-pg	Up 8 minutes	0.0.0.0:5544->5432/tcp, [::]:5544->5432/tcp
+
+=== pubsub topics/subscriptions (emulator) ===
+[pull-events] collected 2 event(s)

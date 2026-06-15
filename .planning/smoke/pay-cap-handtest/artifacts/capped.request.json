@@ -1,0 +1,23 @@
+{
+  "url": "http://localhost:8080/v1/coverage/register",
+  "method": "POST",
+  "agentPubkey": "Hr7XXdvkiQXb1Z7SnC5i8BJks5ptuEUkswrJX97AsNLa",
+  "canonicalPayload": "v1\nPOST\n/v1/coverage/register\n1781513440372\n8HxGbaEZ5vzHMFPSD899VP\n08a1becd2e62349553312c5a36299e86fc5d5854bc54dca37e70e6ff579acfd2",
+  "headers": {
+    "content-type": "application/json",
+    "x-pact-agent": "Hr7XXdvkiQXb1Z7SnC5i8BJks5ptuEUkswrJX97AsNLa",
+    "x-pact-timestamp": "1781513440372",
+    "x-pact-nonce": "8HxGbaEZ5vzHMFPSD899VP",
+    "x-pact-signature": "4Tp6FUWdETcNDLzCfMGyRvSN5JMTxcgqPkZ1YCkaLZ3YXPtdxyPkFCqVUfniRtGgPCjbL2H5WpTimi8bMuLtz5Vf",
+    "x-pact-project": "handtest"
+  },
+  "body": {
+    "agent": "Hr7XXdvkiQXb1Z7SnC5i8BJks5ptuEUkswrJX97AsNLa",
+    "resource": "https://pay.local/handtest-capped",
+    "scheme": "x402",
+    "amountBaseUnits": "9999999999",
+    "asset": "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+    "verdict": "server_error",
+    "latencyMs": 12000
+  }
+}

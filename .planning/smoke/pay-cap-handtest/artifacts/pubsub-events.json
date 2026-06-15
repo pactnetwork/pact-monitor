@@ -1,0 +1,34 @@
+[
+  {
+    "callId": "2363add3-8a6c-4982-a855-3fd5efc11d8b",
+    "agentPubkey": "Hr7XXdvkiQXb1Z7SnC5i8BJks5ptuEUkswrJX97AsNLa",
+    "endpointSlug": "pay-default",
+    "premiumLamports": "1000",
+    "refundLamports": "501000",
+    "latencyMs": 12000,
+    "outcome": "server_error",
+    "ts": "2026-06-15T08:50:40.844Z",
+    "source": "pay.sh",
+    "verified": false,
+    "payee": null,
+    "resource": "https://pay.local/handtest-uncapped",
+    "coverageId": "2363add3-8a6c-4982-a855-3fd5efc11d8b",
+    "verdictSource": "client_attested"
+  },
+  {
+    "callId": "a6762b86-2814-4b3d-b203-7f6448b2f63e",
+    "agentPubkey": "Hr7XXdvkiQXb1Z7SnC5i8BJks5ptuEUkswrJX97AsNLa",
+    "endpointSlug": "pay-default",
+    "premiumLamports": "1000",
+    "refundLamports": "1001000",
+    "latencyMs": 12000,
+    "outcome": "server_error",
+    "ts": "2026-06-15T08:50:40.717Z",
+    "source": "pay.sh",
+    "verified": false,
+    "payee": null,
+    "resource": "https://pay.local/handtest-capped",
+    "coverageId": "a6762b86-2814-4b3d-b203-7f6448b2f63e",
+    "verdictSource": "client_attested"
+  }
+]

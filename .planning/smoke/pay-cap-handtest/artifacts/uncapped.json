@@ -1,0 +1,14 @@
+{
+  "httpStatus": 200,
+  "response": {
+    "coverageId": "2363add3-8a6c-4982-a855-3fd5efc11d8b",
+    "status": "settlement_pending",
+    "premiumBaseUnits": "1000",
+    "refundBaseUnits": "501000",
+    "reason": null,
+    "poolSlug": "pay-default",
+    "outcome": "server_error",
+    "observedPaymentBaseUnits": null,
+    "verified": false
+  }
+}

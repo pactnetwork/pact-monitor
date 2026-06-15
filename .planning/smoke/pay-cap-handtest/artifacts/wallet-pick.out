@@ -1,0 +1,2 @@
+[pick-wallet] skip /Users/q3labsadmin/.config/pact/hand-test/wallet.json pubkey=58emDGtsmCB2ComZk9Ugjvxfh1Vi2S1BWs4q1SwW2XVE: no_ata
+[pick-wallet] CHOSEN /Users/q3labsadmin/.config/pact/pact-smoke/wallet.json pubkey=Hr7XXdvkiQXb1Z7SnC5i8BJks5ptuEUkswrJX97AsNLa ata=4yL1TWVX5gw5ReaKqpEZJikrqRNZTtXhrJXfwnThUTQQ balance=19998000 delegatedAmount=998000 delegate=FbTs39EycTWtQCRrExwmoAAjeQrcaLrXyNpVqthuXy4m

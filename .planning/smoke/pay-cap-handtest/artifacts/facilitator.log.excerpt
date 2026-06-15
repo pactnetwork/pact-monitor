@@ -1,0 +1,2 @@
+pact-facilitator listening on :8080
+bigint: Failed to load bindings, pure JS will be used (try npm run rebuild?)
