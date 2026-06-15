@@ -44,3 +44,20 @@ scripts/smoke-tier2/.smoke-keys/
 scripts/smoke-tier2/.smoke-state/
 scripts/smoke-tier2/.surfpool-data/
 scripts/smoke-tier2/.logs/
+
+# externally-sourced agent-tasks skill symlinks (point into ~/pact/agent-tasks; local only)
+.claude/skills/pact-delegate-task
+.claude/skills/pact-pickup-task
+.claude/skills/pact-post-finding
+.claude/skills/pact-find-exploration
+.claude/skills/pact-agent-send
+.claude/skills/pact-agent-inbox
+
+# .planning is local working scratch (smoke harness, logs, gate reports). Already-tracked files stay tracked; new scratch stays out of git.
+.planning/
+
+# generated architecture HTML (regenerable via docs/architecture/build-html.mjs)
+docs/architecture/*.html
+
+# macOS junk
+.DS_Store

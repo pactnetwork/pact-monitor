@@ -1,6 +1,6 @@
 {
   "name": "@pact-network/protocol-evm-v1-client",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "TypeScript client (viem) for the Pact Network EVM v1 protocol contracts on Circle Arc. Mirrors @q3labs/pact-protocol-v1-client: deployed addresses, calldata encoders, view/event decoders, custom-error selector map, constants, fee-recipient helpers.",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

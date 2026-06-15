@@ -1,6 +1,6 @@
 {
   "name": "@q3labs/pact-sdk",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "Unified Pact Network agent SDK: createPact() + pact.fetch(). Proxy-backed parametric refund coverage for any registered API on Pact Network V1.",
   "type": "module",
   "sideEffects": false,
