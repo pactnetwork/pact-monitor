@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { ScheduleModule } from "@nestjs/schedule";
 import { OnChainSyncService } from "./on-chain-sync.service";
+import { AdaptersModule } from "../adapters/adapters.module";
 
 /**
  * Wires up the on-chain → DB sync service. The PrismaModule is `@Global()`
@@ -8,7 +9,7 @@ import { OnChainSyncService } from "./on-chain-sync.service";
  * must be imported once in the app to enable `@Cron`-decorated handlers.
  */
 @Module({
-  imports: [ScheduleModule.forRoot()],
+  imports: [ScheduleModule.forRoot(), AdaptersModule],
   providers: [OnChainSyncService],
   exports: [OnChainSyncService],
 })

@@ -1,6 +1,6 @@
 {
   "name": "@q3labs/pact-monitor",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/pactnetwork/pact-monitor.git",
@@ -47,6 +47,7 @@
     "typescript": "^5.8.3"
   },
   "dependencies": {
+    "@pact-network/classifier": "workspace:*",
     "bs58": "^6.0.0",
     "tweetnacl": "^1.0.3"
   }

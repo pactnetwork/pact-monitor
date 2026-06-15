@@ -10,8 +10,14 @@ vi.mock("@google-cloud/secret-manager", () => ({
   })),
 }));
 
-function makeConfig(key: string): ConfigService {
-  return { getOrThrow: vi.fn().mockReturnValue(key) } as unknown as ConfigService;
+function makeConfig(
+  key: string,
+  getValues: Record<string, string | undefined> = {},
+): ConfigService {
+  return {
+    getOrThrow: vi.fn().mockReturnValue(key),
+    get: vi.fn((k: string) => getValues[k]),
+  } as unknown as ConfigService;
 }
 
 describe("SecretLoaderService", () => {
@@ -32,6 +38,38 @@ describe("SecretLoaderService", () => {
     const devKeypair = Keypair.generate();
     const svc = new SecretLoaderService(makeConfig(bs58.encode(devKeypair.secretKey)));
     expect(() => svc.keypair).toThrow("Keypair not loaded");
+  });
+
+  // EVM-only boot (multi-evm WP T5 redo): no solana-* enabled. onModuleInit must
+  // NOT load the Solana settlement-authority keypair (no getOrThrow
+  // SETTLEMENT_AUTHORITY_KEY); the keypair getter still throws if accessed.
+  it("skips the Solana keypair load on an EVM-only deploy (no solana-* enabled)", async () => {
+    const config = {
+      // getOrThrow throws for everything — proving load() is never reached.
+      getOrThrow: vi.fn((k: string) => {
+        throw new Error(`missing ${k}`);
+      }),
+      get: vi.fn((k: string) =>
+        k === "PACT_ENABLED_NETWORKS" ? "arc-testnet" : undefined,
+      ),
+    } as unknown as ConfigService;
+
+    const svc = new SecretLoaderService(config);
+    await expect(svc.onModuleInit()).resolves.toBeUndefined();
+    expect(config.getOrThrow).not.toHaveBeenCalledWith("SETTLEMENT_AUTHORITY_KEY");
+    expect(() => svc.keypair).toThrow("Keypair not loaded");
+  });
+
+  it("loads the Solana keypair on boot when a Solana network is enabled", async () => {
+    const devKeypair = Keypair.generate();
+    const encoded = bs58.encode(devKeypair.secretKey);
+    const svc = new SecretLoaderService(
+      makeConfig(encoded, { PACT_ENABLED_NETWORKS: "solana-devnet" }),
+    );
+    await svc.onModuleInit();
+    expect(svc.keypair.publicKey.toBase58()).toBe(
+      devKeypair.publicKey.toBase58(),
+    );
   });
 
   it("fetches from Secret Manager when path starts with projects/", async () => {

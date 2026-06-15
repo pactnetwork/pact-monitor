@@ -1,12 +1,20 @@
 import { describe, it, expect } from "vitest";
 import nacl from "tweetnacl";
 import bs58 from "bs58";
+import {
+  generatePrivateKey,
+  privateKeyToAccount,
+} from "viem/accounts";
+import { getAddress } from "viem";
 import { goldenFetch, type GoldenFetchDeps } from "../golden-fetch.js";
+import type { SignFn } from "../signer.js";
 import type { SlugResolver, SlugResolution } from "../slug-resolver.js";
 
 const kp = nacl.sign.keyPair();
 const AGENT = bs58.encode(kp.publicKey);
 const PROXY = "https://market.pactnetwork.io";
+const solanaSign: SignFn = async (payload) =>
+  nacl.sign.detached(payload, kp.secretKey);
 
 function resolverReturning(res: SlugResolution): SlugResolver {
   return { resolve: async () => res } as unknown as SlugResolver;
@@ -30,7 +38,8 @@ function deps(
     project: "default",
     signRequests: true,
     agentPubkey: AGENT,
-    secretKey: kp.secretKey,
+    vm: "solana",
+    sign: solanaSign,
     fetchImpl,
     now: () => 1_700_000_000_000,
     ...over,
@@ -90,7 +99,7 @@ describe("goldenFetch — degraded paths", () => {
     expect(r.degradedReason).toBe("paused");
   });
 
-  it("degrades to 'unsigned' when signing is disabled or unavailable", async () => {
+  it("degrades to 'unsigned' when signing is disabled or unavailable (Solana)", async () => {
     const { fetchImpl, calls } = dispatcher({
       origin: () => new Response("bare", { status: 200 }),
     });
@@ -101,7 +110,7 @@ describe("goldenFetch — degraded paths", () => {
     );
     expect(off.degradedReason).toBe("unsigned");
     const noKey = await goldenFetch(
-      deps({ secretKey: null }, fetchImpl),
+      deps({ sign: null }, fetchImpl),
       "https://api.helius.xyz/v0/x",
       undefined,
     );
@@ -109,14 +118,37 @@ describe("goldenFetch — degraded paths", () => {
     expect(calls.every((c) => !c.url.includes("/v1/"))).toBe(true);
   });
 
-  it("degrades to bare (never throws) when signing itself fails", async () => {
-    // A malformed 5-byte secret makes nacl.sign.detached throw inside
-    // buildAuthHeaders. The golden rule forbids throwing on Pact's behalf.
+  it("degrades to 'unsigned' for an EVM signer with no sign fn", async () => {
+    const evmAccount = privateKeyToAccount(generatePrivateKey());
     const { fetchImpl, calls } = dispatcher({
       origin: () => new Response("bare", { status: 200 }),
     });
     const r = await goldenFetch(
-      deps({ secretKey: new Uint8Array(5) }, fetchImpl),
+      deps(
+        {
+          vm: "evm",
+          agentPubkey: getAddress(evmAccount.address),
+          sign: null,
+        },
+        fetchImpl,
+      ),
+      "https://api.helius.xyz/v0/x",
+      undefined,
+    );
+    expect(r.degraded).toBe(true);
+    expect(r.degradedReason).toBe("unsigned");
+    expect(calls.every((c) => !c.url.includes("/v1/"))).toBe(true);
+  });
+
+  it("degrades to bare (never throws) when signing itself fails", async () => {
+    const { fetchImpl, calls } = dispatcher({
+      origin: () => new Response("bare", { status: 200 }),
+    });
+    const explodingSign: SignFn = async () => {
+      throw new Error("signer offline");
+    };
+    const r = await goldenFetch(
+      deps({ sign: explodingSign }, fetchImpl),
       "https://api.helius.xyz/v0/x",
       undefined,
     );
@@ -146,7 +178,7 @@ describe("goldenFetch — degraded paths", () => {
   });
 });
 
-describe("goldenFetch — covered path", () => {
+describe("goldenFetch — covered Solana path", () => {
   it("routes through the proxy with signed x-pact-* headers", async () => {
     const { fetchImpl, calls } = dispatcher({
       proxy: () =>
@@ -243,5 +275,42 @@ describe("goldenFetch — covered path", () => {
     );
     expect(r.degradedReason).toBe("proxy_unreachable");
     expect(await r.response.text()).toBe("upstream");
+  });
+});
+
+describe("goldenFetch — covered EVM path", () => {
+  it("routes through the proxy with 0x-checksum agent + 0x-hex signature + x-pact-network", async () => {
+    const pk = generatePrivateKey();
+    const account = privateKeyToAccount(pk);
+    const evmSign: SignFn = async (payload) =>
+      account.signMessage({ message: { raw: payload } });
+
+    const { fetchImpl, calls } = dispatcher({
+      proxy: () =>
+        new Response("ok", {
+          status: 200,
+          headers: { "X-Pact-Call-Id": "cid-evm", "X-Pact-Outcome": "ok" },
+        }),
+    });
+    const r = await goldenFetch(
+      deps(
+        {
+          vm: "evm",
+          agentPubkey: getAddress(account.address),
+          sign: evmSign,
+          network: "base-sepolia",
+        },
+        fetchImpl,
+      ),
+      "https://api.helius.xyz/v0/x?api=1",
+      { method: "POST", body: '{"q":1}' },
+    );
+    expect(r.degraded).toBe(false);
+    expect(r.callId).toBe("cid-evm");
+    const h = calls[0].init!.headers as Record<string, string>;
+    expect(h["x-pact-agent"]).toBe(getAddress(account.address));
+    expect(h["x-pact-signature"]).toMatch(/^0x[0-9a-fA-F]{130}$/);
+    expect(h["x-pact-network"]).toBe("base-sepolia");
+    expect(h["x-pact-project"]).toBe("default");
   });
 });

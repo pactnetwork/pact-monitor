@@ -18,7 +18,13 @@ import {
 } from "@q3labs/pact-protocol-v1-client";
 import { validateConfig, type PactConfig } from "./config.js";
 import { resolveNetwork, type ResolvedNetwork } from "./network.js";
-import { resolveSecretKey, signerPublicKey } from "./signer.js";
+import {
+  isEvmSigner,
+  resolveSignFn,
+  signerAddress,
+  signerVm,
+  type SolanaPactSigner,
+} from "./signer.js";
 import { canonicalHostname } from "./hostname.js";
 import { SlugResolver } from "./slug-resolver.js";
 import { selectStorage } from "./storage-select.js";
@@ -118,8 +124,9 @@ export async function createPact(config: PactConfig): Promise<PactInstance> {
     rpcUrl: cfg.rpcUrl,
   });
 
-  const agentPubkey = signerPublicKey(cfg.signer);
-  const secretKey = resolveSecretKey(cfg.signer, cfg.requestSigningSecretKey);
+  const agentPubkey = signerAddress(cfg.signer);
+  const sign = resolveSignFn(cfg.signer, cfg.requestSigningSecretKey);
+  const vm = signerVm(cfg.signer);
   const usdcMint = new PublicKey(net.usdcMint);
 
   const resolver = new SlugResolver({
@@ -138,12 +145,22 @@ export async function createPact(config: PactConfig): Promise<PactInstance> {
     connection ??= new Connection(net.rpcUrl, "confirmed");
     return connection;
   };
-  const onChainCtx = (): OnChainContext => ({
-    connection: conn(),
-    signer: cfg.signer,
-    programId: requireProgramId(net),
-    usdcMint,
-  });
+  const onChainCtx = (): OnChainContext => {
+    if (isEvmSigner(cfg.signer)) {
+      throw new PactError(
+        PactErrorCode.CONFIG_INVALID,
+        "On-chain ops (setup/topUp/revoke) require a Solana signer; got an " +
+          "EVM signer. EVM agents only need on-chain registration on their " +
+          "own chain — not via this SDK.",
+      );
+    }
+    return {
+      connection: conn(),
+      signer: cfg.signer as SolanaPactSigner,
+      programId: requireProgramId(net),
+      usdcMint,
+    };
+  };
 
   // The ONE reconciliation critical section. Both the poller and the webhook
   // receiver route through this. Idempotent by construction: it re-reads
@@ -237,9 +254,11 @@ export async function createPact(config: PactConfig): Promise<PactInstance> {
     resolver,
     proxyBaseUrl: net.proxyBaseUrl,
     project: cfg.project,
+    network: cfg.endpointNetwork,
     signRequests: cfg.signRequests,
     agentPubkey,
-    secretKey,
+    vm,
+    sign,
     fetchImpl: cfg.fetchImpl,
   };
 

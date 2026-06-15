@@ -1,0 +1,10 @@
+# Foundry build artifacts
+out/
+cache/
+broadcast/
+
+# Installed Solidity libraries (forge install) — none in WP-EVM-01
+lib/
+
+# Local secrets — never commit a real key or RPC token
+.env

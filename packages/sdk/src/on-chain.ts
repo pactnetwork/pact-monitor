@@ -38,7 +38,11 @@ import {
   type AgentInsurableState,
 } from "@q3labs/pact-protocol-v1-client";
 import { PactError, PactErrorCode } from "./errors.js";
-import { isKeypair, signerPublicKey, type PactSigner } from "./signer.js";
+import {
+  isKeypair,
+  signerPublicKey,
+  type SolanaPactSigner,
+} from "./signer.js";
 
 const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey(
   "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
@@ -76,14 +80,14 @@ export function buildCreateAtaIdempotentIx(params: {
 
 export interface OnChainContext {
   connection: Connection;
-  signer: PactSigner;
+  signer: SolanaPactSigner;
   programId: PublicKey;
   usdcMint: PublicKey;
   /** Test seam: bypass real submission. */
   submit?: (tx: Transaction) => Promise<string>;
 }
 
-function ownerPk(signer: PactSigner): PublicKey {
+function ownerPk(signer: SolanaPactSigner): PublicKey {
   return new PublicKey(signerPublicKey(signer));
 }
 

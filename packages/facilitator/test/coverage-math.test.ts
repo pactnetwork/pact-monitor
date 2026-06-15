@@ -36,25 +36,27 @@ describe("computeCoverage", () => {
     });
   });
   for (const o of ["latency_breach", "server_error", "network_error"] as const) {
-    test(`${o}: refund = amount paid when < ceiling`, () => {
+    test(`${o}: refund = amountPaid + premium (canonical, agent-tasks#11)`, () => {
       expect(computeCoverage(o, POOL, 3_000n)).toEqual({
         outcome: o,
         premiumLamports: 1_000n,
-        refundLamports: 3_000n,
+        // principal 3_000n + flat premium 1_000n
+        refundLamports: 4_000n,
         covered: true,
       });
       expect(isCoveredBreach(o)).toBe(true);
     });
-    test(`${o}: refund capped at the pool's per-call ceiling`, () => {
+    test(`${o}: large amountPaid is NOT capped — exposure cap is on-chain`, () => {
       expect(computeCoverage(o, POOL, 999_999n)).toEqual({
         outcome: o,
         premiumLamports: 1_000n,
-        refundLamports: 10_000n, // POOL.imputedCostLamports
+        // principal 999_999n + flat premium 1_000n; no off-chain ceiling
+        refundLamports: 1_000_999n,
         covered: true,
       });
     });
-    test(`${o}: refund = 0 when amount paid is 0`, () => {
-      expect(computeCoverage(o, POOL, 0n).refundLamports).toBe(0n);
+    test(`${o}: refund = premium when amountPaid is 0 (degenerate; route enforces >0)`, () => {
+      expect(computeCoverage(o, POOL, 0n).refundLamports).toBe(1_000n);
     });
   }
   test("client_error → premium=0, refund=0, NOT covered", () => {

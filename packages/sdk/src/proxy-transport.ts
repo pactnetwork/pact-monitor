@@ -1,15 +1,23 @@
 /**
  * Pact Market proxy transport.
  *
- * The signed-request contract is a verbatim port of
- * `packages/cli/src/lib/transport.ts` and MUST stay byte-for-byte
- * compatible with `packages/market-proxy/src/middleware/verify-signature.ts`:
+ * The signed-request contract MUST stay byte-for-byte compatible with
+ * `packages/market-proxy/src/middleware/verify-signature.ts`. From this SDK
+ * release onward we emit the v2 canonical payload, which embeds the network
+ * discriminator inside the signed bytes to close the same-VM cross-network
+ * replay window:
  *
- *   payload = "v1\n{METHOD}\n{pathname+search}\n{tsMs}\n{nonce}\n{bodyHash}"
+ *   payload = "v2\n{METHOD}\n{pathname+search}\n{NETWORK}\n{tsMs}\n{nonce}\n{bodyHash}"
  *   bodyHash = sha256(body bytes) hex, or "" for an empty body
- *   signature = bs58( nacl.sign.detached(utf8(payload), secretKey) )
- *   headers   = x-pact-agent | x-pact-timestamp | x-pact-nonce |
- *               x-pact-signature | x-pact-project
+ *   NETWORK  = x-pact-network header value, or "" when absent (literal "" in bytes)
+ *
+ * Signature primitive picked by VM:
+ *  - Solana: bs58( nacl.sign.detached(utf8(payload), secretKey) )
+ *  - EVM:    0x-hex EIP-191 personal_sign over utf8(payload)
+ *
+ * Headers shipped:
+ *   x-pact-agent | x-pact-timestamp | x-pact-nonce |
+ *   x-pact-signature | x-pact-project | x-pact-network (when configured)
  *
  * The proxy enforces ±30s skew and single-use nonces. `x-pact-project` is
  * mandatory (a missing one is a hard 401). There is NO API key.
@@ -17,9 +25,9 @@
  * Do NOT substitute `@q3labs/pact-monitor`'s `createSignature()` — it is
  * base64 over a pre-hashed message and the proxy would reject it.
  */
-import nacl from "tweetnacl";
 import bs58 from "bs58";
 import { randomBytes, sha256Hex } from "./crypto.js";
+import type { SignFn, Vm } from "./signer.js";
 
 // Upstream auth the proxy injects itself — never forward the caller's copy
 // (matches transport.ts STRIPPED_HEADERS).
@@ -33,11 +41,12 @@ const STRIPPED_HEADERS = new Set([
 export function buildSignaturePayload(args: {
   method: string;
   path: string;
+  network: string;
   timestampMs: number;
   nonce: string;
   bodyHash: string;
 }): string {
-  return `v1\n${args.method.toUpperCase()}\n${args.path}\n${args.timestampMs}\n${args.nonce}\n${args.bodyHash}`;
+  return `v2\n${args.method.toUpperCase()}\n${args.path}\n${args.network}\n${args.timestampMs}\n${args.nonce}\n${args.bodyHash}`;
 }
 
 /** Normalize a fetch body to the exact bytes that will be sent + hashed. */
@@ -76,8 +85,10 @@ export interface AuthHeaderInput {
   proxiedUrl: string;
   bodyBytes: Uint8Array | null;
   agentPubkey: string;
-  secretKey: Uint8Array;
+  sign: SignFn;
+  vm: Vm;
   project: string;
+  network?: string;
   now?: () => number;
 }
 
@@ -96,20 +107,25 @@ export async function buildAuthHeaders(
   const payload = buildSignaturePayload({
     method: input.method,
     path,
+    network: input.network ?? "",
     timestampMs: ts,
     nonce,
     bodyHash,
   });
-  const sig = nacl.sign.detached(
-    new TextEncoder().encode(payload),
-    input.secretKey,
-  );
+  const sigRaw = await input.sign(new TextEncoder().encode(payload));
+  const signature =
+    input.vm === "evm"
+      ? // viem returns a 0x-prefixed hex string already.
+        (sigRaw as `0x${string}`)
+      : // Solana path returns 64 raw bytes; encode bs58 for the proxy.
+        bs58.encode(sigRaw as Uint8Array);
   return {
     "x-pact-agent": input.agentPubkey,
     "x-pact-timestamp": String(ts),
     "x-pact-nonce": nonce,
-    "x-pact-signature": bs58.encode(sig),
+    "x-pact-signature": signature,
     "x-pact-project": input.project,
+    ...(input.network ? { "x-pact-network": input.network } : {}),
   };
 }
 

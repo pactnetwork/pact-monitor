@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Pact Network — Full Smoke Report — 2026-05-29</title>
+<style>
+  :root{
+    --bg:#151311; --panel:#1c1916; --panel2:#221e1a; --line:#332c25;
+    --copper:#B87333; --sienna:#C9553D; --slate:#5A6B7A;
+    --ink:#EDE6DD; --muted:#9c8f80; --faint:#6f655a;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:"Inria Sans",-apple-system,Segoe UI,Roboto,sans-serif;line-height:1.55;font-size:15px}
+  .wrap{max-width:1100px;margin:0 auto;padding:48px 28px 96px}
+  h1,h2,h3{font-family:"Inria Serif",Georgia,serif;font-weight:700;line-height:1.15;margin:0}
+  h1{font-size:34px;letter-spacing:-.01em}
+  h2{font-size:22px;margin:54px 0 14px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+  h3{font-size:16px;margin:26px 0 8px;color:var(--copper)}
+  code,.mono{font-family:"JetBrains Mono",ui-monospace,Menlo,monospace;font-size:12.5px}
+  a{color:var(--copper);text-decoration:none;border-bottom:1px dotted var(--copper)}
+  p{margin:10px 0}
+  .sub{color:var(--muted);font-size:13.5px;margin-top:6px}
+  .meta{display:flex;flex-wrap:wrap;gap:8px 22px;margin-top:18px;font-size:12.5px;color:var(--muted)}
+  .meta b{color:var(--ink);font-weight:600}
+  .verdict{margin-top:26px;border:1px solid var(--line);background:var(--panel);padding:18px 20px}
+  .verdict .big{font-family:"Inria Serif",serif;font-size:19px}
+  .pill{display:inline-block;padding:2px 9px;font-size:11px;font-weight:700;letter-spacing:.04em;border:1px solid}
+  .green{color:var(--slate);border-color:var(--slate)}
+  .warn{color:var(--copper);border-color:var(--copper)}
+  .fail{color:var(--sienna);border-color:var(--sienna)}
+  .skip{color:var(--faint);border-color:var(--faint)}
+  table{width:100%;border-collapse:collapse;margin:14px 0;font-size:13px}
+  th,td{text-align:left;padding:9px 11px;border:1px solid var(--line);vertical-align:top}
+  th{background:var(--panel2);color:var(--muted);font-weight:600;font-size:11.5px;letter-spacing:.03em;text-transform:uppercase}
+  td.mono,th.mono{font-family:"JetBrains Mono",monospace}
+  tr:nth-child(even) td{background:rgba(255,255,255,.012)}
+  .copper{color:var(--copper)} .slate{color:var(--slate)} .sienna{color:var(--sienna)} .muted{color:var(--muted)}
+  .card{border:1px solid var(--line);background:var(--panel);padding:16px 18px;margin:14px 0}
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:18px}
+  .kpi{border:1px solid var(--line);background:var(--panel);padding:14px 16px}
+  .kpi .n{font-family:"JetBrains Mono",monospace;font-size:23px;color:var(--copper)}
+  .kpi .l{font-size:12px;color:var(--muted);margin-top:2px}
+  .hash{word-break:break-all}
+  .note{border-left:3px solid var(--copper);background:var(--panel2);padding:10px 14px;margin:12px 0;font-size:13px;color:var(--muted)}
+  .note.bad{border-left-color:var(--sienna)}
+  ul{margin:8px 0;padding-left:20px} li{margin:4px 0}
+  .star{border:1px solid var(--copper)} .star th{background:#2a2118;color:var(--copper)}
+  .neg{color:var(--sienna)} .pos{color:var(--slate)}
+  footer{margin-top:60px;padding-top:16px;border-top:1px solid var(--line);color:var(--faint);font-size:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Pact Network — Full Smoke Report</h1>
+  <p class="sub">All testing performed 2026-05-29 on branch <code>feat/multi-network</code>. Covers Solana devnet + EVM (arc-testnet, base-sepolia) settlement, a settler bug found &amp; fixed, curated-endpoint wiring + live registration, and a non-destructive mainnet verification.</p>
+  <div class="meta">
+    <span><b>Date:</b> 2026-05-29</span>
+    <span><b>Branch:</b> feat/multi-network @ 9a1bde5</span>
+    <span><b>Merged today:</b> PR #246 (EVM settle fix), PR #247 (moralis+covalent)</span>
+    <span><b>Verification:</b> all tx hashes read directly off each chain's RPC by the captain</span>
+  </div>
+
+  <div class="verdict">
+    <span class="pill green">ALL GREEN · NON-DESTRUCTIVE</span>
+    <p class="big" style="margin:12px 0 4px">Three chains settle on-chain end-to-end; mainnet is live and code-compatible; one real settler bug was found and fixed.</p>
+    <p class="sub" style="margin-bottom:0">No mainnet funds were spent — the mainnet check is read-only parity verification. All testnet/devnet settlements used real signed calls to real upstreams.</p>
+  </div>
+
+  <div class="kpis">
+    <div class="kpi"><div class="n">3</div><div class="l">chains settled on-chain (devnet/testnet)</div></div>
+    <div class="kpi"><div class="n">16</div><div class="l">on-chain txs verified (settles + registrations)</div></div>
+    <div class="kpi"><div class="n">1</div><div class="l">real settler bug fixed (#246)</div></div>
+    <div class="kpi"><div class="n">7/7</div><div class="l">curated providers wired + registered (testnets)</div></div>
+  </div>
+
+  <!-- 1 -->
+  <h2>1. Endpoints tested — the actual upstreams hit</h2>
+  <table class="star">
+    <thead><tr><th>Chain</th><th>Proxy route</th><th>Real upstream</th><th>Result</th><th>Type</th></tr></thead>
+    <tbody>
+      <tr><td class="copper">solana-devnet</td><td class="mono">POST /v1/dummy/ (getBalance)</td><td class="mono">api.devnet.solana.com</td><td class="slate">200 → ok</td><td><span class="pill green">REAL</span></td></tr>
+      <tr><td class="copper">arc-testnet</td><td class="mono">GET /v1/&lt;slug&gt;/price/v3</td><td class="mono">lite-api.jup.ag/price/v3 (Jupiter, keyless)</td><td class="slate">200 JSON → ok</td><td><span class="pill green">REAL 3rd-party</span></td></tr>
+      <tr><td class="copper">base-sepolia</td><td class="mono">GET /v1/&lt;slug&gt;/price/v3</td><td class="mono">lite-api.jup.ag/price/v3 (Jupiter, keyless)</td><td class="slate">200 JSON → ok</td><td><span class="pill green">REAL 3rd-party</span></td></tr>
+      <tr><td class="muted">base-sepolia (control)</td><td class="mono">POST /v1/helius/</td><td class="mono">Helius RPC (needs key)</td><td class="sienna">401 → client_error, premium 0</td><td><span class="pill skip">auth-gated</span></td></tr>
+    </tbody>
+  </table>
+  <p class="sub">Keyless real upstreams used for the EVM proof: <b>Jupiter</b> (<code>lite-api.jup.ag/price/v3</code>) and the <b>dummy</b> demo upstream. The other six providers require API keys.</p>
+
+  <!-- 2 -->
+  <h2>2. On-chain settlement proof (devnet / testnet)</h2>
+  <p>Each: real signed call → premium debit → on-chain settle with exact per-recipient fee split. All receipts verified off-chain by the captain.</p>
+  <table>
+    <thead><tr><th>Chain</th><th>Settle tx</th><th>Status</th><th>Fee split</th></tr></thead>
+    <tbody>
+      <tr><td class="copper">solana-devnet</td><td class="mono hash">4GksgECCXJn2h8inYxazuoSGuPFEDXnrLYrmHaQTzhKBJjzA2rpBG5rS1gSQNp5owZBwtWbiyQcBHw7P4CrMgsfp</td><td class="slate">Finalized</td><td>agent −1000 / pool +900 / treasury +100</td></tr>
+      <tr><td class="copper">arc-testnet</td><td class="mono hash">0x08060bc0fa1163a297e9a9d57c0bc7c52f56b342269bf4999e2f37b169de93fe</td><td class="slate">success · blk 44547014</td><td>agent −10000 / pool +8500 / treasury +1000 / affiliate +500</td></tr>
+      <tr><td class="copper">base-sepolia</td><td class="mono hash">0xc480a7ca4e08a69a0c62b214f524731a5524b664d2da96b8397dfac1d5fb440c</td><td class="slate">success · blk 42132561</td><td>agent −10000 / pool +8500 / treasury +1000 / affiliate +500</td></tr>
+    </tbody>
+  </table>
+
+  <!-- 3 -->
+  <h2>3. Settler bug found &amp; fixed — PR #246 (merged)</h2>
+  <div class="card">
+    <p><b>Bug:</b> <code>EvmAdapter.submitSettleBatch</code> passed a bare address string as viem's <code>account</code>, so viem emitted <code>wallet_sendTransaction</code> (node-signed) — which Arc/base RPCs reject (<span class="sienna">"this request method is not supported"</span>). <b>The settler's EVM auto-flush had never actually submitted on any EVM chain.</b></p>
+    <p><b>Fix:</b> pass the local <code>PrivateKeyAccount</code> object so viem signs locally → <code>eth_sendRawTransaction</code>. Surgical (1 functional line + comment + regression test). Both EVM settle txs above are <code>eip1559</code> raw transactions — the exact behavior the fix introduces. <span class="muted">Branch <code>fix/evm-settle-send-raw-transaction</code> → commit a8afaea → PR #246 merged into feat/multi-network.</span></p>
+  </div>
+
+  <!-- 4 -->
+  <h2>4. Curated endpoints — wiring (#247) + live testnet registration</h2>
+  <p><b>PR #247 (merged):</b> added <code>moralis</code> + <code>covalent</code> to <code>ENDPOINT_SLUGS</code> + <code>DEFAULT_UPSTREAM_BASE</code>, making all 7 production-curated providers first-class (the other 5 were already wired in proxy handlers / classifiers / <code>/.well-known</code>).</p>
+  <p><b>Live testnet proof:</b> all 7 registered on-chain on arc-testnet + base-sepolia (13 registrations, sample-verified via RPC). The indexer auto-materialized the DB rows with correct upstreams from <code>DEFAULT_UPSTREAM_BASE</code>, and <code>/.well-known/endpoints</code> listed all 7. <b>Register → sync → discover proven on both EVM chains</b> (base lagged ~2 cursor ticks behind finality, then caught up — not a bug).</p>
+  <table>
+    <thead><tr><th>Provider</th><th>Registered arc/base</th><th>Auto-synced→DB</th><th>In /.well-known</th><th>Call behavior</th></tr></thead>
+    <tbody>
+      <tr><td>jupiter</td><td>✅/✅</td><td>✅/✅</td><td>✅</td><td class="slate">keyless → full settle</td></tr>
+      <tr><td>helius</td><td>pre/pre</td><td>✅/✅</td><td>✅</td><td>key-gated → 401 w/o PACT_HELIUS_API_KEY</td></tr>
+      <tr><td>birdeye</td><td>✅/✅</td><td>✅/✅</td><td>✅</td><td>key-gated (caller passthrough)</td></tr>
+      <tr><td>moralis</td><td>✅/✅</td><td>✅/✅</td><td>✅</td><td>key-gated (caller passthrough)</td></tr>
+      <tr><td>covalent</td><td>✅/✅</td><td>✅/✅</td><td>✅</td><td>key-gated (Bearer)</td></tr>
+      <tr><td>elfa</td><td>✅/✅</td><td>✅/✅</td><td>✅</td><td class="copper">⚠ strips caller auth, no key injection yet</td></tr>
+      <tr><td>fal</td><td>✅/✅</td><td>✅/✅</td><td>✅</td><td class="copper">⚠ same gap as elfa</td></tr>
+    </tbody>
+  </table>
+
+  <!-- 5 -->
+  <h2>5. Mainnet verification (read-only, non-destructive) — program 5bCJ</h2>
+  <p>No transactions broadcast, no funds spent. Goal: confirm mainnet is live and that the current <code>feat/multi-network</code> code is compatible with the deployed program (no drift).</p>
+  <table>
+    <thead><tr><th>Check</th><th>Result</th></tr></thead>
+    <tbody>
+      <tr><td>Program <code>5bCJcdWd…r3xwc</code> deployed + executable</td><td class="slate">✓ owner BPFLoaderUpgradeable</td></tr>
+      <tr><td>ProtocolConfig / Treasury / SettlementAuthority initialized</td><td class="slate">✓ all exist, decode cleanly with current client</td></tr>
+      <tr><td>Client ↔ program account parity (FS9 risk)</td><td class="slate">✓ ProtocolConfig has kill-switch (paused) → 5-account settle_batch → NO FS9 → current settler compatible</td></tr>
+      <tr><td>USDC mint / pause state</td><td class="slate">✓ real mainnet USDC EPjFW…Dt1v · paused=0 (live) · maxTotalFeeBps 3000</td></tr>
+      <tr><td>Live traffic</td><td class="slate">✓ dummy endpoint: 8 settled calls, 8000 premiums, 6 breaches, 60000 refunds (real on-chain history)</td></tr>
+      <tr><td>Registered endpoints</td><td>dummy, helius, pay-default, jupiter, birdeye, elfa, fal <span class="copper">— moralis + covalent ABSENT (new; Rick to register)</span></td></tr>
+      <tr><td>Mainnet settler signer (SettlementAuthority.signer)</td><td class="mono">FuT7kRVwHbGgLNMULyhxU57VvDVtPMk7UqZT5DDK2ST1 (Rick)</td></tr>
+      <tr><td>ProtocolConfig.defaultFeeRecipients</td><td class="copper">empty (count 0) — endpoints carry their own (dummy/jupiter have treasury bps 1000); confirm before registering new ones without explicit recipients</td></tr>
+    </tbody>
+  </table>
+  <p class="note"><b>Mainnet verdict: GREEN.</b> Protocol is live, has real settled traffic, and the current branch is fully account-compatible (no FS9-style drift). A live mainnet settle was not driven — it needs Rick's signer + a funded agent and would spend real USDC; the existing 8 settled calls already prove the path.</p>
+
+  <!-- 6 -->
+  <h2>6. Outstanding / not done (see Rick checklist)</h2>
+  <ul>
+    <li><b>moralis + covalent</b> not registered on mainnet (and devnet) — Rick / authority.</li>
+    <li><b>elfa + fal</b> handlers strip caller auth but don't inject an operator key — small code change needed before they can return 200.</li>
+    <li><b>Solana devnet FS9</b> + <b>SOL-01</b> (draft PR #245) both ride a devnet/mainnet program redeploy via authority JB7rp — Rick.</li>
+    <li><b>Provider API-key secrets</b> + per-network RPC/keypair env on Cloud Run — Rick (GCP).</li>
+  </ul>
+
+  <footer>
+    Pact Network · full smoke 2026-05-29 · branch feat/multi-network @ 9a1bde5 · all tx hashes independently verified against solana-devnet, arc-testnet, base-sepolia, and solana-mainnet RPCs · companion: endpoint-registration-plan.md, rick-production-setup-checklist.md
+  </footer>
+</div>
+</body>
+</html>

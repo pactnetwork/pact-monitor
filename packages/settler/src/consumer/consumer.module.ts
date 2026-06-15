@@ -2,6 +2,7 @@ import { Module, type FactoryProvider, type Provider } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { PubSub } from "@google-cloud/pubsub";
 import { ConsumerService, QUEUE_CONSUMER } from "./consumer.service";
+import { MemoryQueueConsumer } from "./memory-queue-consumer";
 import { PubSubQueueConsumer } from "./pubsub-queue-consumer";
 import { RedisStreamsQueueConsumer } from "./redis-streams-queue-consumer";
 import type { QueueConsumer } from "./queue-consumer.interface";
@@ -53,6 +54,9 @@ const queueConsumerProvider: FactoryProvider<QueueConsumer> = {
         projectId: config.getOrThrow<string>("PUBSUB_PROJECT"),
         subscriptionName: config.getOrThrow<string>("PUBSUB_SUBSCRIPTION"),
       });
+    }
+    if (backend === "memory") {
+      return new MemoryQueueConsumer();
     }
     if (backend === "redis-streams") {
       if (!redis) {

@@ -75,7 +75,7 @@ describe("wrapFetch", () => {
     expect(sink.events[0].callId).toBe(r.callId);
   });
 
-  it("latency breach: 2xx but slow → latency_breach, refund=imputed", async () => {
+  it("latency breach: 2xx but slow → latency_breach, refund=imputed+premium", async () => {
     const sink = new MemoryEventSink();
     const probe = timedFetch(200, 700);
     const clock = clockFromFetch(probe);
@@ -83,11 +83,12 @@ describe("wrapFetch", () => {
       baseOpts({ sink, fetchImpl: probe.fetchImpl, now: clock.now }),
     );
     expect(r.outcome).toBe("latency_breach");
-    expect(r.refundLamports).toBe(10_000n);
+    // canonical principal + premium: imputed 10_000n + flat 1_000n
+    expect(r.refundLamports).toBe(11_000n);
     expect(r.latencyMs).toBe(700);
   });
 
-  it("5xx → server_error, refund=imputed, premium=flat", async () => {
+  it("5xx → server_error, refund=imputed+premium, premium=flat", async () => {
     const sink = new MemoryEventSink();
     const probe = timedFetch(503, 50);
     const clock = clockFromFetch(probe);
@@ -96,7 +97,8 @@ describe("wrapFetch", () => {
     );
     expect(r.outcome).toBe("server_error");
     expect(r.premiumLamports).toBe(1_000n);
-    expect(r.refundLamports).toBe(10_000n);
+    // canonical principal + premium: imputed 10_000n + flat 1_000n
+    expect(r.refundLamports).toBe(11_000n);
     expect(r.response.status).toBe(503);
   });
 
@@ -131,7 +133,8 @@ describe("wrapFetch", () => {
     expect(r.outcome).toBe("network_error");
     expect(r.response.status).toBe(502);
     expect(r.premiumLamports).toBe(1_000n);
-    expect(r.refundLamports).toBe(10_000n);
+    // canonical principal + premium: imputed 10_000n + flat 1_000n
+    expect(r.refundLamports).toBe(11_000n);
     await new Promise((res) => setImmediate(res));
     expect(sink.events[0].outcome).toBe("network_error");
   });
@@ -316,6 +319,37 @@ describe("wrapFetch", () => {
       "https://upstream.test/rpc",
       expect.objectContaining({ method: "POST", body: "payload" }),
     );
+  });
+
+  describe("network stamping (WP-MN-03a)", () => {
+    it("explicit network value is stamped onto the published event", async () => {
+      const sink = new MemoryEventSink();
+      const probe = timedFetch(200, 100);
+      const clock = clockFromFetch(probe);
+      await wrapFetch(
+        baseOpts({
+          sink,
+          fetchImpl: probe.fetchImpl,
+          now: clock.now,
+          network: "arc-testnet",
+        }),
+      );
+      await new Promise((res) => setImmediate(res));
+      expect(sink.events).toHaveLength(1);
+      expect(sink.events[0].network).toBe("arc-testnet");
+    });
+
+    it("absent network defaults to 'solana-devnet' on the published event", async () => {
+      const sink = new MemoryEventSink();
+      const probe = timedFetch(200, 100);
+      const clock = clockFromFetch(probe);
+      await wrapFetch(
+        baseOpts({ sink, fetchImpl: probe.fetchImpl, now: clock.now }),
+      );
+      await new Promise((res) => setImmediate(res));
+      expect(sink.events).toHaveLength(1);
+      expect(sink.events[0].network).toBe("solana-devnet");
+    });
   });
 
   it("settlement event timestamp is ISO-8601 and corresponds to t_end", async () => {

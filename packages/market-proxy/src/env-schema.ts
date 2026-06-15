@@ -6,6 +6,7 @@
 // and feed it a synthetic record.
 
 import { z } from "zod";
+import { hasSolanaNetwork } from "./lib/enabled-networks.js";
 
 // Queue backend selector. Default "pubsub" preserves mainnet's byte-identical
 // behavior when QUEUE_BACKEND is unset on production Cloud Run env. Devnet
@@ -15,9 +16,20 @@ const QueueBackend = z.enum(["pubsub", "redis-streams"]).default("pubsub");
 export const Env = z
   .object({
     PG_URL: z.string().url(),
-    RPC_URL: z.string().url(),
-    PROGRAM_ID: z.string().min(32),
-    USDC_MINT: z.string().min(32),
+    // Solana-only config (RPC_URL / PROGRAM_ID / USDC_MINT). Optional at the
+    // field level and enforced in the superRefine below ONLY when a solana-*
+    // network is enabled (agent-tasks#14). This lets a base-only proxy
+    // (PACT_ENABLED_NETWORKS=base-mainnet, no Solana env) parse without throwing,
+    // while a Solana-enabled or unset (defaults to solana-devnet) config still
+    // requires all three exactly as before. NB: PROGRAM_ID has no code consumer
+    // in the proxy — it is validated for operator-config parity only.
+    RPC_URL: z.string().url().optional(),
+    PROGRAM_ID: z.string().min(32).optional(),
+    USDC_MINT: z.string().min(32).optional(),
+    // Multi-network selector. Drives the Solana-conditional requireds above and
+    // mirrors the gating used by buildAdapterMap / the indexer. Unset defaults
+    // to solana-devnet (see lib/enabled-networks.ts).
+    PACT_ENABLED_NETWORKS: z.string().optional(),
     // QUEUE_BACKEND is optional; default "pubsub" so existing mainnet ENV_PROD
     // (which has no QUEUE_BACKEND key) parses unchanged.
     QUEUE_BACKEND: QueueBackend,
@@ -37,6 +49,37 @@ export const Env = z
     PACT_BETA_GATE_ENABLED: z.string().default("false"),
   })
   .superRefine((val, ctx) => {
+    // Solana-conditional requireds (agent-tasks#14). When a solana-* network is
+    // enabled (or PACT_ENABLED_NETWORKS is unset → defaults to solana-devnet),
+    // RPC_URL / PROGRAM_ID / USDC_MINT are mandatory exactly as before. A
+    // base-only proxy (no solana-* enabled) may omit all three.
+    if (hasSolanaNetwork(val.PACT_ENABLED_NETWORKS)) {
+      if (!val.RPC_URL) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["RPC_URL"],
+          message:
+            "RPC_URL is required when a solana-* network is enabled (or PACT_ENABLED_NETWORKS is unset)",
+        });
+      }
+      if (!val.PROGRAM_ID) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["PROGRAM_ID"],
+          message:
+            "PROGRAM_ID is required when a solana-* network is enabled (or PACT_ENABLED_NETWORKS is unset)",
+        });
+      }
+      if (!val.USDC_MINT) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["USDC_MINT"],
+          message:
+            "USDC_MINT is required when a solana-* network is enabled (or PACT_ENABLED_NETWORKS is unset)",
+        });
+      }
+    }
+
     if (val.QUEUE_BACKEND === "pubsub") {
       if (!val.PUBSUB_PROJECT) {
         ctx.addIssue({

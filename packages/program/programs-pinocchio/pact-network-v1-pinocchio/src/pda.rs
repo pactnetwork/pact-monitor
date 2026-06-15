@@ -81,3 +81,20 @@ pub fn verify_treasury(account: &AccountView) -> ProgramResult {
     }
     Ok(())
 }
+
+/// Verify that `account` is the canonical SettlementAuthority PDA AND is owned
+/// by this program. Same vuln class as `verify_protocol_config`; same failure
+/// code space (SettlementAuthority-specific). `settle_batch` reads `signer`
+/// and `bump` off this account to gate the settler-authorization check, so it
+/// must prove canonicality + program ownership first (SOL-01).
+#[inline]
+pub fn verify_settlement_authority(account: &AccountView) -> ProgramResult {
+    let (expected, _bump) = derive_settlement_authority();
+    if account.address() != &expected {
+        return Err(PactError::InvalidSettlementAuthority.into());
+    }
+    if !account.owned_by(&ID) {
+        return Err(PactError::InvalidSettlementAuthority.into());
+    }
+    Ok(())
+}

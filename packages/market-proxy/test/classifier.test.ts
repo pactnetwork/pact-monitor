@@ -86,7 +86,9 @@ describe("Helius classifier (composed with default)", () => {
       endpointConfig: baseEndpointConfig,
     });
     expect(r.outcome).toBe("server_error");
-    expect(r.refund).toBe(50_000n);
+    // default rule defers to wrap's computeEconomics: canonical principal +
+    // premium (agent-tasks#11) = imputed 50_000n + flat 500n
+    expect(r.refund).toBe(50_500n);
   });
 
   test("429 → client_error, no premium (default rule)", () => {
@@ -165,9 +167,10 @@ describe("Helius classifier (composed with default)", () => {
       latencyMs: 100,
       endpointConfig: baseEndpointConfig,
     });
-    // wrap's default treats null as network_error; refund = imputed.
+    // wrap's default treats null as network_error; refund defers to
+    // computeEconomics: canonical imputed 50_000n + flat 500n (agent-tasks#11).
     expect(r.outcome).toBe("network_error");
-    expect(r.refund).toBe(50_000n);
+    expect(r.refund).toBe(50_500n);
   });
 });
 
@@ -197,7 +200,11 @@ describe("market default classifier (Birdeye, Jupiter, Elfa, fal)", () => {
       endpointConfig: baseEndpointConfig,
     });
     expect(r.outcome).toBe("server_error");
-    expect(r.refund).toBe(baseEndpointConfig.imputed_cost_lamports);
+    // marketDefaultClassifier === wrap's defaultClassifier: canonical principal +
+    // premium (agent-tasks#11) = imputed + flat premium.
+    expect(r.refund).toBe(
+      baseEndpointConfig.imputed_cost_lamports + baseEndpointConfig.flat_premium_lamports,
+    );
   });
 });
 

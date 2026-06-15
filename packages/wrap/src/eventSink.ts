@@ -111,7 +111,17 @@ export class HttpEventSink implements EventSink {
 // `Topic.publishMessage({ json })` from `@google-cloud/pubsub`.
 
 export interface PubSubTopicPublisher {
-  publishMessage(args: { json: SettlementEvent }): Promise<string>;
+  publishMessage(args: {
+    json: SettlementEvent;
+    /**
+     * Optional Pub/Sub message attributes. We publish `network` here so
+     * subscriptions can filter by chain (`--filter='attributes.network="..."'`),
+     * enabling per-network settler isolation. Backward compatible: a publisher
+     * that ignores attributes still works, and consumers read network from the
+     * JSON body regardless.
+     */
+    attributes?: Record<string, string>;
+  }): Promise<string>;
 }
 
 export interface PubSubEventSinkOptions {
@@ -137,7 +147,13 @@ export class PubSubEventSink implements EventSink {
 
   async publish(event: SettlementEvent): Promise<void> {
     try {
-      await this.topic.publishMessage({ json: event });
+      // Surface the chain as a Pub/Sub attribute (when known) so subscriptions
+      // can filter by network. The JSON body still carries `network` for
+      // consumers; the attribute is purely for server-side routing.
+      const attributes = event.network
+        ? { network: event.network }
+        : undefined;
+      await this.topic.publishMessage({ json: event, attributes });
     } catch (err) {
       this.onError(err);
     }

@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import { classifyHttpOutcome } from "@pact-network/classifier";
 import { requireApiKey } from "../middleware/auth.js";
 import { query, getOne } from "../db.js";
 
@@ -21,13 +22,39 @@ async function findOrCreateProvider(hostname: string): Promise<string> {
   return created!.id;
 }
 
-function classify(statusCode: number, latencyMs: number, networkError: boolean): string {
-  if (networkError || statusCode === 0) return "server_error";
-  if (statusCode >= 400 && statusCode < 500) return "client_error";
-  if (statusCode >= 500) return "server_error";
-  if (statusCode < 200 || statusCode >= 300) return "server_error";
-  if (latencyMs > 5000) return "timeout";
-  return "success";
+// Scorecard monitor classification. Shares the rails-core decision tree
+// (@pact-network/classifier) with monitor's `classify`, then projects the
+// neutral category onto the scorecard's classification vocabulary. Behavior is
+// identical to monitor's classify called with a 5000ms threshold and no schema.
+const SCORECARD_LATENCY_THRESHOLD_MS = 5000;
+
+export function classify(statusCode: number, latencyMs: number, networkError: boolean): string {
+  const category = classifyHttpOutcome({
+    statusCode,
+    latencyMs,
+    latencyThresholdMs: SCORECARD_LATENCY_THRESHOLD_MS,
+    networkError,
+  });
+
+  switch (category) {
+    case "network_error":
+    case "server_error":
+    case "other":
+      return "server_error";
+    case "client_error":
+      return "client_error";
+    case "slow":
+      return "timeout";
+    case "success":
+      return "success";
+  }
+
+  // Defensive total fallback. The switch above is exhaustive over CoreCategory's
+  // six members, so this is unreachable today. It exists so `classify` stays
+  // provably total (no implicit `undefined` return) even if @pact-network/classifier
+  // adds a category or its types ever regress — mirrors the scorecard's
+  // "treat unknown as a server-side failure" default.
+  return "server_error";
 }
 
 export async function monitorRoutes(app: FastifyInstance): Promise<void> {
