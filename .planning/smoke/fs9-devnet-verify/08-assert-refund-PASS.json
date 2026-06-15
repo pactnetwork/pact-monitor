@@ -1,0 +1,18 @@
+{
+  "mode": "assert-refund",
+  "rpc": "https://api.devnet.solana.com",
+  "callId": "4b481472-69bd-49b7-8139-9fa4fd8b49e0",
+  "agent": "Hr7XXdvkiQXb1Z7SnC5i8BJks5ptuEUkswrJX97AsNLa",
+  "agentAta": "4yL1TWVX5gw5ReaKqpEZJikrqRNZTtXhrJXfwnThUTQQ",
+  "callRecordPda": "DbMrUJQQaByoA7XtHcqxXuF1RmP1D2EWfWiTR8mYb8R4",
+  "settlementStatus": "Settled",
+  "breach": true,
+  "premiumLamports": "1000",
+  "refundLamports": "11000",
+  "actualRefundLamports": "11000",
+  "ataPre": "19937000",
+  "ataPost": "19947000",
+  "ataDelta": "10000",
+  "pass": true,
+  "failures": []
+}

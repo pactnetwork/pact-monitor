@@ -1,0 +1,39 @@
+{
+  "test": "SOL-01 forged settlement_authority",
+  "rpc": "https://api.devnet.solana.com",
+  "programId": "5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5",
+  "settler": "47Fg5JqMsCeuRyDsFtD7Ra7YTdzVmTr2mZ1R2dUkZyfS",
+  "canonicalSettlementAuthorityPda": "FbTs39EycTWtQCRrExwmoAAjeQrcaLrXyNpVqthuXy4m",
+  "forgedSettlementAuthority": "26GMJycJuCGzB9m6sjTvgqQGcDSHJu2AkierkscueNVz",
+  "expectedCode": 6033,
+  "expectedName": "InvalidSettlementAuthority",
+  "forged": {
+    "signature": "56rkL1N5721nM15CaE2TbBejjV9NV1zdzUkNg9jzrpfCijfGw1816sZ1Yg6fqAFMSjftCje2YJLtsdCYKmY6TvuD",
+    "err": {
+      "InstructionError": [
+        0,
+        {
+          "Custom": 6033
+        }
+      ]
+    },
+    "customCode": 6033,
+    "decodedError": {
+      "name": "InvalidSettlementAuthority",
+      "message": "Supplied SettlementAuthority is not the canonical [b\"settlement_authority\"] PDA, or is not owned by this program."
+    },
+    "logs": [
+      "Program 5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5 invoke [1]",
+      "Program 5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5 consumed 3298 of 200000 compute units",
+      "Program 5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5 failed: custom program error: 0x1791"
+    ],
+    "pass": true
+  },
+  "control": {
+    "signature": "4vhzEvfCb45T51G7KsvHg8ixFeaAB1nFiHusJzkW3qmNxo9vZUzASq2YJ5iQNyzd823thurQ5XmJfcTbiYW25Wkh",
+    "err": null,
+    "customCode": null,
+    "pass": true
+  },
+  "pass": true
+}

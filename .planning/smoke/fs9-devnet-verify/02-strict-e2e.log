@@ -1,0 +1,121 @@
+>> pre-flight: freeing fixed ports 8798/8799/3001/8080
+>> [0] keys + authority gate
+   generated fresh /Users/q3labsadmin/.config/pact/devnet-keys/pool-vault-dummy.json
+   authority gate PASS (47Fg5J… == on-chain ProtocolConfig.authority == SettlementAuthority.signer)
+>> [1] Postgres :55432 + migrate + seed dummy
+Unable to find image 'postgres:16' locally
+16: Pulling from library/postgres
+7ce9e660c9e6: Pulling fs layer
+6a70aabb22c1: Pulling fs layer
+a25cd16f2d86: Pulling fs layer
+dbf107e9ced2: Pulling fs layer
+45c3acb06f50: Pulling fs layer
+3b9cfaff3447: Pulling fs layer
+ebe1d7dcdafa: Pulling fs layer
+e1839ffb73fe: Pulling fs layer
+bea1edd0577d: Pulling fs layer
+d1ee1976a32f: Pulling fs layer
+86e702653a35: Pulling fs layer
+f3227aeabe2d: Pulling fs layer
+487ca9376743: Pulling fs layer
+98b02b39f094: Pulling fs layer
+7ce9e660c9e6: Download complete
+dbf107e9ced2: Download complete
+d1ee1976a32f: Download complete
+86e702653a35: Download complete
+98b02b39f094: Download complete
+bea1edd0577d: Download complete
+f3227aeabe2d: Download complete
+487ca9376743: Download complete
+e1839ffb73fe: Download complete
+3b9cfaff3447: Download complete
+6a70aabb22c1: Download complete
+45c3acb06f50: Download complete
+a5034399c254: Download complete
+5fffec89869a: Download complete
+a25cd16f2d86: Download complete
+dbf107e9ced2: Pull complete
+a25cd16f2d86: Pull complete
+3b9cfaff3447: Pull complete
+45c3acb06f50: Pull complete
+d1ee1976a32f: Pull complete
+bea1edd0577d: Pull complete
+e1839ffb73fe: Pull complete
+6a70aabb22c1: Pull complete
+ebe1d7dcdafa: Download complete
+86e702653a35: Pull complete
+f3227aeabe2d: Pull complete
+487ca9376743: Pull complete
+ebe1d7dcdafa: Pull complete
+7ce9e660c9e6: Pull complete
+98b02b39f094: Pull complete
+Digest: sha256:081f1bc7bd5e143dbb6e487b710bbc27712cdcfaced4c071b8e47349aa1b4171
+Status: Downloaded newer image for postgres:16
+ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+   dummy seeded (upstreamBase=http://localhost:8799)
+>> [2] dummy-upstream :8799 + Redis :6379
+Unable to find image 'redis:7' locally
+7: Pulling from library/redis
+6ef58f4cfaac: Pulling fs layer
+a519be19a24d: Pulling fs layer
+402614bd39aa: Pulling fs layer
+0316b506b496: Pulling fs layer
+331c1539de14: Pulling fs layer
+ff44d53efd19: Pulling fs layer
+4f4fb700ef54: Pulling fs layer
+4f4fb700ef54: Already exists
+6ef58f4cfaac: Download complete
+0316b506b496: Download complete
+331c1539de14: Download complete
+ff44d53efd19: Download complete
+bf40033cb81a: Download complete
+a519be19a24d: Download complete
+e3dae2d0a431: Download complete
+402614bd39aa: Download complete
+0316b506b496: Pull complete
+331c1539de14: Pull complete
+402614bd39aa: Pull complete
+ff44d53efd19: Pull complete
+a519be19a24d: Pull complete
+4f4fb700ef54: Pull complete
+6ef58f4cfaac: Pull complete
+Digest: sha256:33d7c9a245edd95e6703a0addbeaa48fe40c3b3b4783627a72085155462ebfdb
+Status: Downloaded newer image for redis:7
+>> [3] init-devnet (registers helius + dummy on live devnet; idempotent)
+  solana account 6B8KqFSuGmpmjftbRUUbatHsNT9t7CFWC7bw4EnK9Sy9 --url https://api.devnet.solana.com
+  solana account 8YyHwrYNKVgcp23n35kdmp1wMo5yB8eY1UpmEgMXzCRD --url https://api.devnet.solana.com  # helius
+  solana account 9RdzYJ3Ehzgtg7xVJk51Rd5XLGcRqEy6kGvTtcPDkfjj --url https://api.devnet.solana.com  # dummy
+
+Next: paste the SETTLEMENT_AUTHORITY signer pubkey (47Fg5JqMsCeuRyDsFtD7Ra7YTdzVmTr2mZ1R2dUkZyfS)
+into the Railway settler service env (base58-encoded keypair from
+/Users/q3labsadmin/.config/pact/devnet-keys/settlement-authority.json), fund it with >=0.05 devnet SOL,
+then run scripts/devnet-smoke/health.sh.
+   DRY_RUN ok — sending real txs (needs SOL on 47Fg5JqMsCeuRyDsFtD7Ra7YTdzVmTr2mZ1R2dUkZyfS)…
+  premium:        1000 (0.001000 USDC)
+  imputed cost:   10000 (0.010000 USDC)
+  SLA:            2000ms
+  already registered -- skipping
+
+
+=== devnet init COMPLETE ===
+State written to scripts/devnet/.devnet-state.json
+
+Verification:
+  solana program show 5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5 --url https://api.devnet.solana.com
+  solana account EFzSjDnAeb4yRA2LjXxmFmdyavdsEmsUNNDkxytvPdHU --url https://api.devnet.solana.com
+  solana account 6B8KqFSuGmpmjftbRUUbatHsNT9t7CFWC7bw4EnK9Sy9 --url https://api.devnet.solana.com
+  solana account 8YyHwrYNKVgcp23n35kdmp1wMo5yB8eY1UpmEgMXzCRD --url https://api.devnet.solana.com  # helius
+  solana account 9RdzYJ3Ehzgtg7xVJk51Rd5XLGcRqEy6kGvTtcPDkfjj --url https://api.devnet.solana.com  # dummy
+
+Next: paste the SETTLEMENT_AUTHORITY signer pubkey (47Fg5JqMsCeuRyDsFtD7Ra7YTdzVmTr2mZ1R2dUkZyfS)
+into the Railway settler service env (base58-encoded keypair from
+/Users/q3labsadmin/.config/pact/devnet-keys/settlement-authority.json), fund it with >=0.05 devnet SOL,
+then run scripts/devnet-smoke/health.sh.
+>> [4] fund the dummy CoveragePool vault (>= 1000000)
+   dummy pool vault = 4naZddWw1kuBv2ysPWUoYjLDDt8BunnEttJq92mYHqtE
+   USER ACTION (devnet USDC mint authority GrNg1XM2…):
+     spl-token mint 4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU 1 --recipient 4naZddWw1kuBv2ysPWUoYjLDDt8BunnEttJq92mYHqtE --url devnet
+   waiting for the pool vault to hold >= 1000000 (Ctrl-C to abort)…
+   pool vault funded — gate PASS
+>> [5] market-proxy :8798 (QUEUE_BACKEND=redis-streams)
+!! dummy not in proxy discovery

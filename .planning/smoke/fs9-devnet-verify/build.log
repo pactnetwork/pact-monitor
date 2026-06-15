@@ -1,0 +1,165 @@
+packages/dummy-upstream                  |  WARN  Unsupported engine: wanted: {"node":"20.x"} (current: {"node":"v24.6.0","pnpm":"10.30.3"})
+Scope: 24 of 25 workspace projects
+packages/classifier build$ tsc
+packages/db build$ prisma generate && tsc
+packages/dummy-upstream build$ tsc
+packages/insurance build$ tsc
+packages/db build: Prisma schema loaded from prisma/schema.prisma
+packages/db build: ✔ Generated Prisma Client (v5.22.0) to ./../../node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/@prisma/client in 45ms
+packages/db build: Start by importing your Prisma Client (See: https://pris.ly/d/importing-client)
+packages/db build: Tip: Interested in query caching in just a few lines of code? Try Accelerate today! https://pris.ly/tip-3-accelerate
+packages/db build: ┌─────────────────────────────────────────────────────────┐
+packages/db build: │  Update available 5.22.0 -> 7.8.0                       │
+packages/db build: │                                                         │
+packages/db build: │  This is a major update - please follow the guide at    │
+packages/db build: │  https://pris.ly/d/major-version-upgrade                │
+packages/db build: │                                                         │
+packages/db build: │  Run the following to update                            │
+packages/db build: │    npm i --save-dev prisma@latest                       │
+packages/db build: │    npm i @prisma/client@latest                          │
+packages/db build: └─────────────────────────────────────────────────────────┘
+packages/classifier build: Done
+packages/protocol-evm-v1-client build$ tsc -p tsconfig.build.json
+packages/dummy-upstream build: Done
+packages/protocol-v1-client build$ tsc -p tsconfig.build.json
+packages/db build: Done
+packages/scorecard build$ tsc && vite build
+packages/protocol-v1-client build: Done
+packages/insurance build: Done
+packages/protocol-evm-v1-client build: Done
+packages/scorecard build: vite v6.4.2 building for production...
+packages/scorecard build: transforming...
+packages/scorecard build: ✓ 683 modules transformed.
+packages/scorecard build: rendering chunks...
+packages/scorecard build: computing gzip size...
+packages/scorecard build: dist/index.html                   1.07 kB │ gzip:   0.54 kB
+packages/scorecard build: dist/assets/index-1n03WJQl.css   12.30 kB │ gzip:   3.01 kB
+packages/scorecard build: dist/assets/index-C-EzrHHn.js   686.58 kB │ gzip: 195.04 kB
+packages/scorecard build: ✓ built in 1.33s
+packages/scorecard build: (!) Some chunks are larger than 500 kB after minification. Consider:
+packages/scorecard build: - Using dynamic import() to code-split the application
+packages/scorecard build: - Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+packages/scorecard build: - Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+packages/scorecard build: Done
+packages/backend build$ tsc
+packages/sdk prebuild$ pnpm run _build:deps
+packages/monitor build$ tsc
+packages/market-dashboard build$ next build
+packages/sdk prebuild: ../dummy-upstream                        |  WARN  Unsupported engine: wanted: {"node":"20.x"} (current: {"node":"v24.6.0","pnpm":"10.30.3"})
+packages/sdk prebuild: > @q3labs/pact-sdk@0.3.0 _build:deps /Users/q3labsadmin/Q3/Solder/pact-network/.worktrees/pact-network-fs9-verify/packages/sdk
+packages/sdk prebuild: > pnpm --filter @q3labs/pact-protocol-v1-client build
+packages/sdk prebuild: ../dummy-upstream                        |  WARN  Unsupported engine: wanted: {"node":"20.x"} (current: {"node":"v24.6.0","pnpm":"10.30.3"})
+packages/sdk prebuild: > @q3labs/pact-protocol-v1-client@0.3.0 build /Users/q3labsadmin/Q3/Solder/pact-network/.worktrees/pact-network-fs9-verify/packages/protocol-v1-client
+packages/sdk prebuild: > tsc -p tsconfig.build.json
+packages/sdk prebuild: Done
+packages/sdk build$ tsc
+packages/monitor build: Done
+packages/wrap build$ tsc
+packages/backend build: Done
+packages/sdk build: Done
+packages/market-dashboard build:  ⚠ Warning: Next.js inferred your workspace root, but it may not be correct.
+packages/market-dashboard build:  We detected multiple lockfiles and selected the directory of /Users/q3labsadmin/Q3/Solder/pact-network/pnpm-lock.yaml as the root directory.
+packages/market-dashboard build:  To silence this warning, set `outputFileTracingRoot` in your Next.js config, or consider removing one of the lockfiles if it's not needed.
+packages/market-dashboard build:    See https://nextjs.org/docs/app/api-reference/config/next-config-js/output#caveats for more information.
+packages/market-dashboard build:  Detected additional lockfiles: 
+packages/market-dashboard build:    * /Users/q3labsadmin/Q3/Solder/pact-network/.worktrees/pact-network-fs9-verify/pnpm-lock.yaml
+packages/market-dashboard build:    ▲ Next.js 15.5.15
+packages/market-dashboard build:    Creating an optimized production build ...
+packages/wrap build: Done
+packages/market-dashboard build:  ⚠ Compiled with warnings in 4.9s
+packages/market-dashboard build: ../../node_modules/.pnpm/pino@7.11.0/node_modules/pino/lib/tools.js
+packages/market-dashboard build: Module not found: Can't resolve 'pino-pretty' in '/Users/q3labsadmin/Q3/Solder/pact-network/.worktrees/pact-network-fs9-verify/node_modules/.pnpm/pino@7.11.0/node_modules/pino/lib'
+packages/market-dashboard build: Import trace for requested module:
+packages/market-dashboard build: ../../node_modules/.pnpm/pino@7.11.0/node_modules/pino/lib/tools.js
+packages/market-dashboard build: ../../node_modules/.pnpm/pino@7.11.0/node_modules/pino/pino.js
+packages/market-dashboard build: ../../node_modules/.pnpm/@walletconnect+logger@2.1.2/node_modules/@walletconnect/logger/dist/index.es.js
+packages/market-dashboard build: ../../node_modules/.pnpm/@walletconnect+universal-provider@2.19.0_@react-native-async-storage+async-storage@1.24_9201774ea7525faedb9ba93892a986df/node_modules/@walletconnect/universal-provider/dist/index.es.js
+packages/market-dashboard build: ../../node_modules/.pnpm/@walletconnect+solana-adapter@0.0.8_@react-native-async-storage+async-storage@1.24.0_re_783e06c24a56d47935806367519b9288/node_modules/@walletconnect/solana-adapter/dist/core.js
+packages/market-dashboard build: ../../node_modules/.pnpm/@walletconnect+solana-adapter@0.0.8_@react-native-async-storage+async-storage@1.24.0_re_783e06c24a56d47935806367519b9288/node_modules/@walletconnect/solana-adapter/dist/adapter.js
+packages/market-dashboard build: ../../node_modules/.pnpm/@solana+wallet-adapter-walletconnect@0.1.21_@react-native-async-storage+async-storage@1_203ea6b57db5772907e48a4d3f855735/node_modules/@solana/wallet-adapter-walletconnect/lib/esm/index.js
+packages/market-dashboard build: ../../node_modules/.pnpm/@solana+wallet-adapter-wallets@0.19.38_@babel+runtime@7.29.2_@react-native-async-storag_b2a8e57d82f5c27914065d10858f18f8/node_modules/@solana/wallet-adapter-wallets/lib/esm/index.js
+packages/market-dashboard build: ./components/wallet-provider.tsx
+packages/market-dashboard build: (node:95383) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/q3labsadmin/Q3/Solder/pact-network/.worktrees/pact-network-fs9-verify/packages/market-dashboard/tailwind.config.ts?id=1781522098928 is not specified and it doesn't parse as CommonJS.
+packages/market-dashboard build: Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+packages/market-dashboard build: To eliminate this warning, add "type": "module" to /Users/q3labsadmin/Q3/Solder/pact-network/.worktrees/pact-network-fs9-verify/packages/market-dashboard/package.json.
+packages/market-dashboard build: (Use `node --trace-warnings ...` to show where the warning was created)
+packages/market-dashboard build:  ⚠ Compiled with warnings in 4.6s
+packages/market-dashboard build: ../../node_modules/.pnpm/ox@0.14.22_typescript@5.9.3_zod@3.25.76/node_modules/ox/_esm/tempo/internal/virtualMasterPool.js
+packages/market-dashboard build: Critical dependency: the request of a dependency is an expression
+packages/market-dashboard build: Import trace for requested module:
+packages/market-dashboard build: ../../node_modules/.pnpm/ox@0.14.22_typescript@5.9.3_zod@3.25.76/node_modules/ox/_esm/tempo/internal/virtualMasterPool.js
+packages/market-dashboard build: ../../node_modules/.pnpm/ox@0.14.22_typescript@5.9.3_zod@3.25.76/node_modules/ox/_esm/tempo/VirtualMaster.js
+packages/market-dashboard build: ../../node_modules/.pnpm/ox@0.14.22_typescript@5.9.3_zod@3.25.76/node_modules/ox/_esm/tempo/index.js
+packages/market-dashboard build: ../../node_modules/.pnpm/viem@2.50.4_bufferutil@4.1.0_typescript@5.9.3_zod@3.25.76/node_modules/viem/_esm/tempo/chainConfig.js
+packages/market-dashboard build: ../../node_modules/.pnpm/viem@2.50.4_bufferutil@4.1.0_typescript@5.9.3_zod@3.25.76/node_modules/viem/_esm/chains/definitions/tempo.js
+packages/market-dashboard build: ../../node_modules/.pnpm/viem@2.50.4_bufferutil@4.1.0_typescript@5.9.3_zod@3.25.76/node_modules/viem/_esm/chains/index.js
+packages/market-dashboard build: ../../node_modules/.pnpm/@reown+appkit@1.7.2_@react-native-async-storage+async-storage@1.24.0_react-native@0.85._721643e0482840156ab8a056d20be2b7/node_modules/@reown/appkit/dist/esm/src/networks/index.js
+packages/market-dashboard build: ../../node_modules/.pnpm/@reown+appkit@1.7.2_@react-native-async-storage+async-storage@1.24.0_react-native@0.85._721643e0482840156ab8a056d20be2b7/node_modules/@reown/appkit/dist/esm/exports/networks.js
+packages/market-dashboard build: ../../node_modules/.pnpm/@walletconnect+solana-adapter@0.0.8_@react-native-async-storage+async-storage@1.24.0_re_783e06c24a56d47935806367519b9288/node_modules/@walletconnect/solana-adapter/dist/core.js
+packages/market-dashboard build: ../../node_modules/.pnpm/@walletconnect+solana-adapter@0.0.8_@react-native-async-storage+async-storage@1.24.0_re_783e06c24a56d47935806367519b9288/node_modules/@walletconnect/solana-adapter/dist/adapter.js
+packages/market-dashboard build: ../../node_modules/.pnpm/@solana+wallet-adapter-walletconnect@0.1.21_@react-native-async-storage+async-storage@1_203ea6b57db5772907e48a4d3f855735/node_modules/@solana/wallet-adapter-walletconnect/lib/esm/index.js
+packages/market-dashboard build: ../../node_modules/.pnpm/@solana+wallet-adapter-wallets@0.19.38_@babel+runtime@7.29.2_@react-native-async-storag_b2a8e57d82f5c27914065d10858f18f8/node_modules/@solana/wallet-adapter-wallets/lib/esm/index.js
+packages/market-dashboard build: ./components/wallet-provider.tsx
+packages/market-dashboard build:  ✓ Compiled successfully in 9.5s
+packages/market-dashboard build:    Linting and checking validity of types ...
+packages/market-dashboard build:    Collecting page data ...
+packages/market-dashboard build:    Generating static pages (0/7) ...
+packages/market-dashboard build:    Generating static pages (1/7) 
+packages/market-dashboard build:    Generating static pages (3/7) 
+packages/market-dashboard build:    Generating static pages (5/7) 
+packages/market-dashboard build:  ✓ Generating static pages (7/7)
+packages/market-dashboard build:    Finalizing page optimization ...
+packages/market-dashboard build:    Collecting build traces ...
+packages/market-dashboard build: Route (app)                                 Size  First Load JS  Revalidate  Expire
+packages/market-dashboard build: ┌ ○ /                                      133 B         102 kB          5s      1y
+packages/market-dashboard build: ├ ○ /_not-found                            991 B         103 kB
+packages/market-dashboard build: ├ ○ /agents                                161 B         105 kB          5s      1y
+packages/market-dashboard build: ├ ƒ /agents/[pubkey]                     18.3 kB         203 kB
+packages/market-dashboard build: ├ ƒ /calls/[id]                            133 B         102 kB
+packages/market-dashboard build: ├ ○ /endpoints                             133 B         102 kB          5s      1y
+packages/market-dashboard build: └ ○ /ops                                   133 B         102 kB
+packages/market-dashboard build: + First Load JS shared by all             102 kB
+packages/market-dashboard build:   ├ chunks/295-8166ecc483fb7922.js       45.7 kB
+packages/market-dashboard build:   ├ chunks/36413145-b8d463fc2eebdb65.js  54.2 kB
+packages/market-dashboard build:   └ other shared chunks (total)          1.95 kB
+packages/market-dashboard build: ○  (Static)   prerendered as static content
+packages/market-dashboard build: ƒ  (Dynamic)  server-rendered on demand
+packages/market-dashboard build: Done
+packages/cli prebuild$ pnpm run _build:deps && pnpm run _check:version
+packages/facilitator build$ tsc
+packages/shared build$ tsc
+packages/cli prebuild: ../dummy-upstream                        |  WARN  Unsupported engine: wanted: {"node":"20.x"} (current: {"node":"v24.6.0","pnpm":"10.30.3"})
+packages/cli prebuild: > @q3labs/pact-cli@0.3.0 _build:deps /Users/q3labsadmin/Q3/Solder/pact-network/.worktrees/pact-network-fs9-verify/packages/cli
+packages/cli prebuild: > pnpm --filter @q3labs/pact-protocol-v1-client build
+packages/cli prebuild: ../dummy-upstream                        |  WARN  Unsupported engine: wanted: {"node":"20.x"} (current: {"node":"v24.6.0","pnpm":"10.30.3"})
+packages/cli prebuild: > @q3labs/pact-protocol-v1-client@0.3.0 build /Users/q3labsadmin/Q3/Solder/pact-network/.worktrees/pact-network-fs9-verify/packages/protocol-v1-client
+packages/cli prebuild: > tsc -p tsconfig.build.json
+packages/cli prebuild: ../dummy-upstream                        |  WARN  Unsupported engine: wanted: {"node":"20.x"} (current: {"node":"v24.6.0","pnpm":"10.30.3"})
+packages/cli prebuild: > @q3labs/pact-cli@0.3.0 _check:version /Users/q3labsadmin/Q3/Solder/pact-network/.worktrees/pact-network-fs9-verify/packages/cli
+packages/cli prebuild: > node -e "const a=require('./package.json').version,b=require('fs').readFileSync('src/index.ts','utf8').match(/VERSION\s*=\s*\"([^\"]+)/)[1]; if(a!==b){console.error('VERSION drift: package.json='+a+' src/index.ts='+b);process.exit(1)}"
+packages/cli prebuild: Done
+packages/cli build$ bun build src/index.ts --target=node --format=esm --outfile dist/pact.js && node scripts/fix-shebang.mjs dist/pact.js && chmod +x dist/pact.js
+packages/cli build: Bundled 231 modules in 46ms
+packages/cli build:   pact.js  1.86 MB  (entry point)
+packages/cli build: Done
+packages/facilitator build: Done
+packages/shared build: Done
+packages/market-proxy build$ tsc
+packages/indexer prebuild$ npm run clean
+packages/settler prebuild$ pnpm run clean
+packages/indexer prebuild: npm warn Unknown env config "npm-globalconfig". This will stop working in the next major version of npm.
+packages/indexer prebuild: npm warn Unknown env config "recursive". This will stop working in the next major version of npm.
+packages/indexer prebuild: npm warn Unknown env config "verify-deps-before-run". This will stop working in the next major version of npm.
+packages/indexer prebuild: npm warn Unknown env config "_jsr-registry". This will stop working in the next major version of npm.
+packages/indexer prebuild: > @pact-network/indexer@0.3.0 clean
+packages/indexer prebuild: > rm -rf dist
+packages/indexer prebuild: Done
+packages/indexer build$ nest build
+packages/settler prebuild: ../dummy-upstream                        |  WARN  Unsupported engine: wanted: {"node":"20.x"} (current: {"node":"v24.6.0","pnpm":"10.30.3"})
+packages/settler prebuild: > @pact-network/settler@0.3.0 clean /Users/q3labsadmin/Q3/Solder/pact-network/.worktrees/pact-network-fs9-verify/packages/settler
+packages/settler prebuild: > rm -rf dist
+packages/settler prebuild: Done
+packages/settler build$ nest build
+packages/market-proxy build: Done
+packages/settler build: Done
+packages/indexer build: Done

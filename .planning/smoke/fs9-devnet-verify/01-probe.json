@@ -1,0 +1,60 @@
+> @q3labs/pact-protocol-v1-client@0.3.0 build /Users/q3labsadmin/Q3/Solder/pact-network/.worktrees/pact-network-fs9-verify/packages/protocol-v1-client
+> tsc -p tsconfig.build.json
+
+{
+  "mode": "probe",
+  "rpc": "https://api.devnet.solana.com",
+  "b1": {
+    "pass": true,
+    "programId": "5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5",
+    "protocolConfigPda": "EFzSjDnAeb4yRA2LjXxmFmdyavdsEmsUNNDkxytvPdHU",
+    "settlementAuthorityPda": "FbTs39EycTWtQCRrExwmoAAjeQrcaLrXyNpVqthuXy4m",
+    "authority": "47Fg5JqMsCeuRyDsFtD7Ra7YTdzVmTr2mZ1R2dUkZyfS",
+    "usdcMint": "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+    "usdcMintMatchesDevnet": true,
+    "paused": 0,
+    "settlementSigner": "47Fg5JqMsCeuRyDsFtD7Ra7YTdzVmTr2mZ1R2dUkZyfS"
+  },
+  "treasury": {
+    "pda": "6B8KqFSuGmpmjftbRUUbatHsNT9t7CFWC7bw4EnK9Sy9",
+    "initialized": true,
+    "authority": "47Fg5JqMsCeuRyDsFtD7Ra7YTdzVmTr2mZ1R2dUkZyfS",
+    "vault": "3k4UiicJU4qbSXZBHZMAU7rpPAvoopCLVbBkD5AZsq3N",
+    "vaultBalance": "200"
+  },
+  "endpoints": [
+    {
+      "slug": "dummy",
+      "endpointConfigPda": "DEsZuoKkoLnDoqqzwJ79scLVRqEkAkYmz1Z14CaaqS4M",
+      "endpointConfigExists": true,
+      "coveragePoolPda": "9RdzYJ3Ehzgtg7xVJk51Rd5XLGcRqEy6kGvTtcPDkfjj",
+      "coveragePoolExists": true,
+      "paused": false,
+      "flatPremiumLamports": "1000",
+      "imputedCostLamports": "10000",
+      "slaLatencyMs": 2000,
+      "poolCurrentBalance": "1800",
+      "poolVault": "HaskqeCasyhqzu3imaUmveL5At9NwwqfKpi778edKyXg",
+      "poolVaultBalance": "1001800"
+    },
+    {
+      "slug": "helius",
+      "endpointConfigPda": "Bq4dYSFsb4CPyArK5JxsjeCPieePa59ZMGJyHkijxYUk",
+      "endpointConfigExists": true,
+      "coveragePoolPda": "8YyHwrYNKVgcp23n35kdmp1wMo5yB8eY1UpmEgMXzCRD",
+      "coveragePoolExists": true,
+      "paused": false,
+      "flatPremiumLamports": "1000",
+      "imputedCostLamports": "5000",
+      "slaLatencyMs": 1500,
+      "poolCurrentBalance": "0",
+      "poolVault": "AUVTomKgVtyZDNGPJkgCfuSnDoaLEY5D8LE3GJysoPDB",
+      "poolVaultBalance": "0"
+    }
+  ],
+  "expectAuthority": "47Fg5JqMsCeuRyDsFtD7Ra7YTdzVmTr2mZ1R2dUkZyfS",
+  "requireProvisioned": null,
+  "minPoolLamports": "10000",
+  "pass": true,
+  "failures": []
+}

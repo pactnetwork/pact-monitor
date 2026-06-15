@@ -1,0 +1,121 @@
+>> pre-flight: freeing fixed ports 8798/8799/3001/8080
+>> [0] keys + authority gate
+   authority gate PASS (47Fg5J… == on-chain ProtocolConfig.authority == SettlementAuthority.signer)
+>> [1] Postgres :55432 + migrate + seed dummy
+   dummy seeded (upstreamBase=http://localhost:8799)
+>> [2] dummy-upstream :8799 + Redis :6379
+>> [3] init-devnet (registers helius + dummy on live devnet; idempotent)
+  solana account 6B8KqFSuGmpmjftbRUUbatHsNT9t7CFWC7bw4EnK9Sy9 --url https://api.devnet.solana.com
+  solana account 8YyHwrYNKVgcp23n35kdmp1wMo5yB8eY1UpmEgMXzCRD --url https://api.devnet.solana.com  # helius
+  solana account 9RdzYJ3Ehzgtg7xVJk51Rd5XLGcRqEy6kGvTtcPDkfjj --url https://api.devnet.solana.com  # dummy
+
+Next: paste the SETTLEMENT_AUTHORITY signer pubkey (47Fg5JqMsCeuRyDsFtD7Ra7YTdzVmTr2mZ1R2dUkZyfS)
+into the Railway settler service env (base58-encoded keypair from
+/Users/q3labsadmin/.config/pact/devnet-keys/settlement-authority.json), fund it with >=0.05 devnet SOL,
+then run scripts/devnet-smoke/health.sh.
+   DRY_RUN ok — sending real txs (needs SOL on 47Fg5JqMsCeuRyDsFtD7Ra7YTdzVmTr2mZ1R2dUkZyfS)…
+  premium:        1000 (0.001000 USDC)
+  imputed cost:   10000 (0.010000 USDC)
+  SLA:            2000ms
+  already registered -- skipping
+
+
+=== devnet init COMPLETE ===
+State written to scripts/devnet/.devnet-state.json
+
+Verification:
+  solana program show 5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5 --url https://api.devnet.solana.com
+  solana account EFzSjDnAeb4yRA2LjXxmFmdyavdsEmsUNNDkxytvPdHU --url https://api.devnet.solana.com
+  solana account 6B8KqFSuGmpmjftbRUUbatHsNT9t7CFWC7bw4EnK9Sy9 --url https://api.devnet.solana.com
+  solana account 8YyHwrYNKVgcp23n35kdmp1wMo5yB8eY1UpmEgMXzCRD --url https://api.devnet.solana.com  # helius
+  solana account 9RdzYJ3Ehzgtg7xVJk51Rd5XLGcRqEy6kGvTtcPDkfjj --url https://api.devnet.solana.com  # dummy
+
+Next: paste the SETTLEMENT_AUTHORITY signer pubkey (47Fg5JqMsCeuRyDsFtD7Ra7YTdzVmTr2mZ1R2dUkZyfS)
+into the Railway settler service env (base58-encoded keypair from
+/Users/q3labsadmin/.config/pact/devnet-keys/settlement-authority.json), fund it with >=0.05 devnet SOL,
+then run scripts/devnet-smoke/health.sh.
+>> [4] fund the dummy CoveragePool vault (>= 1000000)
+   dummy pool vault = 4naZddWw1kuBv2ysPWUoYjLDDt8BunnEttJq92mYHqtE
+   USER ACTION (devnet USDC mint authority GrNg1XM2…):
+     spl-token mint 4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU 1 --recipient 4naZddWw1kuBv2ysPWUoYjLDDt8BunnEttJq92mYHqtE --url devnet
+   waiting for the pool vault to hold >= 1000000 (Ctrl-C to abort)…
+   pool vault funded — gate PASS
+>> [5] market-proxy :8798 (QUEUE_BACKEND=redis-streams)
+>> [6] agent keypair + fund-agent (user mints 5 USDC to agent ATA)
+   agent = Hr7XXdvkiQXb1Z7SnC5i8BJks5ptuEUkswrJX97AsNLa
+packages/dummy-upstream                  |  WARN  Unsupported engine: wanted: {"node":"20.x"} (current: {"node":"v24.6.0","pnpm":"10.30.3"})
+
+> @pact-network/scripts-devnet@0.0.0 fund-agent /Users/q3labsadmin/Q3/Solder/pact-network/.worktrees/pact-network-fs9-verify/scripts/devnet
+> pnpm run build:deps && tsx fund-agent.ts
+
+../../packages/dummy-upstream            |  WARN  Unsupported engine: wanted: {"node":"20.x"} (current: {"node":"v24.6.0","pnpm":"10.30.3"})
+
+> @pact-network/scripts-devnet@0.0.0 build:deps /Users/q3labsadmin/Q3/Solder/pact-network/.worktrees/pact-network-fs9-verify/scripts/devnet
+> pnpm --filter @q3labs/pact-protocol-v1-client run build
+
+../../packages/dummy-upstream            |  WARN  Unsupported engine: wanted: {"node":"20.x"} (current: {"node":"v24.6.0","pnpm":"10.30.3"})
+
+> @q3labs/pact-protocol-v1-client@0.3.0 build /Users/q3labsadmin/Q3/Solder/pact-network/.worktrees/pact-network-fs9-verify/packages/protocol-v1-client
+> tsc -p tsconfig.build.json
+
+
+agent           = Hr7XXdvkiQXb1Z7SnC5i8BJks5ptuEUkswrJX97AsNLa
+program         = 5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5
+devnet USDC ATA = 4yL1TWVX5gw5ReaKqpEZJikrqRNZTtXhrJXfwnThUTQQ
+SettlementAuth  = FbTs39EycTWtQCRrExwmoAAjeQrcaLrXyNpVqthuXy4m  (delegate to Approve)
+allowance       = 5 USDC (5000000 lamports)
+
+SOL balance ok: 1.0000 SOL
+ATA already holds 19998000 lamports (>= allowance).
+sending SPL Token Approve (SettlementAuthority as delegate)...
+Approve tx: 5VaaEmMgzntJgAKxABAWrDENLpuMBXJBeEt5EBzygyEA9WqVvVmfByS4kQGcwEqjngM7w1fCrwP7wCoL4gdhnuig
+
+agent provisioned. Run the live E2E with:
+  PACT_SDK_E2E=1 PACT_DEVNET_PROGRAM_ID=5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5 \
+  PACT_DEVNET_SECRET_KEY=<bs58> PACT_DEVNET_INDEXER_URL=https://indexer.pactnetwork.io \
+  pnpm --filter @q3labs/pact-sdk test:e2e
+>> [7] indexer :3001
+>> [8] settler (redis-streams) + consumer-group readiness gate
+   settler consumer group ready
+>> [9] SDK strict E2E
+agent ATA 4yL1TWVX5gw5ReaKqpEZJikrqRNZTtXhrJXfwnThUTQQ balance = 19998000 lamports
+   agent ATA pre = packages/dummy-upstream                  |  WARN  Unsupported engine: wanted: {"node":"20.x"} (current: {"node":"v24.6.0","pnpm":"10.30.3"})
+19998000 lamports
+packages/dummy-upstream                  |  WARN  Unsupported engine: wanted: {"node":"20.x"} (current: {"node":"v24.6.0","pnpm":"10.30.3"})
+
+> @q3labs/pact-sdk@0.3.0 test:e2e /Users/q3labsadmin/Q3/Solder/pact-network/.worktrees/pact-network-fs9-verify/packages/sdk
+> vitest run src/__tests__/integration.test.ts
+
+
+ RUN  v3.2.4 /Users/q3labsadmin/Q3/Solder/pact-network/.worktrees/pact-network-fs9-verify/packages/sdk
+
+stderr | src/__tests__/integration.test.ts > integration (wired, mocked transports) > live devnet: approve -> covered call -> forced breach -> refund
+[e2e] PACT_DEVNET_PROXY_URL = http://localhost:8798
+
+ ✓ src/__tests__/integration.test.ts (2 tests) 15051ms
+   ✓ integration (wired, mocked transports) > live devnet: approve -> covered call -> forced breach -> refund  15013ms
+
+ Test Files  1 passed (1)
+      Tests  2 passed (2)
+   Start at  18:18:56
+   Duration  15.48s (transform 70ms, setup 0ms, collect 258ms, tests 15.05s, environment 0ms, prepare 40ms)
+
+   SDK strict vitest exit = 0
+>> [10] on-chain CallRecord/ATA assertion
+   callId = 63e81ddc-6c3a-4b0b-b16a-b93feff9248c
+packages/dummy-upstream                  |  WARN  Unsupported engine: wanted: {"node":"20.x"} (current: {"node":"v24.6.0","pnpm":"10.30.3"})
+SyntaxError: Cannot convert packages/dummy-upstream                  |  WARN  Unsupported engine: wanted: {"node":"20.x"} (current: {"node":"v24.6.0","pnpm":"10.30.3"})
+19998000 to a BigInt
+    at BigInt (<anonymous>)
+    at parseArgs (/Users/q3labsadmin/Q3/Solder/pact-network/.worktrees/pact-network-fs9-verify/scripts/devnet/verify-network.ts:167:46)
+    at main (/Users/q3labsadmin/Q3/Solder/pact-network/.worktrees/pact-network-fs9-verify/scripts/devnet/verify-network.ts:787:16)
+    at <anonymous> (/Users/q3labsadmin/Q3/Solder/pact-network/.worktrees/pact-network-fs9-verify/scripts/devnet/verify-network.ts:799:1)
+    at ModuleJob.run (node:internal/modules/esm/module_job:371:25)
+    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:669:26)
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)
+undefined
+/Users/q3labsadmin/Q3/Solder/pact-network/.worktrees/pact-network-fs9-verify/scripts/devnet:
+ ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL  Command failed with exit code 2: tsx verify-network.ts assert-refund --program-id 5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5 --rpc https://api.devnet.solana.com --call-id 63e81ddc-6c3a-4b0b-b16a-b93feff9248c --agent Hr7XXdvkiQXb1Z7SnC5i8BJks5ptuEUkswrJX97AsNLa --ata-pre packages/dummy-upstream                  |  WARN  Unsupported engine: wanted: {"node":"20.x"} (current: {"node":"v24.6.0","pnpm":"10.30.3"})
+19998000 --min-refund 1
+   freeing port 3001 (kill 9120)
+   freeing port 8080 (kill 9215)
