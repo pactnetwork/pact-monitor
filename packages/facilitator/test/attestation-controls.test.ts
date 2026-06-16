@@ -5,6 +5,7 @@ import { describe, test, expect } from "vitest";
 import {
   evaluateClientAttestation,
   isAttestationGateMode,
+  perAgentRefundCapFor,
   DEFAULT_THRESHOLDS,
   type AttestationStats,
   type AttestationThresholds,
@@ -40,11 +41,13 @@ describe("evaluateClientAttestation", () => {
     ).toBe("allow");
   });
 
-  test("clean agent with a normal refund is allowed", () => {
-    // A "normal" refund must sit UNDER the per-agent window cap (tightened to
-    // 1_000_000n by the harden PR); 900_000n is a clearly-normal single claim
-    // for a clean agent. (Was 1_001_000n, stranded above the tightened cap.)
-    const d = evaluateClientAttestation({ thisRefundLamports: 900_000n, stats: CLEAN });
+  test("clean agent with a FULL single refund is allowed (pool-relative cap)", () => {
+    // The whole point of the pool-relative cap (agent-tasks#10): an honest
+    // agent's first full-size breach refund (imputedCost 1_000_000 + premium
+    // 1_000 = 1_001_000) must NOT be throttled. The default cap is 3 full
+    // refunds (3_003_000n), so a single 1_001_000 claim sits well under it.
+    // (A flat 1_000_000n cap throttled exactly this — the bug this fixes.)
+    const d = evaluateClientAttestation({ thisRefundLamports: 1_001_000n, stats: CLEAN });
     expect(d.decision).toBe("allow");
   });
 
@@ -189,5 +192,51 @@ describe("evaluateClientAttestation", () => {
       thresholds: tight,
     });
     expect(d).toEqual({ decision: "throttle", reason: "per_agent_refund_cap" });
+  });
+});
+
+describe("perAgentRefundCapFor — pool-relative per-agent cap (agent-tasks#10)", () => {
+  const POOL = { imputedCostLamports: 1_000_000n, flatPremiumLamports: 1_000n };
+
+  test("default cap = 3 × (imputedCost + premium), matches DEFAULT_THRESHOLDS", () => {
+    expect(perAgentRefundCapFor(POOL)).toBe(3_003_000n);
+    expect(perAgentRefundCapFor(POOL)).toBe(
+      DEFAULT_THRESHOLDS.perAgentRefundCapLamportsPerWindow,
+    );
+  });
+
+  test("scales with the pool's per-call ceiling", () => {
+    expect(
+      perAgentRefundCapFor({ imputedCostLamports: 50_000n, flatPremiumLamports: 2_500n }),
+    ).toBe(157_500n);
+  });
+
+  test("custom claim multiple", () => {
+    expect(perAgentRefundCapFor(POOL, 1n)).toBe(1_001_000n);
+  });
+
+  test("a single FULL refund is under the pool-relative cap; the 4th trips it", () => {
+    const cap = perAgentRefundCapFor(POOL); // 3_003_000n
+    const single = POOL.imputedCostLamports + POOL.flatPremiumLamports; // 1_001_000n
+    const thresholds: AttestationThresholds = {
+      ...DEFAULT_THRESHOLDS,
+      perAgentRefundCapLamportsPerWindow: cap,
+    };
+    // 1st full claim: projected 1_001_000 < cap → allow.
+    expect(
+      evaluateClientAttestation({
+        thisRefundLamports: single,
+        stats: { ...CLEAN, agentRefundLamportsInWindow: 0n },
+        thresholds,
+      }).decision,
+    ).toBe("allow");
+    // 4th full claim: 3 already in window (= cap) + another → over cap → throttle.
+    expect(
+      evaluateClientAttestation({
+        thisRefundLamports: single,
+        stats: { ...CLEAN, agentRefundLamportsInWindow: 3n * single },
+        thresholds,
+      }),
+    ).toEqual({ decision: "throttle", reason: "per_agent_refund_cap" });
   });
 });

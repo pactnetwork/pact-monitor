@@ -94,12 +94,38 @@ export interface AttestationThresholds {
  * Conservative spike defaults. The SECURITY_REDTEAM_VERDICT.md memo owns the
  * real production numbers; these exist so the module is usable and tested today.
  */
+/**
+ * How many full single refunds the per-agent rolling-window cap allows. The cap
+ * bounds a VOLUME of claims, not one: a flat cap equal to a single max refund
+ * (`imputedCost + flatPremium`) would throttle an honest agent's FIRST full-size
+ * breach. 3 ≈ "a few genuine breaches per window"; the on-chain per-endpoint
+ * hourly exposure cap remains the hard backstop above this.
+ */
+export const PER_AGENT_REFUND_CAP_CLAIMS = 3n;
+
+/**
+ * Pool-relative per-agent refund cap = `PER_AGENT_REFUND_CAP_CLAIMS` × the pool's
+ * max single refund (`imputedCostLamports + flatPremiumLamports`). The register
+ * route computes this from live pool config and passes it via `thresholds`, so
+ * the cap tracks each pool's per-call ceiling instead of a one-size static
+ * number — a single full-size breach is always under it, ~N+1 trips it.
+ */
+export function perAgentRefundCapFor(
+  pool: { imputedCostLamports: bigint; flatPremiumLamports: bigint },
+  claims: bigint = PER_AGENT_REFUND_CAP_CLAIMS,
+): bigint {
+  return claims * (pool.imputedCostLamports + pool.flatPremiumLamports);
+}
+
 export const DEFAULT_THRESHOLDS: AttestationThresholds = {
-  // Per-agent window ceiling set well below the pool's whole-hour exposure cap
-  // ($5 in env) so a single key cannot claim the entire hourly budget — the
-  // per-agent rule must bite before the pool-wide cap does. Bounds a single key,
-  // which the on-chain per-endpoint cap does not. Tighten further via config.
-  perAgentRefundCapLamportsPerWindow: 1_000_000n,
+  // Static FALLBACK for direct callers/tests. Production overrides this
+  // pool-relatively via `perAgentRefundCapFor(pool)` in the register route, so
+  // the live cap is ~3 full refunds for the ACTUAL pool, not a flat number.
+  // Default = 3 × (imputedCost 1_000_000 + premium 1_000) for the `pay-default`
+  // pool = 3_003_000n: bounds a single key's VOLUME of claims without throttling
+  // its first full-size breach (a flat 1_000_000n cap < the 1_001_000n max
+  // single refund did exactly that). On-chain per-endpoint cap is the backstop.
+  perAgentRefundCapLamportsPerWindow: 3_003_000n,
   anomalyMultiple: 3,
   minBreachRateToFlag: 0.5,
   minCallsForRateRule: 10,

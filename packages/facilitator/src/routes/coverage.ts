@@ -48,6 +48,7 @@ import { verifyPayment } from "../lib/payment-verify.js";
 import type { PaySettlementEvent } from "../lib/events.js";
 import {
   evaluateClientAttestation,
+  perAgentRefundCapFor,
   DEFAULT_THRESHOLDS,
   type AttestationStats,
 } from "../lib/attestation-controls.js";
@@ -333,7 +334,13 @@ export async function registerCoverageRoute(c: Context): Promise<Response> {
       const decision = evaluateClientAttestation({
         thisRefundLamports: math.refundLamports,
         stats,
-        thresholds: DEFAULT_THRESHOLDS,
+        thresholds: {
+          ...DEFAULT_THRESHOLDS,
+          // Pool-relative per-agent cap (agent-tasks#10): ~3 full refunds for
+          // THIS pool's per-call ceiling, so an honest agent's first full-size
+          // breach is never throttled. On-chain hourly cap is the hard backstop.
+          perAgentRefundCapLamportsPerWindow: perAgentRefundCapFor(pool),
+        },
       });
       if (decision.decision === "throttle") {
         // eslint-disable-next-line no-console
