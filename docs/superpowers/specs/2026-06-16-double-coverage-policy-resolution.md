@@ -1,6 +1,6 @@
 # ADR: Double-coverage policy resolution (agent-side vs provider-side)
 
-- **Status:** Accepted (design-only). Q1–Q4 locked; Q5 flagged for Rick.
+- **Status:** Accepted (design-only). Q1–Q5 all locked (Q5 locked by Rick 2026-06-16).
 - **Date:** 2026-06-16
 - **Scope:** V2 program (`pact-network-v2-pinocchio`). Struct-layout seam only — no
   runtime instruction behavior changes in this change.
@@ -91,8 +91,10 @@ this ADR only guarantees the data model can carry the link it needs.
 > **V2 follow-up (not in this change):** in `enable_insurance.rs`, before
 > creating an agent-side policy, scan the target pool for an active
 > `policy_kind == 1` (provider-side) policy. If found, set `linked_policy` /
-> `linked_policy_present` on both records and apply the agreed premium
-> adjustment (Q5). On a true duplicate of the *same kind*, reject.
+> `linked_policy_present` on both records and apply the premium adjustment
+> gated by that provider's `discount_scope` (Q5): scope `1` (all-agents)
+> discounts unconditionally; scope `2` (opt-in-only) discounts only when the
+> agent enrolled. On a true duplicate of the *same kind*, reject.
 
 ### Q3 — Co-sign authority model: **canonical record binds the agent-side policy; design-only tiebreaker** (LOCKED)
 
@@ -126,22 +128,36 @@ This change does **not** modify `submit_claim.rs` or the exposure-cap calculatio
 > double-counted against the 15–20% per-pool cap — the pair consumes one unit of
 > exposure. `submit_claim.rs` is intentionally left untouched here.
 
-### Q5 — Economic model: **OPEN — NEEDS RICK SIGN-OFF** (NOT LOCKED)
+### Q5 — Economic model: **merchant-configurable (per-provider)** (LOCKED — Rick 2026-06-16)
 
-> **FLAG FOR RICK.** Does the provider's premium discount apply to **all** agents
-> calling that API, or **only** those who explicitly opt in to provider-funded
-> coverage?
->
-> **Recommendation (not locked):** the provider discount applies to **all agents
-> calling that API** — provider-funded coverage deepens the pool / lowers
-> realized risk for every consumer of that endpoint, and a blanket discount is
-> simpler to reason about and to price-shop across APIs. The alternative
-> (opt-in-only discount) creates two premium tiers on the same pool and
-> complicates the agent's price-shopping model.
->
-> This is a product decision with revenue and go-to-market implications. It does
-> **not** affect the struct seam (the seam supports either model), so it is safe
-> to leave open without blocking this change. **Do not lock until Rick signs off.**
+The coverage-discount scope is the **provider/merchant's choice, per integration**
+— it is **not** a protocol-wide rule and **not** hardcoded either way. Some
+merchants will want the discount to apply to **every** agent calling their API;
+others will want it **opt-in only**. The protocol **exposes the toggle**; the
+merchant sets it when they stand up their provider-side coverage.
+
+This is carried by a 1-byte `discount_scope` field on the **provider-side**
+policy (`policy_kind == 1`). Its semantics:
+
+| `discount_scope` | Meaning                                                                 |
+|-----------------:|-------------------------------------------------------------------------|
+| `0`              | unset / not-applicable — the value on every agent-side policy, and the default before a provider chooses. |
+| `1`              | **all-agents** — every agent calling this API gets the discount.        |
+| `2`              | **opt-in-only** — only agents who explicitly enroll get the discount.   |
+
+`discount_scope` is **meaningful only when `policy_kind == 1`** (provider-side).
+On an agent-side policy it MUST be `0` (the zero-default already enforces this for
+fresh buffers). The field is part of the inert struct seam: the V2
+`enable_insurance` runtime that reads it to price the agent's premium is a
+follow-up and is **out of scope here** — this change only guarantees the data
+model can carry the merchant's choice.
+
+> **Why per-provider, not protocol-wide:** a blanket protocol rule would force
+> every merchant into the same go-to-market model. Making it a per-integration
+> toggle lets a provider who wants maximum agent adoption discount everyone, while
+> a provider who wants to gate the benefit behind enrollment can require opt-in —
+> both on the same pool, without a second protocol-level premium tier baked into
+> the program.
 
 ---
 
@@ -162,18 +178,22 @@ New fields (inserted after the referrer block, before `reserved`):
 | `linked_policy`         | `[u8; 32]` |    256 |   32 | Counterpart Policy PDA; all-zero = None.               |
 | `policy_kind`           | `u8`       |    288 |    1 | 0 = agent-side (canonical), 1 = provider-side (passive).|
 | `linked_policy_present` | `u8`       |    289 |    1 | 1 = `linked_policy` populated; 0 = None.               |
-| `_pad_double_coverage`  | `[u8; 6]`  |    290 |    6 | Alignment pad → `reserved` lands on an 8-byte boundary. |
-| `reserved`              | `[u8; 24]` |    296 |   24 | Was `[u8; 64]`; shrunk by the 40-byte seam above.       |
+| `discount_scope`        | `u8`       |    290 |    1 | Q5 merchant toggle; meaningful only when `policy_kind == 1`. 0 = unset/n-a, 1 = all-agents, 2 = opt-in-only. |
+| `_pad_double_coverage`  | `[u8; 5]`  |    291 |    5 | Alignment pad (was `[u8; 6]`; gave up 1 byte to `discount_scope`) → `reserved` lands on an 8-byte boundary. |
+| `reserved`              | `[u8; 24]` |    296 |   24 | Was `[u8; 64]`; shrunk by the 40-byte seam above. **Unchanged by the Q5 addition** — `discount_scope` came out of `_pad_double_coverage`, not `reserved`. |
 
 - **`Policy::LEN` = 320** (unchanged).
-- **Reserved pad:** 64 → 24 bytes (40 bytes consumed: 32 + 1 + 1 + 6).
+- **Reserved pad:** 64 → 24 bytes (40 bytes consumed: 32 + 1 + 1 + 1 + 5). The Q5
+  `discount_scope` byte was carved from `_pad_double_coverage` (6 → 5), so the
+  reserved pad stays at **24** and `reserved` stays 8-aligned at offset 296.
 - Compile-time offset asserts pin `linked_policy@256`, `policy_kind@288`,
-  `linked_policy_present@289`; the `Policy, reserved` end-distance assert is
-  updated to `Policy::LEN - 24`. The `Policy::LEN == 320` assert is unchanged.
+  `linked_policy_present@289`, `discount_scope@290`; the `Policy, reserved`
+  end-distance assert is `Policy::LEN - 24`. The `Policy::LEN == 320` assert is
+  unchanged.
 - A fresh, zero-initialized policy buffer defaults to
-  `policy_kind = 0` (agent-side), `linked_policy_present = 0` (unlinked) —
-  i.e. today's V1 behavior, so `enable_insurance` needs no change to remain
-  correct.
+  `policy_kind = 0` (agent-side), `linked_policy_present = 0` (unlinked),
+  `discount_scope = 0` (unset) — i.e. today's V1 behavior, so `enable_insurance`
+  needs no change to remain correct.
 
 ---
 
@@ -205,7 +225,6 @@ New fields (inserted after the referrer block, before `reserved`):
 
 **Open items**
 
-- **Q5 economic model** — needs Rick sign-off (see above).
 - **V2 follow-up: dedupe logic** in `enable_insurance.rs` (Q2).
 - **V2 follow-up: exposure-cap calc** treating linked policies as one unit in the
   claim/settlement path (Q4); `submit_claim.rs` untouched here.

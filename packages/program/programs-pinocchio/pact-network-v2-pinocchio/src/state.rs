@@ -264,9 +264,20 @@ pub struct Policy {
     pub policy_kind: u8,
     /// 1 = `linked_policy` slot populated; 0 = None.
     pub linked_policy_present: u8,
+    /// Merchant-configurable coverage-discount scope (agent-tasks#17 Q5, Rick
+    /// 2026-06-16). Meaningful ONLY on a provider-side policy (`policy_kind == 1`);
+    /// MUST be 0 on an agent-side policy. The provider chooses, per integration,
+    /// whether the discount their provider-funded coverage unlocks applies to
+    /// every agent calling their API or only to agents who opt in:
+    ///   0 = unset / not-applicable (agent-side, or provider hasn't chosen)
+    ///   1 = all-agents   (every agent calling this API gets the discount)
+    ///   2 = opt-in-only  (only agents who explicitly enroll get the discount)
+    /// Inert struct seam: the V2 `enable_insurance` runtime that reads this to
+    /// price the premium is a follow-up, out of scope here.
+    pub discount_scope: u8,
     /// Explicit alignment pad so `reserved` starts on an 8-byte boundary and the
     /// struct total size stays a multiple of 8.
-    pub _pad_double_coverage: [u8; 6],
+    pub _pad_double_coverage: [u8; 5],
 
     /// Reserved for one future layout extension without a migration instruction.
     /// Project-wide convention (Rick Q3 2026-04-24). Shrunk from 64 → 24 bytes
@@ -460,6 +471,9 @@ const _: () = assert!(core::mem::offset_of!(Policy, referrer_present) == 250);
 const _: () = assert!(core::mem::offset_of!(Policy, linked_policy) == 256);
 const _: () = assert!(core::mem::offset_of!(Policy, policy_kind) == 288);
 const _: () = assert!(core::mem::offset_of!(Policy, linked_policy_present) == 289);
+// agent-tasks#17 Q5 (Rick 2026-06-16) — merchant-configurable discount scope,
+// carved from `_pad_double_coverage` (6 → 5); net size change is zero.
+const _: () = assert!(core::mem::offset_of!(Policy, discount_scope) == 290);
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -542,13 +556,14 @@ mod tests {
 
     #[test]
     fn policy_size_has_no_hidden_padding() {
-        // Base: 1 + 7 + 32*3 + 64 + 8*5 + 1*3 + 5      = 216
-        // F1:   referrer[32] + u16 + u8 + pad[5]        = 40
-        // #17:  linked_policy[32] + u8 + u8 + pad[6]    = 40
-        // Pad:  reserved[24]                            = 24
+        // Base: 1 + 7 + 32*3 + 64 + 8*5 + 1*3 + 5         = 216
+        // F1:   referrer[32] + u16 + u8 + pad[5]           = 40
+        // #17:  linked_policy[32] + u8 + u8 + u8 + pad[5]  = 40
+        //       (discount_scope u8 carved from the pad: 6 → 5, net 0)
+        // Pad:  reserved[24]                               = 24
         // Total 216 + 40 + 40 + 24 = 320
         let declared =
-            1 + 7 + 32 * 3 + 64 + 8 * 5 + 1 * 3 + 5 + 32 + 2 + 1 + 5 + 32 + 1 + 1 + 6 + 24;
+            1 + 7 + 32 * 3 + 64 + 8 * 5 + 1 * 3 + 5 + 32 + 2 + 1 + 5 + 32 + 1 + 1 + 1 + 5 + 24;
         assert_eq!(Policy::LEN, declared);
     }
 
@@ -746,10 +761,11 @@ mod tests {
         assert_eq!(decoded.referrer_share_bps, 0);
 
         // Zero-initialized agent-tasks#17 seam defaults to an unlinked,
-        // agent-side (canonical) policy.
+        // agent-side (canonical) policy with no discount scope set.
         assert_eq!(decoded.linked_policy, [0u8; 32]);
         assert_eq!(decoded.policy_kind, 0);
         assert_eq!(decoded.linked_policy_present, 0);
+        assert_eq!(decoded.discount_scope, 0);
     }
 
     #[test]
@@ -771,6 +787,7 @@ mod tests {
         policy.linked_policy = [0x9A; 32];
         policy.linked_policy_present = 1;
         policy.policy_kind = 1; // provider-side (passive)
+        policy.discount_scope = 2; // opt-in-only (merchant's choice; Q5)
         policy.reserved = [0x44; 24];
 
         let bytes = bytemuck::bytes_of(&policy);
@@ -780,6 +797,7 @@ mod tests {
         assert_eq!(decoded.linked_policy, [0x9A; 32]);
         assert_eq!(decoded.linked_policy_present, 1);
         assert_eq!(decoded.policy_kind, 1);
+        assert_eq!(decoded.discount_scope, 2);
         assert_eq!(decoded.reserved, [0x44; 24]);
     }
 
