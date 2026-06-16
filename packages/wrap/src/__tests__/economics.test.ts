@@ -36,6 +36,20 @@ describe("computeEconomics: C-1 imputed-cost cap (agent-tasks#10)", () => {
         computeEconomics({ outcome, pool: POOL, amountPaid: POOL.imputedCostLamports }).refundLamports,
       ).toBe(POOL.imputedCostLamports + POOL.flatPremiumLamports);
     });
+
+    it(`${outcome}: negative amountPaid clamps principal to 0 (floor, agent-tasks#10)`, () => {
+      // principal floored to 0n so a negative amount can't yield refund = neg + premium
+      expect(
+        computeEconomics({ outcome, pool: POOL, amountPaid: -1n }).refundLamports,
+      ).toBe(0n + POOL.flatPremiumLamports);
+    });
+
+    it(`${outcome}: amountPaid == 0 yields premium-only refund`, () => {
+      // principal = 0n => refund = 0n + flat premium (1_000n)
+      expect(
+        computeEconomics({ outcome, pool: POOL, amountPaid: 0n }).refundLamports,
+      ).toBe(0n + POOL.flatPremiumLamports);
+    });
   }
 
   it("ok: no refund regardless of amountPaid (cap is irrelevant)", () => {

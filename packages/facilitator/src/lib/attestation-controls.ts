@@ -77,10 +77,11 @@ export interface AttestationThresholds {
  * real production numbers; these exist so the module is usable and tested today.
  */
 export const DEFAULT_THRESHOLDS: AttestationThresholds = {
-  // Default to the pool's whole-hour exposure cap ($5 in env) as the per-agent
-  // window ceiling — a deliberately loose first cut that still bounds a single
-  // key, which the on-chain per-endpoint cap does not. Tighten via config.
-  perAgentRefundCapLamportsPerWindow: 5_000_000n,
+  // Per-agent window ceiling set well below the pool's whole-hour exposure cap
+  // ($5 in env) so a single key cannot claim the entire hourly budget — the
+  // per-agent rule must bite before the pool-wide cap does. Bounds a single key,
+  // which the on-chain per-endpoint cap does not. Tighten further via config.
+  perAgentRefundCapLamportsPerWindow: 1_000_000n,
   anomalyMultiple: 3,
   minBreachRateToFlag: 0.5,
   minCallsForRateRule: 10,

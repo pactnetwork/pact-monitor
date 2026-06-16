@@ -106,7 +106,11 @@ export function computeEconomics(args: {
     // Gateway path: amountPaid omitted => requested = imputed => min stays
     // imputed (behavior-neutral). Facilitator path: min(amountPaid, imputed).
     const principal =
-      requested > pool.imputedCostLamports ? pool.imputedCostLamports : requested;
+      requested < 0n
+        ? 0n
+        : requested > pool.imputedCostLamports
+          ? pool.imputedCostLamports
+          : requested;
     refund = principal + pool.flatPremiumLamports;
   }
 
