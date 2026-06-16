@@ -114,15 +114,30 @@ describe("evaluateClientAttestation", () => {
   });
 
   describe("rule 2 — empty-baseline fail-open (agent-tasks#10 NIT #3)", () => {
-    test("no pact_observed samples → rate rule is skipped even for an all-breach agent", () => {
-      // 20/20 breaches would normally blow past the 0.5 floor and throttle, but
-      // with zero trustworthy baseline samples there is nothing to judge against
-      // → fail OPEN. Rule 1 + the on-chain hourly cap remain the bounds.
+    test("empty baseline + >50% breach over enough calls → the ABSOLUTE FLOOR still throttles", () => {
+      // Option B: the floor (0.5) is baseline-INDEPENDENT, so blatant abuse is
+      // caught even during the bootstrap window with no pact_observed samples.
       const d = evaluateClientAttestation({
         thisRefundLamports: 1_000n,
         stats: {
           ...CLEAN,
-          agentCoveredClaimsInWindow: 20,
+          agentCoveredClaimsInWindow: 18, // 0.9 > 0.5 floor
+          agentTotalCallsInWindow: 20,
+          networkBreachClaimRate: 0,
+          networkBaselineSamples: 0,
+        },
+      });
+      expect(d).toEqual({ decision: "throttle", reason: "breach_claim_rate_anomaly" });
+    });
+
+    test("empty baseline + <50% breach over enough calls → allowed (multiple fails open, floor not exceeded)", () => {
+      // The baseline-relative term (rate*3) is dropped on an empty baseline, so a
+      // sub-floor agent that the multiple MIGHT otherwise have flagged is allowed.
+      const d = evaluateClientAttestation({
+        thisRefundLamports: 1_000n,
+        stats: {
+          ...CLEAN,
+          agentCoveredClaimsInWindow: 8, // 0.4 < 0.5 floor
           agentTotalCallsInWindow: 20,
           networkBreachClaimRate: 0,
           networkBaselineSamples: 0,

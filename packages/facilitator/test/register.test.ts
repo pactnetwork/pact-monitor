@@ -678,15 +678,31 @@ describe("facilitator app", () => {
     expect(publisher.events).toHaveLength(0);
   });
 
-  test("gate ENFORCE: empty pact_observed baseline → anomaly rule fails OPEN (still published)", async () => {
+  test("gate ENFORCE: empty pact_observed baseline + >50% breach → ABSOLUTE FLOOR still throttles", async () => {
     PAY_DEFAULTS.attestationGateMode = "enforce";
-    // Same all-breach agent that throttles above, but NO trustworthy baseline
-    // samples yet (bootstrap window) → rate rule is skipped, claim publishes.
-    // NIT #3: the per-agent cap + on-chain hourly cap remain the bounds.
+    // NIT #3 Option B: with NO trustworthy baseline samples the baseline-relative
+    // term is dropped, but the baseline-INDEPENDENT floor (0.5) survives and must
+    // still catch blatant abuse during the bootstrap window.
     // Small claim (refund 101k) under the 1M per-agent cap so Rule 1 does not
-    // mask the Rule-2 fail-open we are asserting.
+    // mask the Rule-2 behavior under test.
     state.attAgentRefundSum = "0";
-    state.attAgentCovered = 18;
+    state.attAgentCovered = 18; // 0.9 > 0.5 floor
+    state.attAgentTotal = 20;
+    state.attNetRate = 0;
+    state.attNetSamples = 0;
+    const res = await app.request(signedRegisterRequest({ amountBaseUnits: "100000" }));
+    const json = (await res.json()) as { status: string; reason: string };
+    expect(json.status).toBe("uncovered");
+    expect(json.reason).toBe("attestation_throttled_breach_claim_rate_anomaly");
+    expect(publisher.events).toHaveLength(0);
+  });
+
+  test("gate ENFORCE: empty pact_observed baseline + <50% breach → fails OPEN on the multiple (published)", async () => {
+    PAY_DEFAULTS.attestationGateMode = "enforce";
+    // The baseline-relative term is dropped on an empty baseline, so a sub-floor
+    // agent is allowed (only the floor could fire, and 0.4 < 0.5).
+    state.attAgentRefundSum = "0";
+    state.attAgentCovered = 8; // 0.4 < 0.5 floor
     state.attAgentTotal = 20;
     state.attNetRate = 0;
     state.attNetSamples = 0;

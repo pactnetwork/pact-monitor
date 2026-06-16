@@ -61,10 +61,12 @@ export interface AttestationStats {
   /**
    * Number of trustworthy `pact_observed` calls the baseline above was computed
    * from. Used to fail OPEN on an empty baseline: until gateway traffic exists
-   * there is no trustworthy population to judge anomalies against, so the
-   * breach-rate anomaly rule is skipped entirely (Rule 1 per-agent refund cap +
-   * the on-chain hourly exposure cap remain the bounds). A genuine 0% rate over
-   * a non-empty sample is distinct from "no samples yet" and keeps the rule on.
+   * there is no trustworthy population, so the BASELINE-RELATIVE anomaly term
+   * (`networkBreachClaimRate * anomalyMultiple`) is dropped. The baseline-
+   * INDEPENDENT absolute floor (`minBreachRateToFlag`) STILL applies — a
+   * >50%-breach agent is blatant abuse regardless of the baseline. A genuine 0%
+   * rate over a non-empty sample is distinct from "no samples yet": both leave
+   * only the floor active here, but the distinction is explicit and intentional.
    */
   networkBaselineSamples: number;
 }
@@ -136,26 +138,30 @@ export function evaluateClientAttestation(input: AttestationInput): AttestationD
     return { decision: "throttle", reason: "per_agent_refund_cap" };
   }
 
-  // Rule 2 — breach-claim-rate anomaly vs network baseline. Only fires with
-  // enough samples and above the absolute floor, so honest low-volume agents are
-  // never throttled on noise. This is the control sybils can't dodge for free:
-  // to look normal a forger must emit mostly real (paid) non-breach calls.
+  // Rule 2 — breach-claim-rate anomaly. Only fires above the small-sample guard
+  // and above the ceiling, so honest low-volume agents are never throttled on
+  // noise. This is the control sybils can't dodge for free: to look normal a
+  // forger must emit mostly real (paid) non-breach calls.
   //
-  // Fail OPEN on an empty baseline (agent-tasks#10 NIT #3): if there is no
-  // trustworthy `pact_observed` population yet, there is nothing to judge the
-  // agent's rate against — skip the whole rate rule (including its absolute
-  // floor) rather than flag on a baseline we don't have. Rule 1 (per-agent
-  // refund cap) above and the on-chain hourly exposure cap remain the bounds
-  // during this bootstrap window.
-  if (
-    stats.networkBaselineSamples > 0 &&
-    stats.agentTotalCallsInWindow >= t.minCallsForRateRule
-  ) {
+  // The ceiling has two terms:
+  //   - the ABSOLUTE FLOOR (`minBreachRateToFlag`, e.g. 0.5) — baseline-
+  //     INDEPENDENT. A >50%-breach agent over enough calls is blatant abuse
+  //     regardless of what the network does.
+  //   - the BASELINE-RELATIVE term (`networkBreachClaimRate * anomalyMultiple`)
+  //     — needs a trustworthy `pact_observed` population to mean anything.
+  //
+  // Empty-baseline fail-open (agent-tasks#10 NIT #3): with no pact_observed
+  // samples yet there is no trustworthy population, so the baseline-relative
+  // term is dropped — we fail open on the MULTIPLE only. The absolute floor
+  // SURVIVES: it does not depend on the baseline and must still catch blatant
+  // abuse during the bootstrap window. (Rule 1 per-agent cap + the on-chain
+  // hourly exposure cap remain bounds too.)
+  if (stats.agentTotalCallsInWindow >= t.minCallsForRateRule) {
     const agentRate = stats.agentCoveredClaimsInWindow / stats.agentTotalCallsInWindow;
-    const baselineCeiling = Math.max(
-      t.minBreachRateToFlag,
-      stats.networkBreachClaimRate * t.anomalyMultiple,
-    );
+    const baselineCeiling =
+      stats.networkBaselineSamples > 0
+        ? Math.max(t.minBreachRateToFlag, stats.networkBreachClaimRate * t.anomalyMultiple)
+        : t.minBreachRateToFlag;
     if (agentRate > baselineCeiling) {
       return { decision: "throttle", reason: "breach_claim_rate_anomaly" };
     }
