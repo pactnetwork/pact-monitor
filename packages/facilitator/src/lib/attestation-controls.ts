@@ -46,11 +46,27 @@ export interface AttestationStats {
   /** Count of THIS agent's TOTAL client-attested calls (covered + not) in the window. */
   agentTotalCallsInWindow: number;
   /**
-   * Network-wide baseline covered-breach rate across client-attested calls over
-   * a longer window, in [0,1]. The expected fraction of honest calls that
-   * breach. An agent far above this is suspicious.
+   * Network-wide baseline covered-breach rate over a longer window, in [0,1].
+   * The expected fraction of honest calls that breach. An agent far above this
+   * is suspicious.
+   *
+   * SECURITY (agent-tasks#10 NIT #3): this MUST be computed from the TRUSTWORTHY
+   * `verdictSource = 'pact_observed'` population (gateway self-observed calls),
+   * NOT from client-attested rows. Drawing it from the same client-attested
+   * pool the gate polices is self-poisoning: a sybil swarm's own forged breaches
+   * raise the baseline and make the anomaly rule fire LESS. See
+   * coverage.ts loadAttestationStats.
    */
   networkBreachClaimRate: number;
+  /**
+   * Number of trustworthy `pact_observed` calls the baseline above was computed
+   * from. Used to fail OPEN on an empty baseline: until gateway traffic exists
+   * there is no trustworthy population to judge anomalies against, so the
+   * breach-rate anomaly rule is skipped entirely (Rule 1 per-agent refund cap +
+   * the on-chain hourly exposure cap remain the bounds). A genuine 0% rate over
+   * a non-empty sample is distinct from "no samples yet" and keeps the rule on.
+   */
+  networkBaselineSamples: number;
 }
 
 export interface AttestationThresholds {
@@ -124,7 +140,17 @@ export function evaluateClientAttestation(input: AttestationInput): AttestationD
   // enough samples and above the absolute floor, so honest low-volume agents are
   // never throttled on noise. This is the control sybils can't dodge for free:
   // to look normal a forger must emit mostly real (paid) non-breach calls.
-  if (stats.agentTotalCallsInWindow >= t.minCallsForRateRule) {
+  //
+  // Fail OPEN on an empty baseline (agent-tasks#10 NIT #3): if there is no
+  // trustworthy `pact_observed` population yet, there is nothing to judge the
+  // agent's rate against — skip the whole rate rule (including its absolute
+  // floor) rather than flag on a baseline we don't have. Rule 1 (per-agent
+  // refund cap) above and the on-chain hourly exposure cap remain the bounds
+  // during this bootstrap window.
+  if (
+    stats.networkBaselineSamples > 0 &&
+    stats.agentTotalCallsInWindow >= t.minCallsForRateRule
+  ) {
     const agentRate = stats.agentCoveredClaimsInWindow / stats.agentTotalCallsInWindow;
     const baselineCeiling = Math.max(
       t.minBreachRateToFlag,

@@ -15,6 +15,9 @@ const CLEAN: AttestationStats = {
   agentCoveredClaimsInWindow: 0,
   agentTotalCallsInWindow: 0,
   networkBreachClaimRate: 0.05,
+  // Non-empty trustworthy baseline so the rate rule is active by default; the
+  // empty-baseline fail-open path is exercised explicitly below.
+  networkBaselineSamples: 100,
 };
 
 describe("isAttestationGateMode", () => {
@@ -38,7 +41,10 @@ describe("evaluateClientAttestation", () => {
   });
 
   test("clean agent with a normal refund is allowed", () => {
-    const d = evaluateClientAttestation({ thisRefundLamports: 1_001_000n, stats: CLEAN });
+    // A "normal" refund must sit UNDER the per-agent window cap (tightened to
+    // 1_000_000n by the harden PR); 900_000n is a clearly-normal single claim
+    // for a clean agent. (Was 1_001_000n, stranded above the tightened cap.)
+    const d = evaluateClientAttestation({ thisRefundLamports: 900_000n, stats: CLEAN });
     expect(d.decision).toBe("allow");
   });
 
@@ -104,6 +110,54 @@ describe("evaluateClientAttestation", () => {
         stats: { ...CLEAN, agentCoveredClaimsInWindow: 12, agentTotalCallsInWindow: 20, networkBreachClaimRate: 0.4 },
       });
       expect(d.decision).toBe("allow");
+    });
+  });
+
+  describe("rule 2 — empty-baseline fail-open (agent-tasks#10 NIT #3)", () => {
+    test("no pact_observed samples → rate rule is skipped even for an all-breach agent", () => {
+      // 20/20 breaches would normally blow past the 0.5 floor and throttle, but
+      // with zero trustworthy baseline samples there is nothing to judge against
+      // → fail OPEN. Rule 1 + the on-chain hourly cap remain the bounds.
+      const d = evaluateClientAttestation({
+        thisRefundLamports: 1_000n,
+        stats: {
+          ...CLEAN,
+          agentCoveredClaimsInWindow: 20,
+          agentTotalCallsInWindow: 20,
+          networkBreachClaimRate: 0,
+          networkBaselineSamples: 0,
+        },
+      });
+      expect(d.decision).toBe("allow");
+    });
+
+    test("empty baseline does NOT disable rule 1 — the per-agent refund cap still fires", () => {
+      const d = evaluateClientAttestation({
+        thisRefundLamports: 1n,
+        stats: {
+          ...CLEAN,
+          agentRefundLamportsInWindow: DEFAULT_THRESHOLDS.perAgentRefundCapLamportsPerWindow,
+          networkBaselineSamples: 0,
+        },
+      });
+      expect(d).toEqual({ decision: "throttle", reason: "per_agent_refund_cap" });
+    });
+
+    test("a genuine 0% breach rate over a NON-empty sample keeps the floor active", () => {
+      // Distinct from "no samples": 500 trustworthy calls, 0 breaches → baseline
+      // 0, ceiling floored at 0.5. An agent claiming 18/20 breaches is the
+      // clearest anomaly → throttle.
+      const d = evaluateClientAttestation({
+        thisRefundLamports: 1_000n,
+        stats: {
+          ...CLEAN,
+          agentCoveredClaimsInWindow: 18,
+          agentTotalCallsInWindow: 20,
+          networkBreachClaimRate: 0,
+          networkBaselineSamples: 500,
+        },
+      });
+      expect(d).toEqual({ decision: "throttle", reason: "breach_claim_rate_anomaly" });
     });
   });
 

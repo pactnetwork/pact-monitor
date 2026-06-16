@@ -1,0 +1,22 @@
+-- Add nullable `verdictSource` column to `Call` (agent-tasks#10 NIT #3).
+--
+-- Records HOW each call's outcome was determined ("verdict provenance"):
+--   "pact_observed"   — the gateway/wrap path self-observed the call. Trustworthy.
+--   "client_attested" — off-gateway x402: the client's word for the outcome
+--                       (the facilitator /v1/coverage/register path).
+--   "oracle"          — reserved for V2 oracle-derived verdicts.
+--
+-- NULLABLE with no default => existing rows stay NULL (backfill-safe, additive,
+-- non-breaking). Pre-#10 producers omit it; consumers infer per-path
+-- (source="pay.sh" => client_attested, else pact_observed).
+--
+-- WHY this column exists: the facilitator's client-attestation abuse gate
+-- computes its network breach-rate baseline from the trustworthy population.
+-- Before this column the baseline was drawn from source="pay.sh" rows, which
+-- are ALL client_attested — so a sybil swarm's own forged breaches raised the
+-- baseline and made the anomaly rule fire LESS (self-poisoning). Persisting
+-- verdictSource lets the baseline query filter to verdictSource='pact_observed'.
+-- See packages/facilitator/src/routes/coverage.ts loadAttestationStats.
+
+-- AlterTable
+ALTER TABLE "Call" ADD COLUMN     "verdictSource" VARCHAR(16);

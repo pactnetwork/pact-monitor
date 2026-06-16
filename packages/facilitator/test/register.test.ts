@@ -43,6 +43,8 @@ interface MockState {
   attAgentCovered: number;
   attAgentTotal: number;
   attNetRate: number;
+  // agent-tasks#10 NIT #3: count of trustworthy pact_observed baseline samples.
+  attNetSamples: number;
   attStatsThrows: boolean;
 }
 
@@ -59,6 +61,7 @@ const state: MockState = {
   attAgentCovered: 0,
   attAgentTotal: 0,
   attNetRate: 0,
+  attNetSamples: 100, // non-empty trustworthy baseline by default
   attStatsThrows: false,
 };
 
@@ -95,7 +98,7 @@ const mockPg = {
       };
     }
     if (/interval '24 hours'/.test(sql)) {
-      return { rows: [{ rate: state.attNetRate }] };
+      return { rows: [{ rate: state.attNetRate, samples: state.attNetSamples }] };
     }
     if (/FROM "Call"/.test(sql)) {
       const id = params[0] as string;
@@ -214,6 +217,7 @@ describe("facilitator app", () => {
     state.attAgentCovered = 0;
     state.attAgentTotal = 0;
     state.attNetRate = 0;
+    state.attNetSamples = 100;
     state.attStatsThrows = false;
   });
 
@@ -660,17 +664,47 @@ describe("facilitator app", () => {
 
   test("gate ENFORCE: breach-claim-rate anomaly → uncovered, NO event", async () => {
     PAY_DEFAULTS.attestationGateMode = "enforce";
-    // Under the refund cap, but this agent breaches 90% of calls vs a 5% network
-    // baseline (0.9 > max(0.5, 0.05*3)).
+    // Small claim (refund 101k) kept under the 1M per-agent cap so Rule 1 does
+    // NOT fire — this isolates Rule 2: the agent breaches 90% of calls vs a 5%
+    // network baseline (0.9 > max(0.5, 0.05*3)).
     state.attAgentRefundSum = "0";
     state.attAgentCovered = 18;
     state.attAgentTotal = 20;
     state.attNetRate = 0.05;
-    const res = await app.request(signedRegisterRequest());
+    const res = await app.request(signedRegisterRequest({ amountBaseUnits: "100000" }));
     const json = (await res.json()) as { status: string; reason: string };
     expect(json.status).toBe("uncovered");
     expect(json.reason).toBe("attestation_throttled_breach_claim_rate_anomaly");
     expect(publisher.events).toHaveLength(0);
+  });
+
+  test("gate ENFORCE: empty pact_observed baseline → anomaly rule fails OPEN (still published)", async () => {
+    PAY_DEFAULTS.attestationGateMode = "enforce";
+    // Same all-breach agent that throttles above, but NO trustworthy baseline
+    // samples yet (bootstrap window) → rate rule is skipped, claim publishes.
+    // NIT #3: the per-agent cap + on-chain hourly cap remain the bounds.
+    // Small claim (refund 101k) under the 1M per-agent cap so Rule 1 does not
+    // mask the Rule-2 fail-open we are asserting.
+    state.attAgentRefundSum = "0";
+    state.attAgentCovered = 18;
+    state.attAgentTotal = 20;
+    state.attNetRate = 0;
+    state.attNetSamples = 0;
+    const res = await app.request(signedRegisterRequest({ amountBaseUnits: "100000" }));
+    const json = (await res.json()) as { status: string };
+    expect(json.status).toBe("settlement_pending");
+    expect(publisher.events).toHaveLength(1);
+  });
+
+  test("network baseline query filters on verdictSource='pact_observed', not source='pay.sh'", async () => {
+    PAY_DEFAULTS.attestationGateMode = "enforce";
+    await app.request(signedRegisterRequest());
+    const netSql = mockPg.query.mock.calls
+      .map(([sql]) => sql as string)
+      .find((sql) => /interval '24 hours'/.test(sql));
+    expect(netSql).toBeDefined();
+    expect(netSql).toMatch(/"verdictSource"\s*=\s*'pact_observed'/);
+    expect(netSql).not.toMatch(/source\s*=\s*'pay\.sh'/);
   });
 
   test("gate LOG_ONLY: anomalous claim is logged but STILL published (shadow mode)", async () => {
@@ -693,11 +727,11 @@ describe("facilitator app", () => {
 
   test("gate ENFORCE: honest agent within limits is allowed", async () => {
     PAY_DEFAULTS.attestationGateMode = "enforce";
-    state.attAgentRefundSum = "500000"; // well under cap; +1m stays under 5m
+    state.attAgentRefundSum = "500000"; // +101k claim stays under the 1M cap
     state.attAgentCovered = 1;
     state.attAgentTotal = 50;
     state.attNetRate = 0.05;
-    const res = await app.request(signedRegisterRequest());
+    const res = await app.request(signedRegisterRequest({ amountBaseUnits: "100000" }));
     const json = (await res.json()) as { status: string };
     expect(json.status).toBe("settlement_pending");
     expect(publisher.events).toHaveLength(1);
