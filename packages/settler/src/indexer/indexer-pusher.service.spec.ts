@@ -92,6 +92,31 @@ describe("IndexerPusherService", () => {
     }
   });
 
+  it("forwards verdictSource untouched from the Pub/Sub event (agent-tasks#10)", async () => {
+    mockedPost.mockResolvedValueOnce({ status: 200 });
+    const batch = makeBatch(1);
+    // pay.sh facilitator events carry verdictSource: "client_attested".
+    (batch.messages[0].data as Record<string, unknown>)["verdictSource"] =
+      "client_attested";
+    (batch.messages[0].data as Record<string, unknown>)["source"] = "pay.sh";
+    await service.push(makeOutcome("sig_vs", batch), batch);
+
+    const body = mockedPost.mock.calls[0][1] as Record<string, unknown>;
+    const calls = body["calls"] as Array<Record<string, unknown>>;
+    expect(calls[0]["verdictSource"]).toBe("client_attested");
+    expect(calls[0]["source"]).toBe("pay.sh");
+  });
+
+  it("omits verdictSource when the event has none (gateway pre-#10 events)", async () => {
+    mockedPost.mockResolvedValueOnce({ status: 200 });
+    const batch = makeBatch(1);
+    await service.push(makeOutcome("sig_novs", batch), batch);
+
+    const body = mockedPost.mock.calls[0][1] as Record<string, unknown>;
+    const calls = body["calls"] as Array<Record<string, unknown>>;
+    expect(calls[0]["verdictSource"]).toBeUndefined();
+  });
+
   it("retries on failure and succeeds on second attempt", async () => {
     mockedPost
       .mockRejectedValueOnce(new Error("network error"))

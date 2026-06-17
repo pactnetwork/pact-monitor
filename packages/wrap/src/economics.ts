@@ -39,8 +39,11 @@ export interface EconomicsPool {
   /** Flat premium per covered call, in lamports of the settlement mint. */
   flatPremiumLamports: bigint;
   /**
-   * Configured per-call parametric value, in lamports. On the gateway/wrap path
-   * this is the refund principal (refund = imputedCostLamports + flatPremium).
+   * Configured per-call parametric value, in lamports. Doubles as the per-call
+   * refund PRINCIPAL CEILING (agent-tasks#10 C-1): the principal is clamped to
+   * this value so a single client-supplied `amountPaid` can't exceed the
+   * advertised per-call cap. On the gateway/wrap path this IS the principal
+   * (refund = imputedCostLamports + flatPremium).
    */
   imputedCostLamports: bigint;
 }
@@ -75,6 +78,10 @@ export function isCoveredBreach(outcome: Outcome): boolean {
  *                   `amountPaid` (what the agent paid the merchant). When
  *                   omitted (gateway / wrap path), principal =
  *                   `imputedCostLamports` (the configured per-call value).
+ *                   In BOTH cases the principal is clamped to
+ *                   `imputedCostLamports` (agent-tasks#10 C-1) — this is the
+ *                   single source of truth for the per-call refund ceiling, so
+ *                   the worst-case x402 claim can never exceed the gateway's.
  */
 export function computeEconomics(args: {
   outcome: Outcome;
@@ -91,8 +98,19 @@ export function computeEconomics(args: {
   if (isCoveredBreach(outcome)) {
     // Canonical refund (agent-tasks#11): principal + premium. The principal is
     // the agent's `amountPaid` on the facilitator path, or the configured
-    // `imputedCostLamports` on the gateway/wrap path.
-    const principal = amountPaid === undefined ? pool.imputedCostLamports : amountPaid;
+    // `imputedCostLamports` on the gateway/wrap path...
+    const requested = amountPaid === undefined ? pool.imputedCostLamports : amountPaid;
+    // ...clamped to the per-call refund ceiling (agent-tasks#10 C-1). This is
+    // the SINGLE place the imputed-cost cap is enforced, so a client-supplied
+    // `amountPaid` can't drain the pool beyond the advertised per-call value.
+    // Gateway path: amountPaid omitted => requested = imputed => min stays
+    // imputed (behavior-neutral). Facilitator path: min(amountPaid, imputed).
+    const principal =
+      requested < 0n
+        ? 0n
+        : requested > pool.imputedCostLamports
+          ? pool.imputedCostLamports
+          : requested;
     refund = principal + pool.flatPremiumLamports;
   }
 

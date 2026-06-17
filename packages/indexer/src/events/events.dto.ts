@@ -48,6 +48,15 @@ export interface WrapCallEventDto {
   latencyMs: number;
   outcome: SettlementOutcome;
   source?: string;
+  /**
+   * Verdict provenance (agent-tasks#10): "pact_observed" (gateway self-observed,
+   * trustworthy) | "client_attested" (off-gateway x402, client's word) |
+   * "oracle". OPTIONAL during the migration window — pre-#10 producers omit it
+   * and the column stays NULL. Persisted verbatim onto Call.verdictSource so the
+   * facilitator's abuse gate can scope its network baseline to the trustworthy
+   * pact_observed population.
+   */
+  verdictSource?: string;
   /** pay.sh-covered calls only: merchant pubkey the agent paid (bs58). */
   payee?: string;
   /** pay.sh-covered calls only: the URL/resource that was paid for. */

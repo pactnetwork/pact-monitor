@@ -48,6 +48,7 @@ import { verifyPayment } from "../lib/payment-verify.js";
 import type { PaySettlementEvent } from "../lib/events.js";
 import {
   evaluateClientAttestation,
+  perAgentRefundCapFor,
   DEFAULT_THRESHOLDS,
   type AttestationStats,
 } from "../lib/attestation-controls.js";
@@ -333,7 +334,13 @@ export async function registerCoverageRoute(c: Context): Promise<Response> {
       const decision = evaluateClientAttestation({
         thisRefundLamports: math.refundLamports,
         stats,
-        thresholds: DEFAULT_THRESHOLDS,
+        thresholds: {
+          ...DEFAULT_THRESHOLDS,
+          // Pool-relative per-agent cap (agent-tasks#10): ~3 full refunds for
+          // THIS pool's per-call ceiling, so an honest agent's first full-size
+          // breach is never throttled. On-chain hourly cap is the hard backstop.
+          perAgentRefundCapLamportsPerWindow: perAgentRefundCapFor(pool),
+        },
       });
       if (decision.decision === "throttle") {
         // eslint-disable-next-line no-console
@@ -500,13 +507,27 @@ async function loadAttestationStats(
         AND ts > now() - interval '1 hour'`,
     [agent],
   );
+  // SECURITY (agent-tasks#10 NIT #3): the network baseline MUST be drawn from
+  // the TRUSTWORTHY `verdictSource = 'pact_observed'` population — gateway calls
+  // Pact self-observed — NOT from `source = 'pay.sh'` rows. Those pay.sh rows
+  // are ALL `client_attested` (the very population this gate polices): drawing
+  // the baseline from them is self-poisoning — a sybil swarm's own forged
+  // breaches raise the baseline, raise the anomaly ceiling, and make the rule
+  // fire LESS the more it is attacked. (Note: just bolting `AND verdictSource =
+  // 'pact_observed'` onto the old `source = 'pay.sh'` filter would match ZERO
+  // rows and silently disable the rule, since pay.sh is never pact_observed —
+  // hence the filter is REPLACED, not narrowed.) We also count the sample size
+  // so an empty baseline (no gateway traffic yet) can fail OPEN downstream
+  // rather than flag against a baseline we don't have. NULLIF guards the
+  // divide-by-zero; an empty population yields rate=0, samples=0.
   const netRes = await pg.query(
     `SELECT COALESCE(
               COUNT(*) FILTER (WHERE breach)::float8 / NULLIF(COUNT(*), 0),
               0
-            ) AS rate
+            ) AS rate,
+            COUNT(*) AS samples
        FROM "Call"
-      WHERE source = 'pay.sh'
+      WHERE "verdictSource" = 'pact_observed'
         AND ts > now() - interval '24 hours'`,
   );
   const a = agentRes.rows[0] ?? {};
@@ -516,5 +537,6 @@ async function loadAttestationStats(
     agentCoveredClaimsInWindow: Number(a.covered ?? 0),
     agentTotalCallsInWindow: Number(a.total ?? 0),
     networkBreachClaimRate: Number(n.rate ?? 0),
+    networkBaselineSamples: Number(n.samples ?? 0),
   };
 }
