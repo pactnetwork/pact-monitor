@@ -1,11 +1,39 @@
 import "./globals.css";
 import type { Metadata } from "next";
+import { Inria_Sans, Inria_Serif, JetBrains_Mono } from "next/font/google";
 import { SolanaWalletProvider } from "@/components/wallet-provider";
 import { SiteHeader } from "@/components/site-header";
 
+// Self-hosted fonts via next/font (no runtime Google-Fonts CDN dependency).
+const inriaSans = Inria_Sans({
+  subsets: ["latin"],
+  weight: ["300", "400", "700"],
+  display: "swap",
+  variable: "--font-inria-sans",
+});
+
+const inriaSerif = Inria_Serif({
+  subsets: ["latin"],
+  weight: ["400", "700"],
+  style: ["normal", "italic"],
+  display: "swap",
+  variable: "--font-inria-serif",
+});
+
+const jetbrainsMono = JetBrains_Mono({
+  subsets: ["latin"],
+  weight: ["400", "700"],
+  display: "swap",
+  variable: "--font-jetbrains-mono",
+});
+
 export const metadata: Metadata = {
-  title: "Pact Network Dashboard",
+  title: "Pact Explorer",
   description: "Parametric API coverage for AI agents",
+  openGraph: {
+    title: "Pact Explorer",
+    description: "Parametric API coverage for AI agents",
+  },
 };
 
 export default function RootLayout({
@@ -14,19 +42,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
-      <head>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link
-          rel="preconnect"
-          href="https://fonts.gstatic.com"
-          crossOrigin="anonymous"
-        />
-        <link
-          href="https://fonts.googleapis.com/css2?family=Inria+Serif:ital,wght@0,400;0,700;1,400;1,700&family=Inria+Sans:wght@300;400;700&family=JetBrains+Mono:wght@400;700&display=swap"
-          rel="stylesheet"
-        />
-      </head>
+    <html
+      lang="en"
+      className={`${inriaSans.variable} ${inriaSerif.variable} ${jetbrainsMono.variable}`}
+    >
       <body>
         <SolanaWalletProvider>
           <SiteHeader />

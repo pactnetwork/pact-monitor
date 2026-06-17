@@ -18,10 +18,10 @@
  *
  * Wire-shape gaps (vs the mock contract) and how we close them:
  *
- * - The indexer does NOT expose a global `/api/calls?limit=N` listing — there
- *   is no recent-calls firehose route on develop. `fetchCalls()` therefore
- *   returns an empty array against the real indexer; the homepage renders
- *   without crashing but shows no recent events. Tracking issue: B-followup.
+ * - `fetchCalls()` reads the global recent-calls route `GET /api/calls?limit=N`
+ *   (indexer `calls.controller.ts` `listRecent()`), which powers the homepage
+ *   "Recent Events" table. It falls back to an empty array if the route is
+ *   unavailable, so the homepage still renders.
  *
  * - Per-endpoint live aggregates (`calls24h`, `failures24h`, `avgLatencyMs`,
  *   `poolBalance`, `feeRecipients`, `poolRetainedBps`) are not currently

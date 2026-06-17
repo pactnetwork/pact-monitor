@@ -1,5 +1,6 @@
-/* Fonts load via <link> in app/layout.tsx (matches pactnetwork.io exactly;
-   more reliable than a CSS @import, which Tailwind v4 / Next can drop). */
+/* Fonts are self-hosted via next/font in app/layout.tsx, exposed as the CSS
+   variables --font-inria-sans / --font-inria-serif / --font-jetbrains-mono
+   (no runtime Google-Fonts CDN dependency). */
 @import "tailwindcss";
 @config "../tailwind.config.ts";
 
@@ -21,18 +22,18 @@
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: "Inria Sans", sans-serif;
+  font-family: var(--font-inria-sans), sans-serif;
   margin: 0;
   padding: 0;
   line-height: 1.5;
 }
 
 h1, h2, h3, h4 {
-  font-family: "Inria Serif", serif;
+  font-family: var(--font-inria-serif), serif;
 }
 
 code, pre, .mono {
-  font-family: "JetBrains Mono", monospace;
+  font-family: var(--font-jetbrains-mono), monospace;
 }
 
 a {
