@@ -5,6 +5,7 @@ import { Connection } from "@solana/web3.js";
 import type { BalanceCheck } from "@pact-network/wrap";
 import { createAllowanceCheck } from "./allowance.js";
 import { createPubSubPublisher, type EventPublisher } from "./events.js";
+import type { AttestationGateMode } from "./attestation-controls.js";
 import { env } from "../env.js";
 
 export interface PayDefaults {
@@ -13,6 +14,8 @@ export interface PayDefaults {
   imputedCostLamports: bigint;
   slaLatencyMs: number;
   exposureCapPerHourLamports: bigint;
+  /** agent-tasks#10 client-attested abuse gate mode (default "off"). */
+  attestationGateMode: AttestationGateMode;
 }
 
 export interface AppContext {
@@ -47,6 +50,7 @@ export function payDefaultsFromEnv(): PayDefaults {
     imputedCostLamports: BigInt(env.PAY_DEFAULT_IMPUTED_COST_LAMPORTS),
     slaLatencyMs: Number(env.PAY_DEFAULT_SLA_LATENCY_MS),
     exposureCapPerHourLamports: BigInt(env.PAY_DEFAULT_EXPOSURE_CAP_PER_HOUR_LAMPORTS),
+    attestationGateMode: env.PACT_VERDICT_ATTESTATION_GATE,
   };
 }
 
