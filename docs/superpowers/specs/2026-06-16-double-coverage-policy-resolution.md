@@ -1,7 +1,9 @@
 # ADR: Double-coverage policy resolution (agent-side vs provider-side)
 
 - **Status:** Accepted (design-only). Q1, Q2, Q4, Q5 locked (Q5 locked by Rick
-  2026-06-16). Q3 direction locked, **mechanism open** (see Q3).
+  2026-06-16; Q4 locked by Tu 2026-06-18 to option (a) — a pool-level
+  endpoint-keyed dedupe index is authoritative, `linked_policy` is a
+  non-authoritative breadcrumb). Q3 direction locked, **mechanism open** (see Q3).
 - **Date:** 2026-06-16
 - **Scope:** V2 program (`pact-network-v2-pinocchio`). Struct-layout seam only — no
   runtime instruction behavior changes in this change.
@@ -128,19 +130,46 @@ written in this change. It records the locked direction and the open mechanism s
 the V2 state channel and V2 oracle work build toward a single, deliberately
 chosen trust model rather than inheriting two half-specified ones.
 
-### Q4 — Pool accounting: **linked policies are ONE risk unit; struct seam makes it expressible** (LOCKED)
+### Q4 — Cardinality: **pool-level endpoint-keyed dedupe index is authoritative; `linked_policy` is a breadcrumb** (LOCKED — Tu 2026-06-18, option (a))
 
-The per-API exposure-cap calculation must treat a linked agent-side/provider-side
-pair as a **single risk unit**, not two. The `linked_policy` pointer added here is
-what makes that expressible: exposure math can follow the link and de-duplicate.
+The authoritative representation of "one unit of risk" is a **pool-level,
+endpoint-keyed dedupe index** — not a pointer between policies. When multiple
+policies cover the same endpoint/risk, the pool collapses them into a **single
+risk unit** via this index, independent of any pointer. The per-API exposure-cap
+calculation reads this index (keyed by endpoint) to count each covered endpoint
+once, regardless of how many policies reference it.
 
-This change does **not** modify `submit_claim.rs` or the exposure-cap calculation.
+`linked_policy: [u8; 32]` is **demoted to a non-authoritative breadcrumb /
+reference trail only.** It records *which* counterpart a policy was linked to for
+human/audit traceability, but it is **no longer the source of truth for dedupe** —
+the pool index is. The field stays in the layout (see Struct seam); its role
+changes from "dedupe pointer" to "informational reference."
 
-> **V2 follow-up (not in this change):** update the exposure-cap calculation in
-> the claim/settlement path so that when a policy has
-> `linked_policy_present == 1`, the linked counterpart's notional is **not**
-> double-counted against the 15–20% per-pool cap — the pair consumes one unit of
-> exposure. `submit_claim.rs` is intentionally left untouched here.
+**Why option (a), not a single-pointer scalar:**
+
+- **Handles N ≥ 3 overlap.** A scalar `linked_policy` pointer can express at most
+  a 1:1 link (exactly two policies). An endpoint-keyed index naturally collapses
+  **three or more** overlapping policies on the same endpoint into one risk unit;
+  the single-pointer scalar could not.
+- **Removes the bidirectional-linkage hazard Rick flagged.** With pointer-based
+  dedupe, correctness depended on symmetric links — set `A→B` but forget `B→A` and
+  the program silently double-counts. Because dedupe now derives from the pool
+  index keyed by endpoint, it **no longer depends on symmetric pointers**, so there
+  is no "one direction set, the other forgotten ⇒ silent double-count" failure
+  mode. Bidirectional enforcement is therefore **no longer required**.
+
+This change does **not** modify `submit_claim.rs`, the exposure-cap calculation,
+or introduce the index — the index is V2 runtime (see follow-up below). This ADR
+only records the chosen mechanism and keeps `linked_policy` in the layout as a
+breadcrumb.
+
+> **V2 follow-up (not in this change):** build the **pool-level endpoint-keyed
+> dedupe index** in the V2 runtime and have the exposure-cap calculation in the
+> claim/settlement path count each endpoint **once** via that index — so any set
+> of policies (including **N ≥ 3**) covering the same endpoint consumes one unit
+> against the 15–20% per-pool cap. `linked_policy` is **informational only** and
+> MUST NOT be used as the dedupe source of truth. `submit_claim.rs` is
+> intentionally left untouched here.
 
 ### Q5 — Economic model: **merchant-configurable (per-provider)** (LOCKED — Rick 2026-06-16)
 
@@ -243,8 +272,11 @@ New fields (inserted after the referrer block, before `reserved`):
 **Open items**
 
 - **V2 follow-up: dedupe logic** in `enable_insurance.rs` (Q2).
-- **V2 follow-up: exposure-cap calc** treating linked policies as one unit in the
-  claim/settlement path (Q4); `submit_claim.rs` untouched here.
+- **V2 follow-up: build the pool-level endpoint-keyed dedupe index** in the V2
+  runtime and have the exposure-cap calc count each endpoint once via that index,
+  so N ≥ 3 overlapping policies consume one unit (Q4); `linked_policy` is
+  informational only and is not the dedupe source of truth; `submit_claim.rs`
+  untouched here.
 - **V2 follow-up: choose + design the Q3 tiebreaker mechanism** for the contested
   co-signed record (observer-node vs unilateral schema-match — neither is locked),
   aligned with the V2 oracle trust-model work and the non-re-probe constraint
