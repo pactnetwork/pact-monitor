@@ -1,6 +1,7 @@
 # ADR: Double-coverage policy resolution (agent-side vs provider-side)
 
-- **Status:** Accepted (design-only). Q1–Q5 all locked (Q5 locked by Rick 2026-06-16).
+- **Status:** Accepted (design-only). Q1, Q2, Q4, Q5 locked (Q5 locked by Rick
+  2026-06-16). Q3 direction locked, **mechanism open** (see Q3).
 - **Date:** 2026-06-16
 - **Scope:** V2 program (`pact-network-v2-pinocchio`). Struct-layout seam only — no
   runtime instruction behavior changes in this change.
@@ -96,23 +97,36 @@ this ADR only guarantees the data model can carry the link it needs.
 > discounts unconditionally; scope `2` (opt-in-only) discounts only when the
 > agent enrolled. On a true duplicate of the *same kind*, reject.
 
-### Q3 — Co-sign authority model: **canonical record binds the agent-side policy; design-only tiebreaker** (LOCKED)
+### Q3 — Co-sign authority model: **direction locked, tiebreaker mechanism OPEN**
 
-The co-signed call record on the mutual state channel is **binding for the
-canonical (agent-side) policy.** That resolves failure mode #3's "which policy is
-this record for" ambiguity: it is always the agent-side one.
+**Direction (locked):** the co-signed call record on the mutual state channel is
+**binding for the canonical (agent-side) policy.** That resolves failure mode
+#3's "which policy is this record for" ambiguity: it is always the agent-side
+one.
 
-For the conflicting-incentive case (provider is also a Pact customer and is party
-to two interests on the same record), the tiebreaker is **either**:
+**Tiebreaker mechanism (OPEN — not locked):** for the conflicting-incentive case
+(provider is also a Pact customer and is party to two interests on the same
+record), a third-party arbitration signal is needed so neither side can suppress
+or fabricate the verdict alone. The *direction* — an independent verification
+signal that both parties can check — is set; the *mechanism is not specified
+here.* Two candidate shapes were floated (an observer-node third measurement, or
+a pre-agreed unilateral schema-match check), but each is a distinct trust model
+with its own liveness, cost, and incentive properties, and neither has been
+designed. This ADR does **not** lock either.
 
-- a **third independent measurement** from an observer node, **or**
-- a **pre-agreed schema-match check** that either party can verify
-  unilaterally (neither side can suppress or fabricate the verdict alone).
+**Cross-reference / known constraint:** a naive "oracle re-probes the failed call
+to settle the dispute" is **non-viable** for the paid, non-idempotent endpoints
+Pact insures — re-issuing the call re-bills the agent and re-triggers upstream
+side effects, so an oracle cannot simply re-observe the response. This is the
+same conclusion that drove the V1 SLA-verdict decision to **accept-and-monitor**
+rather than oracle re-verification (agent-tasks#10; V2 oracle trust-model tracked
+in agent-tasks#19). Whatever Q3 tiebreaker is eventually chosen must respect that
+constraint — it has to derive a verdict without re-executing the paid call.
 
-This is a **design-only** decision — no observer-node or schema-match code is
-written in this change. It records the intended trust model so the V2 state
-channel and the V2 oracle work (tracked separately under the V2 oracle
-trust-model issue) build toward it.
+This is a **design-only** entry — no observer-node or schema-match code is
+written in this change. It records the locked direction and the open mechanism so
+the V2 state channel and V2 oracle work build toward a single, deliberately
+chosen trust model rather than inheriting two half-specified ones.
 
 ### Q4 — Pool accounting: **linked policies are ONE risk unit; struct seam makes it expressible** (LOCKED)
 
@@ -217,6 +231,9 @@ New fields (inserted after the referrer block, before `reserved`):
   layout extension beyond double-coverage will have less slack (24 bytes); a
   third may force a migration. This is the deliberate trade the reserved-pad
   convention exists to make, but the budget is now smaller and should be tracked.
+  **Budget note:** treat the remaining 24 bytes as room for a single small flag,
+  not another pubkey — the next extension needing **>24 bytes** forces exactly the
+  account migration this pad exists to avoid.
 - The runtime is **deliberately incomplete**: the seam exists but
   `enable_insurance` does not yet dedupe and `submit_claim` does not yet treat
   links as one exposure unit. Until the V2 follow-ups land, a hypothetical
@@ -228,8 +245,21 @@ New fields (inserted after the referrer block, before `reserved`):
 - **V2 follow-up: dedupe logic** in `enable_insurance.rs` (Q2).
 - **V2 follow-up: exposure-cap calc** treating linked policies as one unit in the
   claim/settlement path (Q4); `submit_claim.rs` untouched here.
-- **V2 follow-up: observer-node / schema-match tiebreaker** for the contested
-  co-signed record (Q3), aligned with the V2 oracle trust-model work.
+- **V2 follow-up: choose + design the Q3 tiebreaker mechanism** for the contested
+  co-signed record (observer-node vs unilateral schema-match — neither is locked),
+  aligned with the V2 oracle trust-model work and the non-re-probe constraint
+  noted under Q3.
+- **V2 follow-up: enum/field validation** — the V2 runtime that writes and reads
+  the seam fields MUST enforce these invariants (the inert seam does not validate
+  them; a zero buffer satisfies all four):
+  - `policy_kind ∈ {0, 1}` — reject any other value.
+  - `discount_scope ∈ {0, 1, 2}` — reject any other value.
+  - `discount_scope != 0 ⇒ policy_kind == 1` — a non-zero discount scope is only
+    valid on a provider-side policy; an agent-side policy MUST carry
+    `discount_scope == 0`.
+  - `linked_policy_present == (linked_policy != [0; 32])` — the present-byte and
+    the zero-sentinel must agree; reject a populated pointer with a zero present
+    byte, or a present byte with an all-zero pointer.
 - **Downstream docs:** whitepaper §8 and the SDK README still need the
   canonical-policy rule written up (acceptance-criteria items not covered by this
   design-only change).
