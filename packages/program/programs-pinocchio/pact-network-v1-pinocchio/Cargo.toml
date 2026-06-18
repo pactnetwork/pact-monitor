@@ -12,6 +12,9 @@ name = "pact_network_v1"
 default = []
 no-entrypoint = []
 bpf-entrypoint = []
+# FS9 (agent-tasks#15): emit the devnet program ID from declare_id! instead of
+# the mainnet literal. Off by default — the canonical build stays mainnet.
+devnet-id = []
 
 [dependencies]
 pinocchio = { version = "0.10", features = ["cpi"] }
