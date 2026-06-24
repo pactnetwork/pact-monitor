@@ -59,11 +59,17 @@ export function buildAdapterMap(processEnv: NodeJS.ProcessEnv): {
         processEnv as Record<string, string | undefined>,
       );
 
+      // Per-chain RPC override: PACT_RPC_URL_<CHAIN> (e.g. PACT_RPC_URL_BASE_MAINNET)
+      // else the chain registry's baked rpcUrl. Without this an EVM chain is
+      // pinned to the public RPC in chains.ts (rate-limited); production points
+      // mainnet at a paid endpoint. Mirrors the Solana branch above.
+      const evmRpcEnvKey = `PACT_RPC_URL_${name.replace(/-/g, "_").toUpperCase()}`;
+      const rpcUrl = processEnv[evmRpcEnvKey] ?? descriptor.rpcUrl;
       adapters.set(
         name,
         new EvmAdapter({
           descriptor,
-          rpcUrl: descriptor.rpcUrl,
+          rpcUrl,
           finalityBlocks: descriptor.finalityBlocks,
           blockTimeMs: descriptor.blockTimeMs,
           deploymentBlock: BigInt(descriptor.deploymentBlock),
