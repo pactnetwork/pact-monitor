@@ -52,10 +52,6 @@ export interface ExpectedSchema {
   required?: string[];
 }
 
-export interface FetchOptions extends RequestInit {
-  // standard fetch options
-}
-
 export interface PactFetchOptions {
   expectedSchema?: ExpectedSchema;
   usdcAmount?: number;
