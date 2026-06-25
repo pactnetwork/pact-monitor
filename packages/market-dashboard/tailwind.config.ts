@@ -11,9 +11,9 @@ const config: Config = {
         slate: "#5A6B7A",
       },
       fontFamily: {
-        serif: ["Inria Serif", "serif"],
-        sans: ["Inria Sans", "sans-serif"],
-        mono: ["JetBrains Mono", "monospace"],
+        serif: ["var(--font-inria-serif)", "serif"],
+        sans: ["var(--font-inria-sans)", "sans-serif"],
+        mono: ["var(--font-jetbrains-mono)", "monospace"],
       },
     },
   },
