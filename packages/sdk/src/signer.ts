@@ -147,5 +147,17 @@ export function evmAddressFromPrivateKey(
   }
 }
 
+/**
+ * Solana-only: extract raw 64-byte secret key from a keypair signer.
+ * Returns null for wallet adapters (no exposed secret) and EVM signers.
+ * Used by the merchant SDK for nacl observation-body signing — distinct
+ * from resolveSignFn which returns an async SignFn for proxy transport.
+ */
+export function resolveSecretKey(s: PactSigner): Uint8Array | null {
+  if (isEvmSigner(s)) return null;
+  if (isKeypair(s)) return (s as Keypair).secretKey;
+  return null;
+}
+
 /** Re-export viem helpers callers may need for type narrowing on hex strings. */
 export { isAddress, isHex };

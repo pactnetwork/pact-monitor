@@ -15,6 +15,7 @@
 
 import type { Context } from "hono";
 import { wrapFetch, type EndpointConfig } from "@pact-network/wrap";
+import { signProxiedBy } from "@q3labs/pact-sdk/merchant";
 import { getContext } from "../lib/context.js";
 import { handlerRegistry } from "../lib/registry.js";
 import { computeDemoBreachDelayMs } from "../lib/force-breach.js";
@@ -22,6 +23,10 @@ import { classifierRegistry } from "../lib/classifiers.js";
 import { createBufferedFetch } from "../lib/buffered-fetch.js";
 import { buildSanitisedResponse } from "../lib/response-headers.js";
 import { adapterToBalanceCheck } from "../lib/balance.js";
+import {
+  getProxyMerchantIdentity,
+  type ProxyMerchantIdentity,
+} from "../lib/merchant-identity.js";
 
 export async function proxyRoute(c: Context): Promise<Response> {
   const slug = c.req.param("slug") ?? "";
@@ -165,6 +170,17 @@ export async function proxyRoute(c: Context): Promise<Response> {
     imputed_cost_lamports: endpoint.imputedCostLamports,
   };
 
+  // J3: honor the agent SDK's outbound x-pact-started-at. When present, we
+  // anchor latency math on the agent's wall clock instead of our own — so
+  // the recorded latency is true agent → proxy → upstream, and the
+  // call_records.timestamp matches the agent's own /records ingest of the
+  // same call (the partial unique index dedupe key).
+  const startedAtRaw = c.req.header("x-pact-started-at");
+  const startedAtParsed = startedAtRaw ? Number(startedAtRaw) : NaN;
+  const overrideStartedAt = Number.isFinite(startedAtParsed)
+    ? startedAtParsed
+    : undefined;
+
   const result = await wrapFetch({
     endpointSlug: slug,
     walletPubkey: pactWallet,
@@ -176,6 +192,7 @@ export async function proxyRoute(c: Context): Promise<Response> {
     fetchImpl: buffered.fetchImpl,
     pool: slug,
     network: endpointNetwork,
+    overrideStartedAt,
   });
 
   // Alan review M2: wrap's response carries upstream headers (with
@@ -187,6 +204,27 @@ export async function proxyRoute(c: Context): Promise<Response> {
     if (name.toLowerCase().startsWith("x-pact-")) {
       pactHeaders.set(name, value);
     }
+  }
+
+  // J2: stamp X-Pact-Proxied-By + X-Pact-Proxied-Sig so the agent SDK can
+  // verify, skip its own local record write, and emit an `attributed` event.
+  // Skipped silently when the proxy was booted without a merchant identity
+  // (degrades to the legacy double-write path — DB unique index dedupes).
+  const merchant: ProxyMerchantIdentity | null = getProxyMerchantIdentity();
+  if (merchant) {
+    const startedAt = overrideStartedAt ?? Date.now();
+    const sig = signProxiedBy(
+      {
+        merchantPubkey: merchant.publicKeyB58,
+        agentPubkey: pactWallet,
+        startedAt,
+        endpoint: slug,
+        statusCode: result.response.status,
+      },
+      merchant.secretKey,
+    );
+    pactHeaders.set("X-Pact-Proxied-By", merchant.publicKeyB58);
+    pactHeaders.set("X-Pact-Proxied-Sig", sig);
   }
   return buildSanitisedResponse(result.response, pactHeaders);
 }

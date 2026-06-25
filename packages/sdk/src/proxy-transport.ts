@@ -126,6 +126,13 @@ export async function buildAuthHeaders(
     "x-pact-signature": signature,
     "x-pact-project": input.project,
     ...(input.network ? { "x-pact-network": input.network } : {}),
+    // Merchant-attribution headers (Commit 2 C8). The market-proxy +
+    // any merchant middleware key on these — x-pact-pubkey identifies the
+    // agent for attestation, x-pact-started-at is the canonical timestamp
+    // both sides use as the call_records idempotency anchor so a duplicate
+    // submission from agent + merchant dedupes via the partial unique index.
+    "x-pact-pubkey": input.agentPubkey,
+    "x-pact-started-at": String(ts),
   };
 }
 
@@ -157,6 +164,11 @@ export interface PactResponseHeaders {
   outcome: string | null;
   pool: string | null;
   settlementPending: boolean;
+  /** Merchant pubkey (base58) when the response is attested under the
+   *  X-Pact-Proxied-By protocol (Commit 2 E3). */
+  proxiedBy: string | null;
+  /** Ed25519 base64 signature accompanying proxiedBy. */
+  proxiedSig: string | null;
 }
 
 function bigOrNull(v: string | null): bigint | null {
@@ -179,6 +191,8 @@ export function parsePactHeaders(headers: Headers): PactResponseHeaders {
     outcome: headers.get("X-Pact-Outcome"),
     pool: headers.get("X-Pact-Pool"),
     settlementPending: headers.get("X-Pact-Settlement-Pending") === "1",
+    proxiedBy: headers.get("X-Pact-Proxied-By"),
+    proxiedSig: headers.get("X-Pact-Proxied-Sig"),
   };
 }
 

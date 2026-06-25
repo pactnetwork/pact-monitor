@@ -192,6 +192,10 @@ export async function poolsRoute(app: FastifyInstance): Promise<void> {
             activePolicies: pool.activePolicies,
             payoutsThisWindow: pool.payoutsThisWindow.toString(),
           },
+          // Contract stub for SDK auto-provisioning UX (Commit 2 B5).
+          // No blocklist table yet — always true until a future feature flips
+          // hostnames to false based on operator policy.
+          provisionable: true,
           positions,
           recentClaims: claimsResult.rows,
         });

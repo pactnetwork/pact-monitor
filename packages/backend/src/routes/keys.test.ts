@@ -353,4 +353,127 @@ describe("self-serve API key issuance with signed challenge (PR 50 codex)", () =
       );
     });
   });
+
+  // Commit 3 K1: referrer attribution on self-serve issuance.
+  describe("referrer attribution (Commit 3 K1)", () => {
+    const merchantKp = Keypair.generate();
+    const merchantPubkey = merchantKp.publicKey.toBase58();
+    const merchantLabel = `merchant-keys-${SUITE_TAG}`;
+
+    before(async () => {
+      await query(
+        "INSERT INTO api_keys (key_hash, label, agent_pubkey, role, status) VALUES ($1, $2, $3, 'merchant', 'active')",
+        [`hash-merchant-${SUITE_TAG}`, merchantLabel, merchantPubkey],
+      );
+    });
+
+    after(async () => {
+      await query("DELETE FROM api_keys WHERE label = $1", [merchantLabel]);
+    });
+
+    async function issueWithRef(
+      kp: Keypair,
+      extras: Partial<{ ref: string; share_bps: number | string }>,
+    ) {
+      const a = await buildApp();
+      try {
+        const pubkey = kp.publicKey.toBase58();
+        const ch = (
+          await a.inject({
+            method: "POST",
+            url: "/api/v1/keys/self-serve/challenge",
+            payload: { agent_pubkey: pubkey },
+          })
+        ).json();
+        const sig = sign(kp, ch.nonce, pubkey);
+        return a.inject({
+          method: "POST",
+          url: "/api/v1/keys/self-serve",
+          payload: {
+            agent_pubkey: pubkey,
+            nonce: ch.nonce,
+            signature: sig,
+            ...extras,
+          },
+        });
+      } finally {
+        await a.close();
+      }
+    }
+
+    it("populates referrer_pubkey + referrer_share_bps when ref points at an active merchant", async () => {
+      const kp = Keypair.generate();
+      const res = await issueWithRef(kp, { ref: merchantPubkey, share_bps: 2000 });
+      assert.equal(res.statusCode, 201);
+      const body = res.json();
+      const row = (
+        await query<{
+          referrer_pubkey: string | null;
+          referrer_share_bps: number | null;
+        }>(
+          "SELECT referrer_pubkey, referrer_share_bps FROM api_keys WHERE label = $1",
+          [body.label],
+        )
+      ).rows[0]!;
+      assert.equal(row.referrer_pubkey, merchantPubkey);
+      assert.equal(row.referrer_share_bps, 2000);
+      await query("DELETE FROM api_keys WHERE label = $1", [body.label]);
+    });
+
+    it("defaults share_bps to 1000 (10%) when ref is set but share_bps is omitted", async () => {
+      const kp = Keypair.generate();
+      const res = await issueWithRef(kp, { ref: merchantPubkey });
+      assert.equal(res.statusCode, 201);
+      const body = res.json();
+      const row = (
+        await query<{ referrer_share_bps: number | null }>(
+          "SELECT referrer_share_bps FROM api_keys WHERE label = $1",
+          [body.label],
+        )
+      ).rows[0]!;
+      assert.equal(row.referrer_share_bps, 1000);
+      await query("DELETE FROM api_keys WHERE label = $1", [body.label]);
+    });
+
+    it("returns 400 ReferrerNotFound when ref pubkey is not a registered merchant", async () => {
+      const kp = Keypair.generate();
+      const strangerPubkey = Keypair.generate().publicKey.toBase58();
+      const res = await issueWithRef(kp, { ref: strangerPubkey });
+      assert.equal(res.statusCode, 400);
+      assert.equal(res.json().error, "ReferrerNotFound");
+    });
+
+    it("returns 400 on share_bps out of range (>3000)", async () => {
+      const kp = Keypair.generate();
+      const res = await issueWithRef(kp, { ref: merchantPubkey, share_bps: 3001 });
+      assert.equal(res.statusCode, 400);
+      assert.equal(res.json().error, "InvalidReferrerShareBps");
+    });
+
+    it("returns 400 on share_bps zero or negative", async () => {
+      const kp = Keypair.generate();
+      const res = await issueWithRef(kp, { ref: merchantPubkey, share_bps: 0 });
+      assert.equal(res.statusCode, 400);
+      assert.equal(res.json().error, "InvalidReferrerShareBps");
+    });
+
+    it("leaves referrer columns NULL when no ref is supplied", async () => {
+      const kp = Keypair.generate();
+      const res = await issueWithRef(kp, {});
+      assert.equal(res.statusCode, 201);
+      const body = res.json();
+      const row = (
+        await query<{
+          referrer_pubkey: string | null;
+          referrer_share_bps: number | null;
+        }>(
+          "SELECT referrer_pubkey, referrer_share_bps FROM api_keys WHERE label = $1",
+          [body.label],
+        )
+      ).rows[0]!;
+      assert.equal(row.referrer_pubkey, null);
+      assert.equal(row.referrer_share_bps, null);
+      await query("DELETE FROM api_keys WHERE label = $1", [body.label]);
+    });
+  });
 });

@@ -50,12 +50,28 @@ export interface DegradedEvent {
   ts: string;
 }
 
+/**
+ * `attributed` fires when a covered call's response carries a valid
+ * X-Pact-Proxied-By attestation from a registered merchant. The agent SDK
+ * has skipped its local record write — the merchant is the server-of-record
+ * for this call. Used by integrators that want observability over which
+ * merchant handled which call.
+ */
+export interface AttributedEvent {
+  callId: string | null;
+  merchantPubkey: string;
+  slug: string;
+  startedAt: number;
+  ts: string;
+}
+
 export interface PactEventMap {
   failure: [FailureEvent];
   refund: [RefundEvent];
   billed: [BilledEvent];
   "low-balance": [LowBalanceEvent];
   degraded: [DegradedEvent];
+  attributed: [AttributedEvent];
 }
 
 export type PactEventName = keyof PactEventMap;

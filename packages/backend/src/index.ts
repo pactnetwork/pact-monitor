@@ -19,6 +19,10 @@ import { adminRoutes } from "./routes/admin.js";
 import { faucetRoutes } from "./routes/faucet.js";
 import { keysRoutes } from "./routes/keys.js";
 import { betaRoutes } from "./routes/beta.js";
+import { observationsRoutes } from "./routes/observations.js";
+import { merchantsRoutes } from "./routes/merchants.js";
+import { endpointRegisterRoutes } from "./routes/endpoint-register.js";
+import { disputesRoutes } from "./routes/disputes.js";
 import { metricsHook } from "./middleware/metrics.js";
 import { detectAndCacheNetwork } from "./utils/network.js";
 import { getSolanaConfig } from "./utils/solana.js";
@@ -57,6 +61,12 @@ await app.register(adminRoutes);
 await app.register(faucetRoutes);
 await app.register(keysRoutes);
 await app.register(betaRoutes);
+// Merchant SDK routes — see plan at
+// /Users/ken/.claude/plans/implement-merchant-sdk-based-synthetic-pizza.md
+await app.register(observationsRoutes);
+await app.register(merchantsRoutes);
+await app.register(endpointRegisterRoutes);
+await app.register(disputesRoutes);
 
 const port = parseInt(process.env.PORT || "3001", 10);
 

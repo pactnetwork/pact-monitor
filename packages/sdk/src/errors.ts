@@ -37,6 +37,8 @@ export enum PactErrorCode {
   SIGNATURE_FAILED = "SIGNATURE_FAILED",
   /** The proxy discovery document could not be fetched/parsed. */
   DISCOVERY_FAILED = "DISCOVERY_FAILED",
+  /** A merchant SDK feature is not yet wired (stubbed in Commit 1). */
+  NOT_AVAILABLE = "NOT_AVAILABLE",
 }
 
 export class PactError extends Error {

@@ -467,3 +467,111 @@ FROM beta_applicants;
 
 CREATE INDEX IF NOT EXISTS idx_agent_flags_status
   ON agent_flags(status, created_at);
+
+-- ============================================================
+-- Merchant SDK (Commit 1): role + observation provenance
+-- ============================================================
+--
+-- Additive, idempotent. Mirrors packages/backend/migrations/
+-- 20260601-merchant-role-and-origin.ts. See plan at
+-- /Users/ken/.claude/plans/implement-merchant-sdk-based-synthetic-pizza.md.
+
+-- B1: api_keys.role. Default 'agent' back-fills every existing row at DDL
+-- time (non-volatile default, table-catalog rewrite only). Include
+-- 'partner' in the CHECK now even though Commit 1 only issues 'agent' and
+-- 'merchant' — Phase K (Commit 3) will issue partner keys, and adding the
+-- value later forces a constraint drop/recreate round-trip on a live DB.
+ALTER TABLE api_keys
+  ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'agent'
+    CHECK (role IN ('agent', 'merchant', 'partner'));
+CREATE INDEX IF NOT EXISTS idx_api_keys_role ON api_keys(role);
+
+-- call_records.origin distinguishes the ingest path. 'agent' is the
+-- existing path (POST /api/v1/records); 'merchant' is the new path
+-- (POST /api/v1/observations); 'proxy' is reserved for the market-proxy
+-- ingest in Commit 2.
+ALTER TABLE call_records
+  ADD COLUMN IF NOT EXISTS origin TEXT NOT NULL DEFAULT 'agent'
+    CHECK (origin IN ('agent', 'merchant', 'proxy'));
+-- call_records.merchant_pubkey: which merchant submitted the observation
+-- when origin IN ('merchant','proxy'). Joinable to api_keys.agent_pubkey
+-- (with role='merchant') for ops audits and divergence-rate monitoring.
+ALTER TABLE call_records
+  ADD COLUMN IF NOT EXISTS merchant_pubkey TEXT NULL;
+CREATE INDEX IF NOT EXISTS idx_call_records_origin
+  ON call_records(origin, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_call_records_merchant_pubkey
+  ON call_records(merchant_pubkey) WHERE merchant_pubkey IS NOT NULL;
+
+-- ============================================================
+-- Merchant SDK (Commit 2): merchant_endpoints + dispute_tickets
+-- ============================================================
+--
+-- Additive, idempotent. Mirrors packages/backend/migrations/
+-- 20260602-merchant-endpoints-and-disputes.ts.
+
+-- One row per (merchant_pubkey, hostname, endpoint_path). H3 writes rows
+-- here as 'pending_review'; the register-endpoint-onchain script flips
+-- them to 'active' once register_endpoint lands on-chain.
+CREATE TABLE IF NOT EXISTS merchant_endpoints (
+  id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  merchant_pubkey      TEXT NOT NULL,
+  hostname             TEXT NOT NULL,
+  endpoint_path        TEXT NOT NULL,
+  category             TEXT,
+  amount_usd           NUMERIC(12,6) NOT NULL,
+  preferred_rate_bps   INTEGER NOT NULL CHECK (preferred_rate_bps BETWEEN 0 AND 10000),
+  slug                 TEXT NULL,
+  on_chain_tx          TEXT NULL,
+  status               TEXT NOT NULL DEFAULT 'pending_review'
+    CHECK (status IN ('pending_review', 'active', 'paused', 'rejected')),
+  created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (merchant_pubkey, hostname, endpoint_path)
+);
+CREATE INDEX IF NOT EXISTS idx_merchant_endpoints_hostname ON merchant_endpoints(hostname);
+CREATE INDEX IF NOT EXISTS idx_merchant_endpoints_status ON merchant_endpoints(status);
+
+-- Auto-maintain updated_at on UPDATE (matches beta_applicants pattern).
+CREATE OR REPLACE FUNCTION merchant_endpoints_set_updated_at()
+RETURNS trigger AS $$
+BEGIN NEW.updated_at := NOW(); RETURN NEW; END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_merchant_endpoints_updated_at ON merchant_endpoints;
+CREATE TRIGGER trg_merchant_endpoints_updated_at
+  BEFORE UPDATE ON merchant_endpoints
+  FOR EACH ROW EXECUTE FUNCTION merchant_endpoints_set_updated_at();
+
+-- v_active_merchants — H2 data source. Replaces the Commit 1 empty-list
+-- stub in routes/merchants.ts. The agent SDK fetches this at boot (E5)
+-- to verify X-Pact-Proxied-By attestations.
+CREATE OR REPLACE VIEW v_active_merchants AS
+SELECT
+  k.agent_pubkey AS merchant_pubkey,
+  k.label,
+  ARRAY_AGG(DISTINCT e.hostname) FILTER (WHERE e.hostname IS NOT NULL AND e.status = 'active')
+    AS hostnames,
+  MAX(e.updated_at) AS updated_at
+FROM api_keys k
+LEFT JOIN merchant_endpoints e ON e.merchant_pubkey = k.agent_pubkey
+WHERE k.role = 'merchant' AND k.status = 'active'
+GROUP BY k.agent_pubkey, k.label;
+
+-- dispute_tickets — H4 V1 backlog; no on-chain reversal. Ops resolves
+-- out-of-band via direct DB writes + manual settler intervention.
+CREATE TABLE IF NOT EXISTS dispute_tickets (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  merchant_pubkey   TEXT NOT NULL,
+  call_record_id    UUID NOT NULL REFERENCES call_records(id),
+  reason            TEXT NOT NULL,
+  evidence          JSONB NOT NULL DEFAULT '{}'::jsonb,
+  status            TEXT NOT NULL DEFAULT 'open'
+    CHECK (status IN ('open', 'acknowledged', 'resolved_uphold', 'resolved_reverse', 'rejected')),
+  ops_note          TEXT,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  resolved_at       TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_dispute_tickets_status
+  ON dispute_tickets(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_dispute_tickets_merchant
+  ON dispute_tickets(merchant_pubkey, created_at DESC);

@@ -17,6 +17,8 @@
 import { canonicalHostname } from "./hostname.js";
 import type { SlugResolver } from "./slug-resolver.js";
 import type { SignFn, Vm } from "./signer.js";
+import type { MerchantRegistry } from "./merchant-registry.js";
+import { verifyProxiedBy } from "./merchant/attestation.js";
 import {
   buildProxiedUrl,
   buildAuthHeaders,
@@ -40,6 +42,17 @@ export type DegradedReason =
   | "proxy_error"
   | "proxy_unprocessed";
 
+/**
+ * Attestation outcome on a covered response. Emitted by golden-fetch when
+ * X-Pact-Proxied-By + X-Pact-Proxied-Sig are present and verify against the
+ * merchant registry (E3). The caller (factory.ts) consumes it to suppress
+ * the local observation buffer append and emit the 'attributed' event.
+ */
+export interface AttributionVerified {
+  merchantPubkey: string;
+  startedAt: number;
+}
+
 export interface GoldenFetchResult {
   response: Response;
   degraded: boolean;
@@ -49,10 +62,19 @@ export interface GoldenFetchResult {
   host: string | null;
   slug: string | null;
   premiumBps: number | null;
+  /**
+   * When set, the merchant attested this call via X-Pact-Proxied-By and the
+   * SDK should skip its local record write — the merchant is the
+   * server-of-record. Null when no attestation was present OR the signature
+   * failed to verify (in which case the SDK records as a fallback).
+   */
+  attribution: AttributionVerified | null;
 }
 
 export interface GoldenFetchDeps {
   resolver: SlugResolver;
+  /** When set, X-Pact-Proxied-By attestations are verified against this. */
+  merchantRegistry?: MerchantRegistry;
   proxyBaseUrl: string;
   project: string;
   network?: string;
@@ -65,6 +87,46 @@ export interface GoldenFetchDeps {
   sign: SignFn | null;
   fetchImpl: typeof fetch;
   now?: () => number;
+}
+
+/**
+ * Compute the attestation outcome from a parsed pactHeaders + the agent's
+ * outbound timestamp. Verifies against the registry; returns null on any
+ * failure mode (no headers, unknown merchant, invalid signature). Caller
+ * treats null as "record normally" — the fail-safe-to-record posture lets a
+ * malicious upstream that spoofs an unknown pubkey NOT suppress coverage.
+ */
+function evaluateAttribution(
+  deps: GoldenFetchDeps,
+  pact: PactResponseHeaders,
+  startedAt: number,
+  endpoint: string,
+  statusCode: number,
+  host: string,
+): AttributionVerified | null {
+  if (!pact.proxiedBy || !pact.proxiedSig) return null;
+  if (!deps.merchantRegistry) return null;
+  if (!deps.merchantRegistry.hasMerchant(pact.proxiedBy)) return null;
+  // PR #223 Section B: a registered merchant may only attest for hostnames
+  // it owns. Without this check, any active merchant key in the registry
+  // could produce a valid attestation for any host — defeating the spec's
+  // spoofing mitigation. Unknown hostnames (or empty registered list)
+  // collapse to mismatch → return null and let the SDK record normally.
+  const registeredHostnames = deps.merchantRegistry.getMerchantHostnames(pact.proxiedBy);
+  if (!registeredHostnames || !registeredHostnames.includes(host)) return null;
+  const ok = verifyProxiedBy(
+    {
+      merchantPubkey: pact.proxiedBy,
+      agentPubkey: deps.agentPubkey,
+      startedAt,
+      endpoint,
+      statusCode,
+    },
+    pact.proxiedSig,
+    pact.proxiedBy,
+  );
+  if (!ok) return null;
+  return { merchantPubkey: pact.proxiedBy, startedAt };
 }
 
 export async function goldenFetch(
@@ -102,6 +164,10 @@ export async function goldenFetch(
   }
 
   const proxiedUrl = buildProxiedUrl(deps.proxyBaseUrl, slug, url);
+  // Capture the same `tStart` buildAuthHeaders will use, so the agent's
+  // X-Pact-Started-At sent to the proxy matches what we later reconstruct
+  // when verifying the proxy's X-Pact-Proxied-Sig attestation.
+  const startedAtForVerify = (deps.now ?? Date.now)();
   let authHeaders: Record<string, string>;
   try {
     authHeaders = await buildAuthHeaders({
@@ -113,7 +179,7 @@ export async function goldenFetch(
       vm: deps.vm,
       project: deps.project,
       network: deps.network,
-      now: deps.now,
+      now: () => startedAtForVerify,
     });
   } catch {
     // Signing itself failed (e.g. a malformed/short secret key that slipped
@@ -135,6 +201,14 @@ export async function goldenFetch(
 
   const pact = parsePactHeaders(resp.headers);
   if (isPactProcessed(pact)) {
+    const attribution = evaluateAttribution(
+      deps,
+      pact,
+      startedAtForVerify,
+      slug,
+      resp.status,
+      host,
+    );
     return {
       response: resp,
       degraded: false,
@@ -143,6 +217,7 @@ export async function goldenFetch(
       host,
       slug,
       premiumBps,
+      attribution,
     };
   }
 
@@ -168,15 +243,58 @@ async function bare(
 ): Promise<GoldenFetchResult> {
   // The bare path IS the caller's call. If it throws, that is a genuine
   // upstream/network error and must propagate unchanged (golden rule).
-  const response = await deps.fetchImpl(url, init);
+  //
+  // Merchant attribution (Commit 2 C8): even on the bare path, attach
+  // x-pact-pubkey + x-pact-started-at so a merchant who runs their own
+  // middleware on the upstream host can still attribute and emit an
+  // X-Pact-Proxied-By attestation. The startedAt anchor is shared with the
+  // proxied path (also Date.now()) so the dedupe key is consistent.
+  const startedAt = (deps.now ?? Date.now)();
+  const baseHeaders = headersToRecord(init?.headers);
+  const headersOut: Record<string, string> = {
+    ...baseHeaders,
+    "x-pact-pubkey": deps.agentPubkey,
+    "x-pact-started-at": String(startedAt),
+  };
+  const response = await deps.fetchImpl(url, { ...init, headers: headersOut });
+
+  // Direct-mode merchant attribution (Commit 3 L1): even on the bare path,
+  // if the upstream's middleware stamped X-Pact-Proxied-By + Sig and the
+  // merchant is in our registry, the call IS attributed — we just bypassed
+  // the Pact Market proxy. The merchant middleware signs over the request
+  // path (req.route.path or req.path), so we reconstruct the same endpoint
+  // identifier from the URL to verify the signature.
+  let directEndpoint = "";
+  try {
+    directEndpoint = new URL(url).pathname;
+  } catch {
+    /* malformed URL — bare path already swallowed it above */
+  }
+  const pact = parsePactHeaders(response.headers);
+  // PR #223 Section B: hostname binding applies on the bare path too.
+  // The canonical host comes from the request URL (the agent's intended
+  // upstream); the merchant must be registered for that host to attest.
+  let bareHost = "";
+  try {
+    bareHost = canonicalHostname(url);
+  } catch {
+    /* malformed URL — falls through; evaluateAttribution will mismatch */
+  }
+  const directAttribution =
+    pact.proxiedBy && pact.proxiedSig
+      ? evaluateAttribution(deps, pact, startedAt, directEndpoint, response.status, bareHost)
+      : null;
   return {
     response,
     degraded: true,
     degradedReason: reason,
-    pactHeaders: null,
+    // Surface pactHeaders when proxied-by is present so callers can read
+    // the attestation; otherwise null preserves the legacy degraded shape.
+    pactHeaders: directAttribution ? pact : null,
     callId: null,
     host,
     slug,
     premiumBps,
+    attribution: directAttribution,
   };
 }

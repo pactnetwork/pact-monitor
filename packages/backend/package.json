@@ -9,10 +9,13 @@
     "start": "node dist/index.js",
     "seed": "tsx src/scripts/seed.ts",
     "generate-key": "tsx src/scripts/generate-key.ts",
+    "register-endpoint-onchain": "tsx src/scripts/register-endpoint-onchain.ts",
     "migrate:canonicalize-hostnames": "tsx migrations/20260422-canonicalize-hostnames.ts",
     "migrate:referrer-schema": "tsx migrations/20260424-referrer-schema.ts",
     "migrate:split-error-classification": "tsx migrations/20260503-split-error-classification.ts",
-    "test": "tsx --test src/utils/*.test.ts src/routes/*.test.ts migrations/*.test.ts"
+    "migrate:merchant-role-and-origin": "tsx migrations/20260601-merchant-role-and-origin.ts",
+    "migrate:merchant-endpoints-and-disputes": "tsx migrations/20260602-merchant-endpoints-and-disputes.ts",
+    "test": "tsx --test --test-concurrency=1 src/utils/*.test.ts src/routes/*.test.ts src/scripts/*.test.ts migrations/*.test.ts"
   },
   "dependencies": {
     "@anchor-lang/core": "^1.0.0",
@@ -20,6 +23,7 @@
     "@fastify/rate-limit": "^10.3.0",
     "@pact-network/classifier": "workspace:*",
     "@q3labs/pact-insurance": "workspace:*",
+    "@q3labs/pact-protocol-v1-client": "workspace:*",
     "@solana/kit": "^6.8.0",
     "@solana/spl-token": "^0.4.14",
     "@solana/web3.js": "^1.98.4",

@@ -27,6 +27,8 @@ import {
 } from "./signer.js";
 import { canonicalHostname } from "./hostname.js";
 import { SlugResolver } from "./slug-resolver.js";
+import { MerchantRegistry } from "./merchant-registry.js";
+import { AttributionWatchdog } from "./attribution-watchdog.js";
 import { selectStorage } from "./storage-select.js";
 import { IndexerPoller, type SettledNotification } from "./indexer-poller.js";
 import { PactEventEmitter, type PactEventMap, type PactEventName } from "./events.js";
@@ -133,6 +135,22 @@ export async function createPact(config: PactConfig): Promise<PactInstance> {
     proxyBaseUrl: net.proxyBaseUrl,
     fetchImpl: cfg.fetchImpl,
   });
+  // E5: merchant pubkey registry, refreshed in the background so the agent
+  // SDK can verify X-Pact-Proxied-By attestations from the market-proxy and
+  // direct-mode merchant middleware. Fetched lazily — start() returns after
+  // the first fetch but never throws on failure. golden-fetch reads via
+  // hasMerchant() at verification time; an unknown pubkey treats the
+  // attestation as absent (records normally), matching the spec's
+  // fail-safe-to-record posture.
+  const merchantRegistry = new MerchantRegistry({
+    backendBaseUrl: net.backendBaseUrl,
+    fetchImpl: cfg.fetchImpl,
+  });
+  // PR #223 Section E: await the boot fetch so the first `pact.fetch`
+  // after `createPact()` doesn't race ahead of registry population and
+  // miss a valid attestation. `start()` swallows network errors and the
+  // periodic refresh retries — no new throw surface.
+  await merchantRegistry.start();
   const buffer = await selectStorage({
     storage: cfg.storage,
     storagePath: cfg.storagePath,
@@ -244,7 +262,11 @@ export async function createPact(config: PactConfig): Promise<PactInstance> {
     poller,
     autoTopUp,
     installSignalHandlers: cfg.installSignalHandlers,
-    onShutdown: () => webhookServer?.close(),
+    onShutdown: async () => {
+      merchantRegistry.stop();
+      watchdog.cancelAll();
+      await webhookServer?.close();
+    },
   });
   lifecycle.install();
   poller.start();
@@ -252,6 +274,7 @@ export async function createPact(config: PactConfig): Promise<PactInstance> {
 
   const goldenDeps: GoldenFetchDeps = {
     resolver,
+    merchantRegistry,
     proxyBaseUrl: net.proxyBaseUrl,
     project: cfg.project,
     network: cfg.endpointNetwork,
@@ -261,6 +284,17 @@ export async function createPact(config: PactConfig): Promise<PactInstance> {
     sign,
     fetchImpl: cfg.fetchImpl,
   };
+
+  // E4: watchdog for attributed calls. If the merchant attests the call but
+  // never POSTs /observations, after a short delay we poll /records/peek
+  // and append the fallback observation locally. Owned by LifecycleManager
+  // via the onShutdown hook so all pending watchdogs cancel cleanly.
+  const watchdog = new AttributionWatchdog({
+    backendBaseUrl: net.backendBaseUrl,
+    agentPubkey,
+    fetchImpl: cfg.fetchImpl,
+    onFallback: (entry) => buffer.append(entry),
+  });
 
   async function indexerJson<T>(path: string): Promise<T> {
     let resp: Response;
@@ -287,18 +321,74 @@ export async function createPact(config: PactConfig): Promise<PactInstance> {
     async fetch(url, init, opts) {
       const res = await goldenFetch(goldenDeps, url, init, opts?.hostnameOverride);
       const ts = new Date().toISOString();
+      // Direct-mode merchant attribution can fire on the degraded (bare)
+      // path: the agent hit the merchant's host directly, the merchant's
+      // middleware stamped X-Pact-Proxied-By, and golden-fetch verified
+      // against the registry. We emit BOTH 'degraded' (no proxy coverage)
+      // AND 'attributed' (merchant accepted server-of-record) — integrators
+      // listening for 'attributed' care about the latter regardless of the
+      // proxy hop.
       if (res.degraded) {
         emitter.emit("degraded", {
           reason: res.degradedReason ?? "degraded",
           url,
           ts,
         });
+        if (res.attribution) {
+          emitter.emit("attributed", {
+            callId: res.callId,
+            merchantPubkey: res.attribution.merchantPubkey,
+            slug: res.slug ?? "",
+            startedAt: res.attribution.startedAt,
+            ts,
+          });
+        }
         return res.response;
       }
       const p = res.pactHeaders;
       const outcome = p?.outcome ?? null;
       const breach = outcome != null && outcome !== "ok";
-      if (res.callId) {
+      // E3: when a merchant has attested this call via X-Pact-Proxied-By
+      // and the signature verifies against the merchant registry, skip the
+      // local buffer.append — the merchant is the server-of-record. Emit
+      // 'attributed' so integrators have observability. A failed verify
+      // (or unknown merchant pubkey) leaves res.attribution null, and we
+      // record normally as a fallback (DB unique index then dedupes if the
+      // merchant later POSTs the same call).
+      if (res.attribution) {
+        emitter.emit("attributed", {
+          callId: res.callId,
+          merchantPubkey: res.attribution.merchantPubkey,
+          slug: res.slug ?? "",
+          startedAt: res.attribution.startedAt,
+          ts,
+        });
+        // The watchdog needs a callId to thread through its synthesized
+        // fallback observation. Proxy-mode attribution always has one
+        // (wrap stamps X-Pact-Call-Id); direct-mode attribution does NOT
+        // (the merchant middleware doesn't synthesize a callId). For
+        // direct mode we rely on the merchant's own /observations POST as
+        // the server-of-record; no agent-side watchdog/fallback.
+        if (res.callId) {
+          watchdog.schedule({
+            callId: res.callId,
+            startedAt: res.attribution.startedAt,
+            endpoint: res.slug ?? "",
+            fallback: {
+              callId: res.callId,
+              agentPubkey,
+              slug: res.slug ?? p?.pool ?? "",
+              host: res.host ?? "",
+              ts,
+              premiumLamports: p?.premiumLamports?.toString() ?? null,
+              refundLamports: p?.refundLamports?.toString() ?? null,
+              outcome,
+              breach,
+              reconciled: false,
+            },
+          });
+        }
+      } else if (res.callId) {
         buffer.append({
           callId: res.callId,
           agentPubkey,

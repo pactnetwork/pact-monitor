@@ -16,7 +16,17 @@ interface SelfServeBody {
   agent_pubkey?: unknown;
   nonce?: unknown;
   signature?: unknown; // base64
+  // F1 / Commit 3 K1: referrer attribution. Both fields optional;
+  // `ref` may also arrive on the query string for share-a-link UX.
+  ref?: unknown;
+  share_bps?: unknown;
 }
+
+// Default referrer share when `ref` is present but `share_bps` is not.
+// Matches the schema CHECK constraint (1..3000 bps) and the spec's
+// suggestion of 10% as a sensible starting cut.
+const DEFAULT_REFERRER_SHARE_BPS = 1000;
+const MAX_REFERRER_SHARE_BPS = 3000;
 
 // Public self-serve API key issuance for the devnet onboarding flow.
 //
@@ -297,12 +307,75 @@ export async function keysRoutes(app: FastifyInstance): Promise<void> {
             });
           }
 
+          // K1 referrer attribution: when `ref` is present (body or
+          // ?ref=<pubkey> query), validate the referrer is an active
+          // merchant and snapshot referrer_pubkey + referrer_share_bps
+          // onto the new api_keys row. Hard-fail on unknown pubkey so a
+          // typo in the share link surfaces loudly — silently dropping
+          // the referrer would lose attribution and the integrator
+          // wouldn't notice until billing.
+          const refRaw =
+            (typeof body.ref === "string" && body.ref) ||
+            ((request.query as { ref?: unknown })?.ref as string | undefined) ||
+            null;
+          let referrerPubkey: string | null = null;
+          let referrerShareBps: number | null = null;
+          if (refRaw) {
+            try {
+              referrerPubkey = validateRecipient(refRaw).toBase58();
+            } catch (err) {
+              await client.query("ROLLBACK");
+              return reply.code(400).send({
+                error: "InvalidReferrerPubkey",
+                message: (err as Error).message,
+              });
+            }
+            const shareRaw = body.share_bps;
+            const shareNum =
+              typeof shareRaw === "number"
+                ? shareRaw
+                : shareRaw === undefined || shareRaw === null
+                  ? DEFAULT_REFERRER_SHARE_BPS
+                  : Number(shareRaw);
+            if (
+              !Number.isFinite(shareNum) ||
+              !Number.isInteger(shareNum) ||
+              shareNum < 1 ||
+              shareNum > MAX_REFERRER_SHARE_BPS
+            ) {
+              await client.query("ROLLBACK");
+              return reply.code(400).send({
+                error: "InvalidReferrerShareBps",
+                message: `share_bps must be an integer in [1, ${MAX_REFERRER_SHARE_BPS}]`,
+              });
+            }
+            referrerShareBps = shareNum;
+            const merchantRow = await client.query<{ id: string }>(
+              `SELECT id FROM api_keys
+                 WHERE agent_pubkey = $1
+                   AND role = 'merchant'
+                   AND status = 'active'
+                 LIMIT 1`,
+              [referrerPubkey],
+            );
+            if (merchantRow.rowCount === 0) {
+              await client.query("ROLLBACK");
+              return reply.code(400).send({
+                error: "ReferrerNotFound",
+                message:
+                  "ref pubkey is not a registered active merchant (api_keys row with role='merchant' and status='active' not found)",
+              });
+            }
+          }
+
           const apiKey = `pact_${randomBytes(24).toString("hex")}`;
           const keyHash = hashKey(apiKey);
           const label = `self-serve-${agentPubkey.slice(0, 8)}-${Date.now()}`;
           await client.query(
-            "INSERT INTO api_keys (key_hash, label, agent_pubkey) VALUES ($1, $2, $3)",
-            [keyHash, label, agentPubkey],
+            `INSERT INTO api_keys
+               (key_hash, label, agent_pubkey, referrer_pubkey, referrer_share_bps)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [keyHash, label, agentPubkey, referrerPubkey, referrerShareBps],
           );
           await client.query("COMMIT");
           issued = { apiKey, label };

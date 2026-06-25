@@ -32,8 +32,9 @@ export async function requireApiKey(
     agent_pubkey: string | null;
     referrer_pubkey: string | null;
     status: string;
+    role: ApiKeyRole | null;
   }>(
-    "SELECT id, label, agent_pubkey, referrer_pubkey, status FROM api_keys WHERE key_hash = $1",
+    "SELECT id, label, agent_pubkey, referrer_pubkey, status, role FROM api_keys WHERE key_hash = $1",
     [hash],
   );
 
@@ -46,10 +47,38 @@ export async function requireApiKey(
     agentId: string;
     agentPubkey: string | null;
     referrerPubkey: string | null;
+    role: ApiKeyRole;
   };
   r.agentId = row.label;
   r.agentPubkey = row.agent_pubkey;
   r.referrerPubkey = row.referrer_pubkey;
+  // Default to 'agent' for legacy rows that pre-date the role column
+  // back-fill. The migration sets DEFAULT 'agent' so this is mainly a
+  // belt-and-suspenders guard.
+  r.role = row.role ?? "agent";
+}
+
+export type ApiKeyRole = "agent" | "merchant" | "partner";
+
+/**
+ * Role-gating preHandler. MUST run after `requireApiKey` in the chain so
+ * `request.role` is populated. Returns 403 when the authenticated key's
+ * role is not in `allowed`.
+ *
+ * Example:
+ *   { preHandler: [requireApiKey, requireRole('merchant'), verifyObservationSignature] }
+ */
+export function requireRole(...allowed: ApiKeyRole[]) {
+  return async function (
+    request: FastifyRequest,
+    reply: FastifyReply,
+  ): Promise<void> {
+    const r = request as FastifyRequest & { role?: ApiKeyRole };
+    if (!r.role || !allowed.includes(r.role)) {
+      reply.code(403).send({ error: "WrongRole", allowed });
+      return;
+    }
+  };
 }
 
 const REQUIRE_SIGNATURES = process.env.REQUIRE_RECORD_SIGNATURES === "true";
@@ -96,6 +125,70 @@ export async function verifyRecordSignature(
     }
   } catch (err) {
     request.log.error({ err }, "Signature verification error");
+    reply.code(401).send({ error: "Signature verification failed" });
+    return;
+  }
+}
+
+/**
+ * Verify the agent/merchant signature on a /api/v1/observations body.
+ *
+ * Distinct from `verifyRecordSignature` above: that helper signs over
+ * `body.records` (an array — agent batches), whereas an observation body is
+ * a single flat object posted by a merchant. The canonicalization mirrors
+ * the SDK in packages/sdk/src/merchant/client.ts:
+ *     sha256(JSON.stringify(body, Object.keys(body).sort()))
+ *
+ * Pubkey-binding and the REQUIRE_RECORD_SIGNATURES grace-period flag are
+ * reused verbatim — the env flag covers both ingest paths.
+ */
+export async function verifyObservationSignature(
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<void> {
+  const signature = request.headers["x-pact-signature"] as string | undefined;
+  const pubkeyHeader = request.headers["x-pact-pubkey"] as string | undefined;
+
+  if (!signature || !pubkeyHeader) {
+    if (REQUIRE_SIGNATURES) {
+      reply.code(401).send({ error: "Observation signature required" });
+      return;
+    }
+    return;
+  }
+
+  if (!/^[A-Za-z0-9+/]+=*$/.test(signature)) {
+    reply
+      .code(400)
+      .send({ error: "Malformed X-Pact-Signature (invalid base64)" });
+    return;
+  }
+
+  const authed = request as FastifyRequest & { agentPubkey?: string };
+  if (authed.agentPubkey && pubkeyHeader !== authed.agentPubkey) {
+    reply
+      .code(401)
+      .send({ error: "Signature pubkey does not match API key binding" });
+    return;
+  }
+
+  try {
+    const body = request.body as Record<string, unknown>;
+    if (!body || typeof body !== "object") {
+      reply.code(400).send({ error: "Observation body required" });
+      return;
+    }
+    const serialized = JSON.stringify(body, Object.keys(body).sort());
+    const hash = createHash("sha256").update(serialized).digest();
+    const sigBytes = Buffer.from(signature, "base64");
+    const pubkeyBytes = bs58.decode(pubkeyHeader);
+    const valid = nacl.sign.detached.verify(hash, sigBytes, pubkeyBytes);
+    if (!valid) {
+      reply.code(401).send({ error: "Invalid observation signature" });
+      return;
+    }
+  } catch (err) {
+    request.log.error({ err }, "Observation signature verification error");
     reply.code(401).send({ error: "Signature verification failed" });
     return;
   }
