@@ -46,6 +46,13 @@ import {
 } from "../lib/coverage.js";
 import { verifyPayment } from "../lib/payment-verify.js";
 import type { PaySettlementEvent } from "../lib/events.js";
+import {
+  evaluateClientAttestation,
+  perAgentRefundCapFor,
+  DEFAULT_THRESHOLDS,
+  type AttestationStats,
+} from "../lib/attestation-controls.js";
+import type { Pool } from "pg";
 
 // Same UUIDv4 shape gate the market-proxy's GET /v1/calls/:id uses. The
 // coverageId we mint in deriveCoverageId() is forced into this shape.
@@ -304,6 +311,57 @@ export async function registerCoverageRoute(c: Context): Promise<Response> {
   // (allowanceOk is true here)
   void allowanceOk;
 
+  // ---- (7b) Client-attested abuse gate (agent-tasks#10) ------------------
+  // This verdict is CLIENT-ATTESTED — the facilitator took the agent's word for
+  // the outcome. Before authorizing the refund, optionally consult the
+  // accept-and-monitor controls. Gated behind PACT_VERDICT_ATTESTATION_GATE and
+  // default OFF: when "off" we don't even read the DB, so behaviour is
+  // unchanged. "enforce" downgrades an anomalous claim to uncovered (no
+  // settlement event published); "log_only" logs but still publishes. The
+  // gateway/self-observed path never runs through here.
+  const gateMode = ctx.payDefaults.attestationGateMode;
+  if (gateMode !== "off" && math.refundLamports > 0n) {
+    let stats: AttestationStats | null = null;
+    try {
+      stats = await loadAttestationStats(ctx.pg, body.agent);
+    } catch (err) {
+      // Fail OPEN on a stats-read error: never block a legit refund on a DB
+      // blip. The on-chain hourly exposure cap remains the hard backstop.
+      // eslint-disable-next-line no-console
+      console.warn("[facilitator] attestation stats read failed; failing open", err);
+    }
+    if (stats) {
+      const decision = evaluateClientAttestation({
+        thisRefundLamports: math.refundLamports,
+        stats,
+        thresholds: {
+          ...DEFAULT_THRESHOLDS,
+          // Pool-relative per-agent cap (agent-tasks#10): ~3 full refunds for
+          // THIS pool's per-call ceiling, so an honest agent's first full-size
+          // breach is never throttled. On-chain hourly cap is the hard backstop.
+          perAgentRefundCapLamportsPerWindow: perAgentRefundCapFor(pool),
+        },
+      });
+      if (decision.decision === "throttle") {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[facilitator] client-attested claim throttled (${decision.reason}) ` +
+            `agent=${body.agent} refund=${math.refundLamports} mode=${gateMode}`,
+        );
+        if (gateMode === "enforce") {
+          return c.json({
+            coverageId,
+            status: "uncovered",
+            premiumBaseUnits: "0",
+            refundBaseUnits: "0",
+            reason: `attestation_throttled_${decision.reason}`,
+            verified,
+          });
+        }
+      }
+    }
+  }
+
   // ---- (8) Publish the SettlementEvent -----------------------------------
   // We publish the SettlementEvent regardless of `verified` — an unverified
   // registration still drives an on-chain `settle_batch`, so abuse is bounded
@@ -325,6 +383,10 @@ export async function registerCoverageRoute(c: Context): Promise<Response> {
     payee,
     resource: body.resource,
     coverageId,
+    // agent-tasks#10: the facilitator trusts the client's `verdict` for the
+    // outcome, so the verdict provenance is always client-attested here
+    // (orthogonal to `verified`, which is about on-chain PAYMENT proof).
+    verdictSource: "client_attested",
   };
   await ctx.publisher.publish(event); // swallows errors internally
 
@@ -417,4 +479,64 @@ export async function getCoverageRoute(c: Context): Promise<Response> {
     console.error("[facilitator] error reading coverage record", id, err);
     return c.json({ error: "failed to read coverage record" }, 502);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Attestation-gate stats loader (agent-tasks#10)
+// ---------------------------------------------------------------------------
+//
+// Reads the per-agent rolling-window refund total + claim counts and the
+// network-wide client-attested breach rate from the SAME indexer `Call` table
+// GET /v1/coverage/:id already reads. Only invoked when the gate is enabled.
+//
+// LIMITATION (documented): these rows reflect SETTLED calls only — there is
+// settle_batch + indexer lag, so very recent in-flight claims aren't counted.
+// The gate therefore adds per-agent + anomaly signal on settled history; the
+// on-chain hourly exposure cap remains the hard real-time backstop.
+async function loadAttestationStats(
+  pg: Pool,
+  agent: string,
+): Promise<AttestationStats> {
+  const agentRes = await pg.query(
+    `SELECT COALESCE(SUM("refundLamports"), 0)        AS refund_sum,
+            COUNT(*) FILTER (WHERE breach)            AS covered,
+            COUNT(*)                                  AS total
+       FROM "Call"
+      WHERE "agentPubkey" = $1
+        AND source = 'pay.sh'
+        AND ts > now() - interval '1 hour'`,
+    [agent],
+  );
+  // SECURITY (agent-tasks#10 NIT #3): the network baseline MUST be drawn from
+  // the TRUSTWORTHY `verdictSource = 'pact_observed'` population — gateway calls
+  // Pact self-observed — NOT from `source = 'pay.sh'` rows. Those pay.sh rows
+  // are ALL `client_attested` (the very population this gate polices): drawing
+  // the baseline from them is self-poisoning — a sybil swarm's own forged
+  // breaches raise the baseline, raise the anomaly ceiling, and make the rule
+  // fire LESS the more it is attacked. (Note: just bolting `AND verdictSource =
+  // 'pact_observed'` onto the old `source = 'pay.sh'` filter would match ZERO
+  // rows and silently disable the rule, since pay.sh is never pact_observed —
+  // hence the filter is REPLACED, not narrowed.) We also count the sample size
+  // so an empty baseline (no gateway traffic yet) can fail OPEN downstream
+  // rather than flag against a baseline we don't have. NULLIF guards the
+  // divide-by-zero; an empty population yields rate=0, samples=0.
+  const netRes = await pg.query(
+    `SELECT COALESCE(
+              COUNT(*) FILTER (WHERE breach)::float8 / NULLIF(COUNT(*), 0),
+              0
+            ) AS rate,
+            COUNT(*) AS samples
+       FROM "Call"
+      WHERE "verdictSource" = 'pact_observed'
+        AND ts > now() - interval '24 hours'`,
+  );
+  const a = agentRes.rows[0] ?? {};
+  const n = netRes.rows[0] ?? {};
+  return {
+    agentRefundLamportsInWindow: BigInt(String(a.refund_sum ?? "0")),
+    agentCoveredClaimsInWindow: Number(a.covered ?? 0),
+    agentTotalCallsInWindow: Number(a.total ?? 0),
+    networkBreachClaimRate: Number(n.rate ?? 0),
+    networkBaselineSamples: Number(n.samples ?? 0),
+  };
 }

@@ -73,6 +73,18 @@ const _evmChains: Record<
     deploymentBlock: 46880730,
     logRangeChunk: 500,
   },
+  "arbitrum-sepolia": {
+    chainId: 421614,
+    name: "arbitrum-sepolia",
+    usdcAddress: "0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d",
+    usdcDecimals: 6,
+    rpcUrl: "https://sepolia-rollup.arbitrum.io/rpc",
+    blockTimeMs: 2000,
+    finalityBlocks: 1,
+    finalityBlockTag: "safe",
+    deploymentBlock: 276425280,
+    logRangeChunk: 1000,
+  },
 };
 
 const _evmEntries: Record<string, ChainDescriptor> = Object.fromEntries(

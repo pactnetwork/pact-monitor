@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { NETWORK_CONFIGS, resolveNetwork } from "../network.js";
 
 describe("network config", () => {
@@ -25,6 +25,28 @@ describe("network config", () => {
 
   it("localnet leaves programId null (sed-replaced per-env build)", () => {
     expect(NETWORK_CONFIGS.localnet.programId).toBeNull();
+  });
+
+  it("devnet picks up PACT_DEVNET_PROGRAM_ID env override (FS9 opt-in)", async () => {
+    // resolveDevnetProgramId() reads the env at module load, so set it before
+    // re-importing the freshly-evaluated module. Mainnet is unaffected.
+    vi.stubEnv(
+      "PACT_DEVNET_PROGRAM_ID",
+      "5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5",
+    );
+    vi.resetModules();
+    const mod = await import("../network.js");
+    expect(mod.NETWORK_CONFIGS.devnet.programId).toBe(
+      "5jBQb7fLz8FNSsHcc9qLzULDRNL5MkHbjjXMqZodwrU5",
+    );
+    expect(mod.NETWORK_CONFIGS.mainnet.programId).toBe(
+      "5bCJcdWdKLJ7arrMVMFh3z99rQDxV785fnD9XGcr3xwc",
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
   });
 
   it("resolveNetwork applies overrides and strips trailing slashes", () => {

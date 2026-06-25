@@ -38,6 +38,14 @@ interface MockState {
   }>;
   // Call rows for GET /v1/coverage/:id (keyed by callId)
   callRows: Record<string, Record<string, unknown>>;
+  // agent-tasks#10 attestation-gate stats (returned by loadAttestationStats).
+  attAgentRefundSum: string;
+  attAgentCovered: number;
+  attAgentTotal: number;
+  attNetRate: number;
+  // agent-tasks#10 NIT #3: count of trustworthy pact_observed baseline samples.
+  attNetSamples: number;
+  attStatsThrows: boolean;
 }
 
 const state: MockState = {
@@ -49,6 +57,12 @@ const state: MockState = {
   allowanceThrows: false,
   endpointRows: {},
   callRows: {},
+  attAgentRefundSum: "0",
+  attAgentCovered: 0,
+  attAgentTotal: 0,
+  attNetRate: 0,
+  attNetSamples: 100, // non-empty trustworthy baseline by default
+  attStatsThrows: false,
 };
 
 const publisher = new MemoryEventPublisher();
@@ -59,6 +73,7 @@ const PAY_DEFAULTS = {
   imputedCostLamports: 1_000_000n, // per-call refund ceiling ($1.00)
   slaLatencyMs: 10_000,
   exposureCapPerHourLamports: 5_000_000n,
+  attestationGateMode: "off" as "off" | "log_only" | "enforce",
 };
 
 const mockPg = {
@@ -67,6 +82,23 @@ const mockPg = {
       const slug = params[0] as string;
       const row = state.endpointRows[slug];
       return { rows: row ? [{ slug, ...row }] : [] };
+    }
+    // agent-tasks#10 attestation-gate stats loaders (must precede the generic
+    // FROM "Call" branch below — they also read the Call table).
+    if (/interval '1 hour'/.test(sql)) {
+      if (state.attStatsThrows) throw new Error("stats db down");
+      return {
+        rows: [
+          {
+            refund_sum: state.attAgentRefundSum,
+            covered: state.attAgentCovered,
+            total: state.attAgentTotal,
+          },
+        ],
+      };
+    }
+    if (/interval '24 hours'/.test(sql)) {
+      return { rows: [{ rate: state.attNetRate, samples: state.attNetSamples }] };
     }
     if (/FROM "Call"/.test(sql)) {
       const id = params[0] as string;
@@ -179,6 +211,14 @@ describe("facilitator app", () => {
     state.allowanceThrows = false;
     state.endpointRows = {};
     state.callRows = {};
+    // agent-tasks#10: reset the attestation gate + stats each test.
+    PAY_DEFAULTS.attestationGateMode = "off";
+    state.attAgentRefundSum = "0";
+    state.attAgentCovered = 0;
+    state.attAgentTotal = 0;
+    state.attNetRate = 0;
+    state.attNetSamples = 100;
+    state.attStatsThrows = false;
   });
 
   test("GET /health", async () => {
@@ -586,5 +626,130 @@ describe("facilitator app", () => {
   test("GET /v1/coverage/:id — malformed id → 400", async () => {
     const res = await app.request("/v1/coverage/not-a-uuid");
     expect(res.status).toBe(400);
+  });
+
+  // ---- agent-tasks#10: verdict provenance + client-attested abuse gate ------
+
+  test("published event is stamped verdictSource:'client_attested'", async () => {
+    const res = await app.request(signedRegisterRequest());
+    expect(res.status).toBe(200);
+    expect(publisher.events).toHaveLength(1);
+    expect(publisher.events[0].verdictSource).toBe("client_attested");
+  });
+
+  test("gate OFF (default): does NOT read attestation stats, publishes as before", async () => {
+    state.attAgentRefundSum = "999999999"; // would trip the cap IF read
+    const res = await app.request(signedRegisterRequest());
+    expect(res.status).toBe(200);
+    expect(publisher.events).toHaveLength(1);
+    // The 1h/24h stats queries must never have run while gate is off.
+    const ran = mockPg.query.mock.calls.some(
+      ([sql]) => /interval '1 hour'|interval '24 hours'/.test(sql as string),
+    );
+    expect(ran).toBe(false);
+  });
+
+  test("gate ENFORCE: per-agent refund cap exceeded → uncovered, NO event", async () => {
+    PAY_DEFAULTS.attestationGateMode = "enforce";
+    // Existing window refunds already at the $5 cap; this $1 claim pushes over.
+    state.attAgentRefundSum = "5000000";
+    const res = await app.request(signedRegisterRequest());
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { status: string; reason: string; refundBaseUnits: string };
+    expect(json.status).toBe("uncovered");
+    expect(json.reason).toBe("attestation_throttled_per_agent_refund_cap");
+    expect(json.refundBaseUnits).toBe("0");
+    expect(publisher.events).toHaveLength(0);
+  });
+
+  test("gate ENFORCE: breach-claim-rate anomaly → uncovered, NO event", async () => {
+    PAY_DEFAULTS.attestationGateMode = "enforce";
+    // Small claim (refund 101k) kept under the 1M per-agent cap so Rule 1 does
+    // NOT fire — this isolates Rule 2: the agent breaches 90% of calls vs a 5%
+    // network baseline (0.9 > max(0.5, 0.05*3)).
+    state.attAgentRefundSum = "0";
+    state.attAgentCovered = 18;
+    state.attAgentTotal = 20;
+    state.attNetRate = 0.05;
+    const res = await app.request(signedRegisterRequest({ amountBaseUnits: "100000" }));
+    const json = (await res.json()) as { status: string; reason: string };
+    expect(json.status).toBe("uncovered");
+    expect(json.reason).toBe("attestation_throttled_breach_claim_rate_anomaly");
+    expect(publisher.events).toHaveLength(0);
+  });
+
+  test("gate ENFORCE: empty pact_observed baseline + >50% breach → ABSOLUTE FLOOR still throttles", async () => {
+    PAY_DEFAULTS.attestationGateMode = "enforce";
+    // NIT #3 Option B: with NO trustworthy baseline samples the baseline-relative
+    // term is dropped, but the baseline-INDEPENDENT floor (0.5) survives and must
+    // still catch blatant abuse during the bootstrap window.
+    // Small claim (refund 101k) under the 1M per-agent cap so Rule 1 does not
+    // mask the Rule-2 behavior under test.
+    state.attAgentRefundSum = "0";
+    state.attAgentCovered = 18; // 0.9 > 0.5 floor
+    state.attAgentTotal = 20;
+    state.attNetRate = 0;
+    state.attNetSamples = 0;
+    const res = await app.request(signedRegisterRequest({ amountBaseUnits: "100000" }));
+    const json = (await res.json()) as { status: string; reason: string };
+    expect(json.status).toBe("uncovered");
+    expect(json.reason).toBe("attestation_throttled_breach_claim_rate_anomaly");
+    expect(publisher.events).toHaveLength(0);
+  });
+
+  test("gate ENFORCE: empty pact_observed baseline + <50% breach → fails OPEN on the multiple (published)", async () => {
+    PAY_DEFAULTS.attestationGateMode = "enforce";
+    // The baseline-relative term is dropped on an empty baseline, so a sub-floor
+    // agent is allowed (only the floor could fire, and 0.4 < 0.5).
+    state.attAgentRefundSum = "0";
+    state.attAgentCovered = 8; // 0.4 < 0.5 floor
+    state.attAgentTotal = 20;
+    state.attNetRate = 0;
+    state.attNetSamples = 0;
+    const res = await app.request(signedRegisterRequest({ amountBaseUnits: "100000" }));
+    const json = (await res.json()) as { status: string };
+    expect(json.status).toBe("settlement_pending");
+    expect(publisher.events).toHaveLength(1);
+  });
+
+  test("network baseline query filters on verdictSource='pact_observed', not source='pay.sh'", async () => {
+    PAY_DEFAULTS.attestationGateMode = "enforce";
+    await app.request(signedRegisterRequest());
+    const netSql = mockPg.query.mock.calls
+      .map(([sql]) => sql as string)
+      .find((sql) => /interval '24 hours'/.test(sql));
+    expect(netSql).toBeDefined();
+    expect(netSql).toMatch(/"verdictSource"\s*=\s*'pact_observed'/);
+    expect(netSql).not.toMatch(/source\s*=\s*'pay\.sh'/);
+  });
+
+  test("gate LOG_ONLY: anomalous claim is logged but STILL published (shadow mode)", async () => {
+    PAY_DEFAULTS.attestationGateMode = "log_only";
+    state.attAgentRefundSum = "5000000"; // over cap
+    const res = await app.request(signedRegisterRequest());
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { status: string };
+    expect(json.status).toBe("settlement_pending");
+    expect(publisher.events).toHaveLength(1); // published despite the throttle signal
+  });
+
+  test("gate ENFORCE: stats read failure fails OPEN (publishes, refund preserved)", async () => {
+    PAY_DEFAULTS.attestationGateMode = "enforce";
+    state.attStatsThrows = true;
+    const res = await app.request(signedRegisterRequest());
+    expect(res.status).toBe(200);
+    expect(publisher.events).toHaveLength(1);
+  });
+
+  test("gate ENFORCE: honest agent within limits is allowed", async () => {
+    PAY_DEFAULTS.attestationGateMode = "enforce";
+    state.attAgentRefundSum = "500000"; // +101k claim stays under the 1M cap
+    state.attAgentCovered = 1;
+    state.attAgentTotal = 50;
+    state.attNetRate = 0.05;
+    const res = await app.request(signedRegisterRequest({ amountBaseUnits: "100000" }));
+    const json = (await res.json()) as { status: string };
+    expect(json.status).toBe("settlement_pending");
+    expect(publisher.events).toHaveLength(1);
   });
 });

@@ -51,111 +51,186 @@ Earlier deploys that should not be referenced by any client. Listed only so log 
 
 These addresses are also exported as constants in `packages/protocol-v1-client/src/constants.ts` (`PROGRAM_ID`, `ORPHAN_PROGRAM_ID_PRE_STEP_C`, `ORPHAN_PROGRAM_ID_DEVNET_STEP_C`).
 
+### EVM — Base Mainnet (production)
+
+Full-stack EVM deployment on **Base mainnet** (chainId **8453**), deployed 2026-06-04 at block `46880730`. This is the production EVM deployment of the Pact Network V1 contracts.
+
+| Contract | Address |
+|---|---|
+| **PactRegistry** | [`0x8cf7Dd83877a6a254bf05E31A79d50bC7169221D`](https://basescan.org/address/0x8cf7Dd83877a6a254bf05E31A79d50bC7169221D) |
+| **PactPool** | [`0xA3245C40d9C8448eeA03847CD2BFdDe41f7c14A4`](https://basescan.org/address/0xA3245C40d9C8448eeA03847CD2BFdDe41f7c14A4) |
+| **PactSettler** | [`0x21adb7C1aD28b332661DaB8d52d765610dBF162A`](https://basescan.org/address/0x21adb7C1aD28b332661DaB8d52d765610dBF162A) |
+| **USDC** (Circle) | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` (Base mainnet USDC) |
+
+- **Deploy block:** `46880730` · **Status:** Production (live). Keys at `~/.pact-keys/base-mainnet/`. The EVM `authority` is immutable (no setter on the contracts); the settler key can be rotated via `SETTLER_ROLE` AccessControl.
+
+### EVM — Arbitrum Sepolia (testnet / buildathon demo)
+
+Full-stack EVM deployment on **Arbitrum Sepolia** (chainId **421614**), built for the Arbitrum Open House London Online Buildathon. The EVM stack is chain-agnostic — this is a new chain entry plus a new deployment of the existing contracts, no forked code. Full runbook in [`DEPLOY-ARBITRUM-SEPOLIA.md`](./DEPLOY-ARBITRUM-SEPOLIA.md).
+
+| Contract | Address |
+|---|---|
+| **PactRegistry** | [`0x79A91E5965094266d221Aaef8E66d6C364819edb`](https://sepolia.arbiscan.io/address/0x79A91E5965094266d221Aaef8E66d6C364819edb) |
+| **PactPool** | [`0xe685b4d5d2AaF0a54f988AF6F44Ca799Cb0660cc`](https://sepolia.arbiscan.io/address/0xe685b4d5d2AaF0a54f988AF6F44Ca799Cb0660cc) |
+| **PactSettler** | [`0x8b8D5baF16bB15D5950d2C4cC76879D5b8a74043`](https://sepolia.arbiscan.io/address/0x8b8D5baF16bB15D5950d2C4cC76879D5b8a74043) |
+| **USDC** (Circle test) | [`0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d`](https://sepolia.arbiscan.io/address/0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d) |
+
+| Role / value | Address |
+|---|---|
+| Deployer / authority (permanent, no setter) | `0xFaFE88B744B53e66CD2896E77EAB3De0D9Ab3f53` |
+| Treasury vault (permanent, no setter) | `0x130bcfAd4d405dB3EF296B76a052180bB5a9c176` |
+| Off-chain settler signer (`SETTLER_ROLE`) | `0x232132df53665D3E6987E40Bab6Ee59E0d043822` |
+
+- **Deploy block:** `276425280` · **Deploy tx:** [`0x1034450c…`](https://sepolia.arbiscan.io/tx/0x1034450c958fcaa7932e6c3133d30c078681c17a63c032deeae09db60c837817) · all 3 contracts Arbiscan-verified.
+- **E2E proof — insured call → SLA breach → on-chain refund:** [`0x4754ee52…`](https://sepolia.arbiscan.io/tx/0x4754ee52f0fd04bb3383897a4ae772f3a6dae1c331ad167565e6499db310b6b1) (`settleBatch`, block 276472305).
+- Chain entry synced across `config/chains.json`, `packages/shared/src/chains.ts`, `packages/protocol-evm-v1-client/src/constants.ts`; addresses in `addresses.ts` `DEPLOYMENTS[421614]`.
+
+Live stack (Railway, project `pact-arbitrum-sepolia`):
+
+| Service | URL |
+|---|---|
+| Dashboard | https://market-dashboard-production-0489.up.railway.app |
+| Insured proxy | https://market-proxy-production-29f9.up.railway.app |
+| Indexer API | https://indexer-production-52a9.up.railway.app |
+
 ## Monorepo Structure
+
+pnpm + Turborepo workspace. 19 active packages grouped by layer:
 
 ```
 packages/
-  sdk/        @q3labs/pact-monitor    TypeScript SDK wrapping fetch()
-  insurance/  @q3labs/pact-insurance  Agent-side SDK for on-chain policies (Phase 3)
-  backend/    @pact-network/backend    Fastify API server + PostgreSQL + Solana crank
-  scorecard/  @pact-network/scorecard  Vite + React + Tailwind dashboard
-  program/                             Anchor program (Solana on-chain insurance)
-deploy/                                Docker Compose + GCP deployment configs
-docs/                                  PRD, design spec, Phase 3 implementation plan
-scripts/                               Setup automation
+  # On-chain programs
+  program/programs-pinocchio/pact-network-v1-pinocchio/  Solana V1 (Pinocchio 0.10)
+  program/programs-pinocchio/pact-network-v2-pinocchio/  Solana V2 (future — not deployed)
+  program-evm/protocol-evm-v1/                           EVM V1 (Solidity: Pool/Settler/Registry)
+  program/programs/pact-insurance/                       Legacy Anchor crate (do not modify)
+
+  # Protocol clients (TypeScript)
+  protocol-v1-client/    @q3labs/pact-protocol-v1-client  Solana V1 PDAs, ix builders, error map
+  protocol-evm-v1-client/                                 EVM V1 ABI, address registry, state
+
+  # Rails — generic off-chain
+  shared/        Multi-VM abstraction (ChainAdapter, Solana+EVM adapters, shared types)
+  wrap/          Generic fetch-call insurance (wrapFetch, Classifier, EventSink, X-Pact-* headers)
+  settler/       Pub/Sub → settle_batch submitter (NestJS)
+  indexer/       Per-call ingest + read API + refund delivery + reorg handling (NestJS)
+  db/            Prisma schema (Postgres)
+  classifier/    @pact-network/classifier  SLA outcome classifier (extracted from wrap)
+
+  # Pact Market — the hosted interface
+  market-proxy/      Hono proxy wrapping curated providers (Helius, Birdeye, Jupiter, Elfa, fal.ai)
+  market-dashboard/  Next.js 15 dashboard (App Router, Tailwind 4, wallet-adapter)
+
+  # Client / SDK / tooling
+  sdk/           @q3labs/pact-sdk        Agent-side unified SDK (createPact, golden-fetch, signing)
+  cli/           @q3labs/pact-cli        Operator + agent command line
+  facilitator/   x402-style premium-coverage register service
+  monitor/       @q3labs/pact-monitor    Legacy reliability-monitor SDK (pre-Step-A)
+  insurance/     @q3labs/pact-insurance  Legacy V2 agent-side Solana client (pre-Step-A)
+  backend/       @pact-network/backend   Live Market control-plane (Fastify): beta gate,
+                                         API-key issuance, CRM, faucet, legacy scorecard
+  scorecard/     @pact-network/scorecard Legacy public-scorecard frontend (Vite/React)
+  dummy-upstream/                        Keyless test upstream for smoke tests
+
+docs/        Architecture, runbooks, onboarding, ADRs
+deploy/      Docker Compose + GCP Cloud Run configs
+scripts/     Repo-level automation
 ```
 
 ## Tech Stack
 
-| Layer     | Technology                              |
-| --------- | --------------------------------------- |
-| Language  | TypeScript (strict, ES2022)             |
-| Backend   | Fastify 5, PostgreSQL 16, pg            |
-| Frontend  | React 19, Vite 6, Tailwind CSS, Recharts |
-| SDK       | Zero dependencies, wraps native fetch() |
-| Deploy    | Docker, GCP Cloud Run, GCR              |
-| Tooling   | pnpm workspaces, tsx                    |
+| Layer          | Technology                                                              |
+| -------------- | ----------------------------------------------------------------------- |
+| Language       | TypeScript (strict, ES2022), Rust/Pinocchio 0.10 (Solana), Solidity (EVM) |
+| Services       | NestJS (settler, indexer), Hono (market-proxy), Fastify (backend/control-plane) |
+| Database       | PostgreSQL 16, Prisma ORM                                               |
+| Dashboard      | Next.js 15 (App Router), Tailwind 4, shadcn/ui, wallet-adapter         |
+| SDK            | ESM-only, no runtime deps, wraps native fetch()                         |
+| Solana client  | `@solana/web3.js` 1.x, `@solana/kit` 2.x, hand-written decoders       |
+| EVM client     | viem, Foundry (contract tests)                                          |
+| Deploy         | Docker, GCP Cloud Run, Cloud SQL, Pub/Sub; Railway (devnet mirror)     |
+| Tooling        | pnpm workspaces, Turborepo, Vitest, LiteSVM (Bun), surfpool            |
 
 ## Quick Start
 
-Prerequisites: Node.js 20+, pnpm, Docker.
-
-```bash
-# One-command setup: install deps, start PostgreSQL, create .env, generate API key, seed data
-pnpm run setup
-```
-
-Then start the dev servers:
-
-```bash
-pnpm dev:backend      # API server on port 3001
-pnpm dev:scorecard    # Dashboard on port 5173
-```
-
-Open http://localhost:5173 to see the scorecard.
-
-### Manual Setup
+Prerequisites: Node.js 20+, pnpm 9+, Docker.
 
 ```bash
 pnpm install
-
-# Build all workspace packages in dependency order (monitor → insurance →
-# backend → scorecard). Required before `pnpm dev:backend` because the
-# backend's tsc resolves @q3labs/pact-insurance from its dist/.
-pnpm build
-
-# Start PostgreSQL (port 5433)
-pnpm run db:up
-
-# Copy environment config
+pnpm build           # build all packages in dependency order
+pnpm run db:up       # start Postgres on port 5433
 cp .env.example packages/backend/.env
-
-# Generate an API key
 pnpm run generate-key dev-agent
-
-# Seed with realistic data for 5 Solana providers
-pnpm run seed
-
-# Start servers
-pnpm dev:backend
-pnpm dev:scorecard
+pnpm run seed        # seed 5 Solana provider records
+pnpm dev:backend     # legacy Fastify control-plane on port 3001
+pnpm dev:scorecard   # legacy scorecard on port 5173
 ```
+
+For the live-stack services (indexer, settler, market-proxy, market-dashboard), see each package's `README.md` and the Railway devnet runbook at [`docs/devnet-railway-deploy.md`](./docs/devnet-railway-deploy.md).
 
 ## SDK Usage
 
-```typescript
-import { pactMonitor } from "@q3labs/pact-monitor";
+Install the unified agent SDK (`@q3labs/pact-sdk`) — **not** the legacy `@q3labs/pact-monitor`:
 
-const monitor = pactMonitor({
-  backendUrl: "https://pactnetwork.io/api/v1",
-  apiKey: "pact_...",
-});
-
-// Use monitor.fetch() as a drop-in replacement for fetch()
-const response = await monitor.fetch("https://api.helius.xyz/v0/...", {
-  method: "POST",
-  body: JSON.stringify({ jsonrpc: "2.0", method: "getBalance", params: [...] }),
-});
+```bash
+npm install @q3labs/pact-sdk
 ```
 
-The SDK silently records call metadata (latency, status, failure classification) and syncs it to the backend. If the monitor fails for any reason, the underlying API call still succeeds.
+```typescript
+import { createPact } from "@q3labs/pact-sdk";
+import { Keypair } from "@solana/web3.js";
 
-The SDK extracts x402/MPP payment headers when present, capturing payment data alongside reliability metrics.
+const pact = await createPact({
+  network: "mainnet",
+  signer: Keypair.fromSecretKey(/* your 64-byte ed25519 secret */),
+});
+
+// One-time: global SPL approve to the SettlementAuthority delegate.
+await pact.setup({ allowanceUsdc: 5 });
+
+// Drop-in fetch. Covered calls route through the Pact Market proxy.
+const res = await pact.fetch("https://api.helius.xyz/v0/addresses/…");
+
+pact.on("refund",  (e) => { /* USDC settled back on-chain on breach */ });
+pact.on("billed",  (e) => { /* premium settled on-chain */ });
+pact.on("degraded",(e) => { /* fell back to bare fetch — call still succeeded */ });
+```
+
+`pact.fetch()` behaves exactly like `fetch()`. Any Pact-internal problem (unregistered host, unreachable proxy, missing key) silently falls back to a bare fetch and emits `degraded` — the underlying call always completes.
+
+The package is ESM-only; there is no CJS export. Node ≥ 18 required.
+
+For the legacy reliability-monitor SDK (`@q3labs/pact-monitor`), see `packages/monitor/`.
 
 ## API Endpoints
 
-| Method | Path                              | Auth     | Description                          |
-| ------ | --------------------------------- | -------- | ------------------------------------ |
-| POST   | `/api/v1/records`                 | Required | Batch ingest call records            |
-| GET    | `/api/v1/providers`               | Public   | Ranked provider list with rates      |
-| GET    | `/api/v1/providers/:id`           | Public   | Provider detail (incl. `hostname`)   |
-| GET    | `/api/v1/providers/:id/timeseries`| Public   | Failure rate over time (hourly/daily)|
-| GET    | `/api/v1/pools`                   | Public   | On-chain coverage pools (Phase 3)    |
-| GET    | `/api/v1/pools/:hostname`         | Public   | Pool detail + positions + claims     |
-| POST   | `/api/v1/claims/submit`           | Internal | Submit a claim on-chain via oracle   |
-| GET    | `/health`                         | Public   | Server health check                  |
+### Indexer API (`indexer.pactnetwork.io`) — primary read surface
 
-Authentication uses Bearer tokens: `Authorization: Bearer pact_...`
+| Method | Path              | Auth   | Description                              |
+| ------ | ----------------- | ------ | ---------------------------------------- |
+| GET    | `/api/endpoints`  | Public | Live endpoint list with pool state       |
+| GET    | `/api/stats`      | Public | Aggregate stats (pools, calls, breaches) |
+| GET    | `/api/calls`      | Public | Settled call records (paginated)         |
+| POST   | `/events`         | Internal | Ingest settlement outcomes from settler |
+| GET    | `/health`         | Public | Service health check                     |
+
+### Facilitator API (`facilitator.pact.network`) — pay.sh / x402 coverage register
+
+| Method | Path                       | Auth               | Description                        |
+| ------ | -------------------------- | ------------------ | ---------------------------------- |
+| POST   | `/v1/coverage/register`    | ed25519 signature  | Register a pay.sh call for coverage|
+
+### Legacy Backend API (`pactnetwork.io/api/v1`) — control-plane / scorecard
+
+| Method | Path                               | Auth     | Description                            |
+| ------ | ---------------------------------- | -------- | -------------------------------------- |
+| POST   | `/api/v1/records`                  | Required | Batch ingest call records (legacy SDK) |
+| GET    | `/api/v1/providers`                | Public   | Ranked provider list with rates        |
+| GET    | `/api/v1/providers/:id`            | Public   | Provider detail                        |
+| GET    | `/api/v1/providers/:id/timeseries` | Public   | Failure rate over time                 |
+| GET    | `/health`                          | Public   | Server health check                    |
+
+> **Cloud Armor note:** `api.pactnetwork.io` and `indexer.pactnetwork.io` 403 default curl/Node User-Agents. Use a browser UA or `pact-monitor-sdk/0.1.0`.
 
 ## Scripts
 
@@ -182,15 +257,29 @@ pnpm test:backend       # Backend tests (API routes, insurance formula)
 
 ## Production Deployment
 
-Production services are containerized and deployed to **Google Cloud Platform**:
+### Solana mainnet (GCP)
 
-- **Container Registry (GCR)** hosts Docker images for the backend and scorecard
-- **Cloud Run** runs the backend and scorecard as managed services
-- **Cloud SQL (PostgreSQL 16)** for the production database
+Core services run on **Google Cloud Platform**:
 
-Each package has a Dockerfile for building production images. The `deploy/` directory contains orchestration configs for local staging and reference.
+| Service | URL |
+|---|---|
+| Market proxy | https://market.pactnetwork.io |
+| Indexer | https://indexer.pactnetwork.io |
+| Settler | (internal, no public URL) |
+| Dashboard | https://dashboard.pactnetwork.io |
+| Control-plane backend | https://pactnetwork.io |
 
-Production runs on [pactnetwork.io](https://pactnetwork.io).
+Infrastructure: Cloud Run (services), Cloud SQL Postgres 16, Cloud Pub/Sub (settler queue), Secret Manager (keys), GCR (images).
+
+### Devnet Railway mirror
+
+A full devnet stack (5 services) runs on **Railway**, branch `develop`, project `pact-network-devnet`. See [`docs/devnet-railway-deploy.md`](./docs/devnet-railway-deploy.md) for the full runbook.
+
+### EVM (Base mainnet, Arbitrum Sepolia)
+
+The EVM stack is chain-agnostic. Production EVM deployment is on Base mainnet (see [On-chain Programs](#on-chain-programs)). The Arbitrum Sepolia stack is a Railway-hosted testnet demo (see the Arbitrum Sepolia section above).
+
+Contact: rick@quantum3labs.com · Telegram: t.me/metalboyrick
 
 ## Design
 
@@ -202,33 +291,42 @@ Brutalist aesthetic. No gradients, no rounded corners, no emojis.
 - **Slate:** #5A6B7A (healthy, RELIABLE)
 - **Fonts:** Inria Serif (headlines), Inria Sans (body), JetBrains Mono (data)
 
-## Phase 3: On-Chain Insurance (Solana)
+## On-Chain Insurance Architecture
 
-The Anchor program at `packages/program/` lifts the parametric insurance from a simulated DB row into a real on-chain market. See [`docs/PHASE3.md`](./docs/PHASE3.md) for the full design, devnet state, and operator runbook.
+The Solana V1 program (`packages/program/programs-pinocchio/pact-network-v1-pinocchio/`) is the production on-chain layer. For canonical mainnet + devnet program IDs, see [On-chain Programs](#on-chain-programs) above.
 
-For canonical mainnet + devnet program IDs, see [On-chain Programs](#on-chain-programs) above.
-
-**New here?** Three docs to read in order:
+**New here?** Read in order:
 1. [`docs/ONBOARDING.md`](./docs/ONBOARDING.md) — narrative walkthrough for someone who knows nothing
-2. [`docs/STRUCTURE.md`](./docs/STRUCTURE.md) — file-tree map of the whole monorepo
-3. [`docs/PHASE3.md`](./docs/PHASE3.md) — architecture handbook + operator runbook
+2. [`docs/architecture/ARCHITECTURE.en.md`](./docs/architecture/ARCHITECTURE.en.md) — full architecture reference, multi-VM seam, package map, deployment topology
 
-**Highlights**:
-- Per-provider `CoveragePool` PDAs with PDA-owned SPL token vaults
-- Underwriters deposit USDC for yield; cooldown-enforced withdrawals
-- **SPL token delegation** model — agents call `spl_token::approve` once and the protocol pulls premiums from their wallet per call. No prepaid balance, no upfront deposit.
-- Backend crank (`packages/backend/src/crank/`) settles premiums and pushes rate updates
-- Aggregate payout cap (default 30% / 24h) with hardcoded ceiling
-- Auto-approved parametric claims with PDA-collision dedupe
+**V1 highlights** (Pinocchio, currently live on Solana mainnet):
+- Per-endpoint `CoveragePool` PDAs — pool-as-residual settlement model
+- **SPL token delegation** — agents call `spl_token::approve` once; the protocol pulls premiums per call. No prepaid balance, no upfront deposit.
+- Singleton `SettlementAuthority` PDA + per-agent fee-split to treasury and integrator
+- `pause_protocol` kill switch
+- The settler submits `settle_batch` on-chain; refunds happen atomically on classified breach
+
+**V2 (Solana, not yet deployed)** — `pact-network-v2-pinocchio`: multi-underwriter parametric model with `Policy` PDA, `enable_insurance`, oracle claims, underwriter deposits/withdrawals. The `Policy` struct carries a `double_coverage` seam (agent-tasks#17) with a `discount_scope` field for merchant-configurable coverage discounts. Not production; no deploy yet.
+
+**EVM V1** — 3-contract Solidity set (`PactRegistry`, `PactPool`, `PactSettler`) deployed on Base mainnet (production) and Arbitrum Sepolia (testnet). The EVM `authority` is immutable (no setter); settler key is rotatable via `SETTLER_ROLE` AccessControl.
 
 ## Roadmap
 
-- **Multi-chain support** -- extend monitoring beyond Solana to EVM chains and cross-chain bridges
-- **Agent-to-agent marketplace** -- allow AI agents to purchase insurance policies directly, settling in SOL or stablecoins
-- **Historical analytics API** -- expose long-term provider reliability trends, seasonal patterns, and predictive risk scores
-- **SDK plugins** -- framework-specific integrations (LangChain, CrewAI, AutoGPT) for zero-config monitoring
-- **Webhook alerts** -- notify agent operators in real-time when provider reliability degrades past configurable thresholds
-- **Provider self-service** -- allow API providers to register, view their own metrics, and dispute classifications
+**Shipped:**
+- **Multi-chain support** — Solana mainnet + Base mainnet (EVM) production; Arbitrum Sepolia testnet. ChainAdapter abstraction in `packages/shared/` supports adding chains without touching settler/indexer/proxy.
+- **Multi-network ChainAdapter** — hexagonal ports-and-adapters design; `SolanaAdapter` + `EvmAdapter` both live.
+
+**In progress:**
+- **Merchant SDK** (PR #223) — SDK surface for API providers / merchants to integrate coverage on the sell side.
+- **Dashboard rename to Pact Explorer** (PR #274) — brand rename + self-hosted fonts + bug fixes.
+- **Escrow-hold PoC** (PR #249) — alternative risk mode for high-value calls (Krexa integration).
+
+**Planned:**
+- **Historical analytics API** — long-term provider reliability trends, seasonal patterns, predictive risk scores.
+- **SDK plugins** — framework-specific integrations (LangChain, CrewAI, AutoGPT) for zero-config monitoring.
+- **Webhook alerts** — notify agent operators when provider reliability degrades past configurable thresholds.
+- **Provider self-service** — allow API providers to register, view their own metrics, and dispute classifications.
+- **V2 Solana program** — multi-underwriter parametric insurance with `Policy` PDA and oracle claims.
 
 ## License
 

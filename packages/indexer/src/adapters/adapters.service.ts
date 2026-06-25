@@ -66,7 +66,7 @@ export class AdaptersService implements OnModuleInit {
           name,
           new EvmAdapter({
             descriptor,
-            rpcUrl: descriptor.rpcUrl,
+            rpcUrl: this.resolveEvmRpcUrl(name, descriptor.rpcUrl),
             finalityBlocks: descriptor.finalityBlocks,
             blockTimeMs: descriptor.blockTimeMs,
             deploymentBlock: BigInt(descriptor.deploymentBlock),
@@ -103,5 +103,18 @@ export class AdaptersService implements OnModuleInit {
       this.config.get<string>("SOLANA_RPC_URL") ??
       "https://api.devnet.solana.com"
     );
+  }
+
+  /**
+   * EVM RPC resolution: per-chain PACT_RPC_URL_<CHAIN> override, else the chain
+   * registry's baked rpcUrl. Kept separate from resolveRpcUrl (Solana), whose
+   * SOLANA_RPC_URL / devnet fallbacks are wrong defaults for an EVM chain.
+   * Without this override an EVM chain is pinned to the public RPC baked in
+   * chains.ts, which is rate-limited — production must point mainnet at a paid
+   * endpoint via PACT_RPC_URL_<CHAIN> (e.g. PACT_RPC_URL_BASE_MAINNET).
+   */
+  private resolveEvmRpcUrl(network: string, fallback: string): string {
+    const envKey = `PACT_RPC_URL_${network.replace(/-/g, "_").toUpperCase()}`;
+    return this.config.get<string>(envKey) ?? fallback;
   }
 }

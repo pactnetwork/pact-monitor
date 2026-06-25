@@ -296,13 +296,25 @@ GCP ownership note: Secret Manager / Cloud Run / IAM are owned by Rick; on-chain
 
 ---
 
-## 9. Current state (2026-06-03)
+## 9. Current state (2026-06-19)
 
-- **Off-chain V2 stack removed 2026-06-03 (commit 2b5cb0c)** — `wrap-v2`, `settler-v2`, `indexer-v2`, `db-v2`, `protocol-v2-client` source deleted (the on-chain `pact-network-v2-pinocchio` Rust program is kept).
-- **Active branch:** `feat/multi-network` — multi-VM rails (Solana + Arc Testnet + Base Sepolia), CLI/SDK headers. PR #225 awaiting re-review.
-- **Merchant SDK** (PR #223, branch `feat/merchant-sdk`) rebased onto this branch with tests green, but **not yet merged** — the merchant surface is not in this tree.
-- **Mainnet:** Solana program `5bCJ…` live; redeploy via authority `JB7rp…` pending (unblocks SOL-01 + the FS9 `InvalidSeeds` devnet drift).
-- **Known constraints:** devnet program `declare_id!` == mainnet id → `settle_batch` reverts `InvalidSeeds` on devnet until redeploy.
+- **Off-chain V2 stack removed 2026-06-03 (commit 2b5cb0c)** — `wrap-v2`, `settler-v2`, `indexer-v2`, `db-v2`, `protocol-v2-client` source deleted. The on-chain `pact-network-v2-pinocchio` Rust program is kept (V2 struct seams for future use).
+- **`feat/multi-network` merged to `develop`** (PR #225, merged 2026-06-09) — multi-VM rails (Solana mainnet + Base mainnet + Arbitrum Sepolia testnet) live on `develop`. All 4 P0 blockers cleared before merge.
+- **Solana mainnet:** Program `5bCJ…3xwc` live. SOL-01 fix (`verify_settlement_authority`, error 6033) shipped via PR #245. FS9 devnet `declare_id!` drift fixed via PR #269.
+- **Base mainnet EVM:** PactRegistry `0x8cf7Dd…221D` deployed 2026-06-04 on chain 8453. Production.
+- **Arbitrum Sepolia EVM:** PactRegistry `0x79A91E…9edb` deployed 2026-06-12 on chain 421614. Testnet/buildathon demo. Railway stack live.
+- **Verdict-integrity V1 (accept-and-monitor):** `VerdictSource` provenance + C-1 cap + feature-flagged gate shipped via PRs #266 + #271. Agent-tasks#10 complete.
+- **V2 double-coverage seam:** `Policy` struct in `pact-network-v2-pinocchio` extended with `linked_policy`, `discount_scope`, `policy_kind` fields (PR #273). Struct seam only — no runtime handlers yet.
+- **Open PRs targeting `develop`:**
+  - PR #274 — market-dashboard rename to "Pact Explorer" + self-hosted fonts + bug fixes (not yet merged; dashboard still branded "Pact Network Dashboard" on `develop`)
+  - PR #223 — Merchant SDK (`feat/merchant-sdk`) — tests green, not yet merged
+  - PR #249 — Escrow-hold PoC — open for review
+  - PR #275 — CI prune (remove stale workflows)
+- **Devnet Railway mirror:** 5 services on Railway (`pact-network-devnet`), devnet program `5jBQb7fL…`. Used for integration smoke tests.
+- **Known constraints:**
+  - market-dashboard is NOT renamed to "Pact Explorer" on `develop` until PR #274 merges.
+  - Merchant SDK surface is NOT in `develop` until PR #223 merges.
+  - Devnet `settle_batch` now works (FS9 fix merged), but you must pass `createPact({ programId: "5jBQb7fL…" })` explicitly on devnet — the SDK ships mainnet ID as default only.
 
 ---
 

@@ -30,7 +30,7 @@
 // stub the publisher without pulling in the GCP/grpc tree.
 
 import { createRequire } from "node:module";
-import type { Outcome } from "@pact-network/wrap";
+import type { Outcome, VerdictSource } from "@pact-network/wrap";
 
 const require = createRequire(import.meta.url);
 
@@ -65,6 +65,14 @@ export interface PaySettlementEvent {
   resource: string;
   /** Facilitator coverage record id (same value as callId). */
   coverageId: string;
+  /**
+   * Verdict provenance (agent-tasks#10). Always "client_attested" on this path:
+   * the facilitator accepts the CLIENT's `verdict` for the outcome. Distinct
+   * from `verified` above, which is about PAYMENT verification, not the verdict.
+   * A claim can be `verified: true` (payment confirmed) AND `client_attested`
+   * (outcome only claimed). Lets the indexer/settler tag refunds by trust class.
+   */
+  verdictSource: VerdictSource;
 }
 
 export interface EventPublisher {

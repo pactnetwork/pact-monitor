@@ -42,4 +42,4 @@ export type {
 export { HEADERS, attachPactHeaders } from "./headers";
 export type { PactHeaderInputs } from "./headers";
 
-export type { Outcome, EndpointConfig, SettlementEvent } from "./types";
+export type { Outcome, EndpointConfig, SettlementEvent, VerdictSource } from "./types";

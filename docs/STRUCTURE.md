@@ -2,7 +2,7 @@
 
 A map of the monorepo. If you're new and trying to figure out "where do I look to change X", start here.
 
-For *what* the system does and how the pieces fit together at runtime, read [`docs/PHASE3.md`](./PHASE3.md) — this file is just the file-tree reference.
+For *what* the system does and how the pieces fit together at runtime, read [`docs/architecture/ARCHITECTURE.en.md`](./architecture/ARCHITECTURE.en.md) — this file is just the file-tree reference.
 
 ---
 
@@ -18,12 +18,14 @@ pact-network/
 │   └── scorecard/            Vite + React + Tailwind dashboard
 │
 ├── docs/
-│   ├── PHASE3.md             Phase 3 handbook + operator runbook (read first)
+│   ├── architecture/
+│   │   ├── ARCHITECTURE.en.md    Architecture reference (multi-VM, packages, flows, topology)
+│   │   └── DIVERGENCE-AUDIT.en.md  Technical-debt map
+│   ├── ONBOARDING.md         Narrative walkthrough for new contributors
 │   ├── STRUCTURE.md          This file
-│   ├── prd-phases-1-2.pdf    Original PRD
-│   └── superpowers/          Design specs, implementation plans, agent skills
-│       ├── specs/            Design docs (one per phase)
-│       └── plans/            Implementation plans (one per phase / pivot)
+│   ├── runbooks/             Operator runbooks (add-a-chain, settler-signer-low-sol)
+│   ├── devnet-railway-deploy.md  Railway devnet setup runbook
+│   └── evm/                  EVM-specific docs (reorg policy)
 │
 ├── deploy/                   Docker Compose + GCP Cloud Run config
 ├── scripts/                  Repo-level scripts (smoke.sh, sdk-roundtrip.ts)

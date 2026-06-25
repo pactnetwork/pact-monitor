@@ -38,8 +38,10 @@ vi.mock("@pact-network/shared", () => {
 
   class EvmAdapter {
     descriptor: object;
-    constructor(opts: { descriptor: object }) {
+    rpcUrl?: string;
+    constructor(opts: { descriptor: object; rpcUrl?: string }) {
       this.descriptor = opts.descriptor;
+      this.rpcUrl = opts.rpcUrl;
       mockEvmAdapterInstances.push(this);
     }
   }
@@ -143,6 +145,29 @@ describe("AdaptersService (settler)", () => {
     // arc-testnet adapter is the real EvmAdapter instance
     const arcAdapter = svc.getAdapter("arc-testnet");
     expect(mockEvmAdapterInstances).toContain(arcAdapter);
+  });
+
+  it("EVM RPC override: PACT_RPC_URL_<CHAIN> beats the chain registry rpcUrl", () => {
+    const svc = new AdaptersService(
+      makeConfig({
+        PACT_ENABLED_NETWORKS: "arc-testnet",
+        PACT_RPC_URL_ARC_TESTNET: "https://paid.example/arc",
+      }),
+    );
+    svc.onModuleInit();
+
+    const arc = svc.getAdapter("arc-testnet") as unknown as { rpcUrl: string };
+    expect(arc.rpcUrl).toBe("https://paid.example/arc");
+  });
+
+  it("EVM RPC default: no override falls back to the chain registry rpcUrl", () => {
+    const svc = new AdaptersService(
+      makeConfig({ PACT_ENABLED_NETWORKS: "arc-testnet" }),
+    );
+    svc.onModuleInit();
+
+    const arc = svc.getAdapter("arc-testnet") as unknown as { rpcUrl: string };
+    expect(arc.rpcUrl).toBe("https://rpc.testnet.arc.network");
   });
 
   it("PACT_ENABLED_NETWORKS=bogus-chain: throws via getChain (unknown network)", () => {

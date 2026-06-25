@@ -16,7 +16,7 @@
  *         premiumLamports: <bigint string>,
  *         refundLamports:  <bigint string>,
  *         latencyMs, outcome, ts, settledAt, signature,
- *         source?, payee?, resource?,   // pay.sh-covered calls carry these
+ *         source?, verdictSource?, payee?, resource?,  // pay.sh / provenance fields
  *         shares: [
  *           { kind: 0|1|2, pubkey, amountLamports: <bigint string> },
  *           ...
@@ -85,6 +85,10 @@ export class IndexerPusherService {
         // carry source: "pay.sh" + payee + resource. Absent keys → undefined →
         // omitted from the JSON → indexer stores NULL.
         source: d["source"] as string | undefined,
+        // Forward verdict provenance untouched (agent-tasks#10). Gateway-path
+        // events carry verdictSource: "pact_observed"; pay.sh facilitator events
+        // carry "client_attested". Absent → undefined → omitted → indexer NULL.
+        verdictSource: d["verdictSource"] as string | undefined,
         payee: d["payee"] as string | undefined,
         resource: d["resource"] as string | undefined,
         network: (d["network"] as string | undefined) ?? "solana-devnet",

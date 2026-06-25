@@ -2,7 +2,7 @@
 
 You're new. You don't know Solana, don't know the codebase, don't know why anything is the way it is. This doc is for you.
 
-For the file tree, see [`STRUCTURE.md`](./STRUCTURE.md). For the architecture handbook, see [`PHASE3.md`](./PHASE3.md). This file is the narrative — read it once, end-to-end, and you'll have the whole stack in your head.
+For the file tree, see [`STRUCTURE.md`](./STRUCTURE.md). For the architecture reference (multi-VM, packages, flows, deployment topology), see [`architecture/ARCHITECTURE.en.md`](./architecture/ARCHITECTURE.en.md). This file is the narrative — read it once, end-to-end, and you'll have the whole stack in your head.
 
 ---
 

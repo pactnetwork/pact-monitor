@@ -13,6 +13,30 @@ export type Outcome =
   | "network_error";
 
 /**
+ * Provenance of the breach verdict carried on a SettlementEvent (agent-tasks#10).
+ * Records HOW Pact decided the outcome that authorizes a refund, so the settler,
+ * indexer, and any analytics can tell a self-observed verdict apart from a
+ * client-claimed one without re-deriving it.
+ *
+ *   - "pact_observed":  Pact's own server made the upstream fetch, timed it, and
+ *                       classified the real Response (gateway / `wrapFetch`). The
+ *                       client cannot supply or alter this verdict. Authoritative.
+ *   - "client_attested": the client reported the outcome and Pact accepted it
+ *                       (off-gateway / x402 facilitator `register`). Zero-friction
+ *                       by design; trustworthy ONLY up to the abuse controls and
+ *                       the on-chain hourly exposure cap. Carries moral hazard.
+ *   - "oracle":         (v2, not produced today) an external attestation
+ *                       (zkTLS / TEE / cosigned receipt) verified the outcome.
+ *                       A seam: adding it later needs a new PRODUCER only — the
+ *                       settler / indexer / on-chain executor are unchanged.
+ *
+ * When ABSENT on an event (pre-#10 producers), consumers infer per-path:
+ * a `source: "pay.sh"` event is `client_attested`; everything else is
+ * `pact_observed`. See MECHANISM_MAP.md / VERDICT_SOURCE_DESIGN.md.
+ */
+export type VerdictSource = "pact_observed" | "client_attested" | "oracle";
+
+/**
  * Wrap-relevant slice of an endpoint's on-chain config. The consumer passes
  * this in per call; wrap does not load it from chain.
  */
@@ -56,4 +80,11 @@ export interface SettlementEvent {
    * Examples: "solana-devnet", "solana-mainnet", "arc-testnet".
    */
   network?: string;
+  /**
+   * Provenance of the verdict (agent-tasks#10). OPTIONAL for backward
+   * compatibility (mirrors `network?` above): pre-#10 producers omit it and
+   * consumers infer it per-path. `wrapFetch` stamps `"pact_observed"` because
+   * the gateway self-observed the call.
+   */
+  verdictSource?: VerdictSource;
 }

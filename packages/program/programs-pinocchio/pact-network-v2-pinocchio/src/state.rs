@@ -238,15 +238,52 @@ pub struct Policy {
     pub referrer_share_bps: u16,
     /// 1 = `referrer` slot populated; 0 = None. Paired bool + share flag.
     pub referrer_present: u8,
-    /// Explicit alignment pad so `reserved: [u8; 64]` starts on an 8-byte
-    /// boundary and the struct total size stays a multiple of 8.
+    /// Explicit alignment pad so the agent-tasks#17 block below starts on an
+    /// 8-byte boundary and the struct total size stays a multiple of 8.
     pub _pad_referrer: [u8; 5],
 
+    // ---- agent-tasks#17 (double-coverage policy resolution seam) ----
+    //
+    // Struct-layout seam ONLY — see
+    // `docs/superpowers/specs/2026-06-16-double-coverage-policy-resolution.md`.
+    // V2 introduces a second integration surface (provider-side coverage) that
+    // can fund the same pool an agent-side policy is paying into. The canonical
+    // payout policy is ALWAYS agent-side (ADR Q1); provider-side coverage is a
+    // passive premium flow with no parallel payout. These fields let the future
+    // `enable_insurance` dedupe path (ADR Q2) link the two policies and let
+    // exposure-cap accounting (ADR Q4) treat a linked pair as ONE risk unit.
+    //
+    // Same Pod-safe pattern as the referrer block: no `Option<Pubkey>` / `bool`
+    // (bytemuck rejects both). `linked_policy` all-zero bytes = None sentinel;
+    // `linked_policy_present` is the explicit discriminant. Runtime discount /
+    // reject / exposure logic is V2-implementation and OUT OF SCOPE here — this
+    // is the byte seam only, carved from `reserved` so V2 needs no migration.
+    /// Linked counterpart Policy PDA (provider-side ↔ agent-side); all-zero = None.
+    pub linked_policy: [u8; 32],
+    /// 0 = agent-side (canonical, pays refunds); 1 = provider-side (passive).
+    pub policy_kind: u8,
+    /// 1 = `linked_policy` slot populated; 0 = None.
+    pub linked_policy_present: u8,
+    /// Merchant-configurable coverage-discount scope (agent-tasks#17 Q5, Rick
+    /// 2026-06-16). Meaningful ONLY on a provider-side policy (`policy_kind == 1`);
+    /// MUST be 0 on an agent-side policy. The provider chooses, per integration,
+    /// whether the discount their provider-funded coverage unlocks applies to
+    /// every agent calling their API or only to agents who opt in:
+    ///   0 = unset / not-applicable (agent-side, or provider hasn't chosen)
+    ///   1 = all-agents   (every agent calling this API gets the discount)
+    ///   2 = opt-in-only  (only agents who explicitly enroll get the discount)
+    /// Inert struct seam: the V2 `enable_insurance` runtime that reads this to
+    /// price the premium is a follow-up, out of scope here.
+    pub discount_scope: u8,
+    /// Explicit alignment pad so `reserved` starts on an 8-byte boundary and the
+    /// struct total size stays a multiple of 8.
+    pub _pad_double_coverage: [u8; 5],
+
     /// Reserved for one future layout extension without a migration instruction.
-    /// Project-wide convention (Rick Q3 2026-04-24). PRD Feature 1 call-out:
-    /// "DO NOT use this pad for unrelated fields — it exists specifically to
-    /// absorb the next referrer-model extension without a migration."
-    pub reserved: [u8; 64],
+    /// Project-wide convention (Rick Q3 2026-04-24). Shrunk from 64 → 24 bytes
+    /// when the agent-tasks#17 double-coverage seam (40 bytes) was carved out
+    /// above; `Policy::LEN` stays 320 so no account migration is required.
+    pub reserved: [u8; 24],
 }
 
 unsafe impl Zeroable for Policy {}
@@ -416,8 +453,10 @@ const _: () = assert!(
 const _: () = assert!(
     core::mem::offset_of!(UnderwriterPosition, reserved) == UnderwriterPosition::LEN - 64,
 );
+// Policy's reserved pad was shrunk 64 → 24 by the agent-tasks#17 double-coverage
+// seam (40 bytes carved out before it), so its end-distance is 24, not 64.
 const _: () = assert!(
-    core::mem::offset_of!(Policy, reserved) == Policy::LEN - 64,
+    core::mem::offset_of!(Policy, reserved) == Policy::LEN - 24,
 );
 const _: () = assert!(core::mem::offset_of!(Claim, reserved) == Claim::LEN - 64);
 
@@ -426,6 +465,15 @@ const _: () = assert!(core::mem::offset_of!(Claim, reserved) == Claim::LEN - 64)
 const _: () = assert!(core::mem::offset_of!(Policy, referrer) == 216);
 const _: () = assert!(core::mem::offset_of!(Policy, referrer_share_bps) == 248);
 const _: () = assert!(core::mem::offset_of!(Policy, referrer_present) == 250);
+
+// agent-tasks#17 — pin the double-coverage seam offsets so V2's enable_insurance
+// dedupe handler can't drift against the decoders downstream.
+const _: () = assert!(core::mem::offset_of!(Policy, linked_policy) == 256);
+const _: () = assert!(core::mem::offset_of!(Policy, policy_kind) == 288);
+const _: () = assert!(core::mem::offset_of!(Policy, linked_policy_present) == 289);
+// agent-tasks#17 Q5 (Rick 2026-06-16) — merchant-configurable discount scope,
+// carved from `_pad_double_coverage` (6 → 5); net size change is zero.
+const _: () = assert!(core::mem::offset_of!(Policy, discount_scope) == 290);
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -508,12 +556,14 @@ mod tests {
 
     #[test]
     fn policy_size_has_no_hidden_padding() {
-        // Base: 1 + 7 + 32*3 + 64 + 8*5 + 1*3 + 5 = 216
-        // F1:   referrer[32] + u16 + u8 + pad[5] = 40
-        // Pad:  reserved[64]
-        // Total 216 + 40 + 64 = 320
+        // Base: 1 + 7 + 32*3 + 64 + 8*5 + 1*3 + 5         = 216
+        // F1:   referrer[32] + u16 + u8 + pad[5]           = 40
+        // #17:  linked_policy[32] + u8 + u8 + u8 + pad[5]  = 40
+        //       (discount_scope u8 carved from the pad: 6 → 5, net 0)
+        // Pad:  reserved[24]                               = 24
+        // Total 216 + 40 + 40 + 24 = 320
         let declared =
-            1 + 7 + 32 * 3 + 64 + 8 * 5 + 1 * 3 + 5 + 32 + 2 + 1 + 5 + 64;
+            1 + 7 + 32 * 3 + 64 + 8 * 5 + 1 * 3 + 5 + 32 + 2 + 1 + 5 + 32 + 1 + 1 + 1 + 5 + 24;
         assert_eq!(Policy::LEN, declared);
     }
 
@@ -528,11 +578,12 @@ mod tests {
     // ---- Reserved pad is present and writable --------------------------
 
     #[test]
-    fn reserved_pad_length_is_64_on_every_struct() {
+    fn reserved_pad_length_is_as_expected_on_every_struct() {
         assert_eq!(ProtocolConfig::zeroed().reserved.len(), 64);
         assert_eq!(CoveragePool::zeroed().reserved.len(), 64);
         assert_eq!(UnderwriterPosition::zeroed().reserved.len(), 64);
-        assert_eq!(Policy::zeroed().reserved.len(), 64);
+        // Policy's pad was shrunk 64 → 24 by the agent-tasks#17 seam.
+        assert_eq!(Policy::zeroed().reserved.len(), 24);
         assert_eq!(Claim::zeroed().reserved.len(), 64);
     }
 
@@ -686,7 +737,7 @@ mod tests {
         policy.expires_at = 5;
         policy.active = 1;
         policy.bump = 249;
-        policy.reserved = [0x12; 64];
+        policy.reserved = [0x12; 24];
 
         let bytes = bytemuck::bytes_of(&policy);
         let decoded = Policy::try_from_bytes(bytes).unwrap();
@@ -702,12 +753,52 @@ mod tests {
         assert_eq!(decoded.expires_at, 5);
         assert_eq!(decoded.active, 1);
         assert_eq!(decoded.bump, 249);
-        assert_eq!(decoded.reserved, [0x12; 64]);
+        assert_eq!(decoded.reserved, [0x12; 24]);
 
         // Zero-initialized Phase 5 F1 fields default to `None` referrer.
         assert_eq!(decoded.referrer, [0u8; 32]);
         assert_eq!(decoded.referrer_present, 0);
         assert_eq!(decoded.referrer_share_bps, 0);
+
+        // Zero-initialized agent-tasks#17 seam defaults to an unlinked,
+        // agent-side (canonical) policy with no discount scope set.
+        assert_eq!(decoded.linked_policy, [0u8; 32]);
+        assert_eq!(decoded.policy_kind, 0);
+        assert_eq!(decoded.linked_policy_present, 0);
+        assert_eq!(decoded.discount_scope, 0);
+    }
+
+    #[test]
+    fn policy_round_trip_with_linked_policy_populated() {
+        // agent-tasks#17 — a provider-side policy linked to its agent-side
+        // canonical counterpart. Exercised at the byte level only; no runtime
+        // dedupe/exposure logic is implemented yet (V2 follow-up).
+        let mut policy = Policy::zeroed();
+        policy.discriminator = Policy::DISCRIMINATOR;
+        policy.agent = addr(0x81);
+        policy.pool = addr(0x82);
+        policy.agent_token_account = addr(0x83);
+        let id = b"provider-side";
+        policy.agent_id[..id.len()].copy_from_slice(id);
+        policy.agent_id_len = id.len() as u8;
+        policy.active = 1;
+        policy.bump = 238;
+
+        policy.linked_policy = [0x9A; 32];
+        policy.linked_policy_present = 1;
+        policy.policy_kind = 1; // provider-side (passive)
+        policy.discount_scope = 2; // opt-in-only (merchant's choice; Q5)
+        policy.reserved = [0x44; 24];
+
+        let bytes = bytemuck::bytes_of(&policy);
+        assert_eq!(bytes.len(), Policy::LEN);
+
+        let decoded = Policy::try_from_bytes(bytes).unwrap();
+        assert_eq!(decoded.linked_policy, [0x9A; 32]);
+        assert_eq!(decoded.linked_policy_present, 1);
+        assert_eq!(decoded.policy_kind, 1);
+        assert_eq!(decoded.discount_scope, 2);
+        assert_eq!(decoded.reserved, [0x44; 24]);
     }
 
     #[test]
@@ -727,7 +818,7 @@ mod tests {
         policy.referrer = [0xAB; 32];
         policy.referrer_present = 1;
         policy.referrer_share_bps = 1_000; // 10% of premium.
-        policy.reserved = [0x55; 64];
+        policy.reserved = [0x55; 24];
 
         let bytes = bytemuck::bytes_of(&policy);
         assert_eq!(bytes.len(), Policy::LEN);
@@ -736,7 +827,7 @@ mod tests {
         assert_eq!(decoded.referrer, [0xAB; 32]);
         assert_eq!(decoded.referrer_present, 1);
         assert_eq!(decoded.referrer_share_bps, 1_000);
-        assert_eq!(decoded.reserved, [0x55; 64]);
+        assert_eq!(decoded.reserved, [0x55; 24]);
     }
 
     #[test]

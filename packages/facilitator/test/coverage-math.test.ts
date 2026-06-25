@@ -46,12 +46,19 @@ describe("computeCoverage", () => {
       });
       expect(isCoveredBreach(o)).toBe(true);
     });
-    test(`${o}: large amountPaid is NOT capped — exposure cap is on-chain`, () => {
+    test(`${o}: large amountPaid IS capped at imputedCost ceiling (agent-tasks#10 C-1)`, () => {
+      // PREVIOUSLY this test asserted the refund was NOT capped (full
+      // 999_999 + 1_000 = 1_000_999). That contradicted env.ts
+      // PAY_DEFAULT_IMPUTED_COST_LAMPORTS ("...capped at this value so a single
+      // large claim can't drain the pool") AND the $1/call ceiling advertised at
+      // /.well-known/pay-coverage. The red-team (SECURITY_REDTEAM_VERDICT.md A-2)
+      // showed the uncapped path let ONE client-supplied amountBaseUnits drain
+      // the whole hourly exposure cap in a single shot. The principal is now
+      // clamped to imputedCostLamports (10_000n) → refund 10_000 + 1_000 = 11_000.
       expect(computeCoverage(o, POOL, 999_999n)).toEqual({
         outcome: o,
         premiumLamports: 1_000n,
-        // principal 999_999n + flat premium 1_000n; no off-chain ceiling
-        refundLamports: 1_000_999n,
+        refundLamports: POOL.imputedCostLamports + 1_000n, // 11_000n
         covered: true,
       });
     });

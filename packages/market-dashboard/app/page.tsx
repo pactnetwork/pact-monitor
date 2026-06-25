@@ -24,9 +24,9 @@ export default async function HomePage() {
   return (
     <div className="space-y-8">
       <div>
-        <h1 className="font-serif text-3xl text-[#f5f0eb] mb-1">Pact Market</h1>
+        <h1 className="font-serif text-3xl text-[#f5f0eb] mb-1">Pact Explorer</h1>
         <p className="text-sm text-[#8a7a70]">
-          Parametric API coverage for Solana agents — mainnet
+          Parametric API coverage for AI agents
         </p>
       </div>
 
@@ -35,7 +35,13 @@ export default async function HomePage() {
           <CardHeader>
             <CardTitle>Pool Balance (Aggregate)</CardTitle>
           </CardHeader>
-          <CardValue>{formatUsdcShort(stats.poolBalanceAggregate)}</CardValue>
+          <CardValue
+            className={
+              stats.poolBalanceAggregate < 0 ? "text-[#C9553D]" : undefined
+            }
+          >
+            {formatUsdcShort(stats.poolBalanceAggregate)}
+          </CardValue>
         </Card>
         <Card>
           <CardHeader>
@@ -134,38 +140,49 @@ export default async function HomePage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {calls.map((call) => (
-              <TableRow key={call.id}>
-                <TableCell>
-                  <a
-                    href={`/agents/${call.agentPubkey}`}
-                    className="text-[#B87333] hover:underline"
-                  >
-                    {formatPubkey(call.agentPubkey)}
-                  </a>
-                </TableCell>
-                <TableCell className="text-[#8a7a70]">
-                  {call.endpointName}
-                </TableCell>
-                <TableCell>
-                  <Badge variant={call.status}>{call.status}</Badge>
-                </TableCell>
-                <TableCell className="text-[#B87333]">
-                  ${formatUsdcShort(call.premium)}
-                </TableCell>
+            {calls.length === 0 ? (
+              <TableRow>
                 <TableCell
-                  className={
-                    call.refund > 0 ? "text-[#C9553D]" : "text-[#3a3430]"
-                  }
+                  colSpan={7}
+                  className="text-center text-[#8a7a70] py-8"
                 >
-                  {call.refund > 0 ? `$${formatUsdcShort(call.refund)}` : "—"}
-                </TableCell>
-                <TableCell>{formatLatency(call.latencyMs)}</TableCell>
-                <TableCell className="text-[#8a7a70]">
-                  {formatRelativeTime(call.ts)}
+                  No recent events yet
                 </TableCell>
               </TableRow>
-            ))}
+            ) : (
+              calls.map((call) => (
+                <TableRow key={call.id}>
+                  <TableCell>
+                    <a
+                      href={`/agents/${call.agentPubkey}`}
+                      className="text-[#B87333] hover:underline"
+                    >
+                      {formatPubkey(call.agentPubkey)}
+                    </a>
+                  </TableCell>
+                  <TableCell className="text-[#8a7a70]">
+                    {call.endpointName}
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={call.status}>{call.status}</Badge>
+                  </TableCell>
+                  <TableCell className="text-[#B87333]">
+                    {formatUsdcShort(call.premium)}
+                  </TableCell>
+                  <TableCell
+                    className={
+                      call.refund > 0 ? "text-[#C9553D]" : "text-[#3a3430]"
+                    }
+                  >
+                    {call.refund > 0 ? formatUsdcShort(call.refund) : "—"}
+                  </TableCell>
+                  <TableCell>{formatLatency(call.latencyMs)}</TableCell>
+                  <TableCell className="text-[#8a7a70]">
+                    {formatRelativeTime(call.ts)}
+                  </TableCell>
+                </TableRow>
+              ))
+            )}
           </TableBody>
         </Table>
       </div>

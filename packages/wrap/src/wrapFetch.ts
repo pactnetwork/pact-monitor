@@ -176,6 +176,10 @@ export async function wrapFetch(opts: WrapFetchOptions): Promise<WrapFetchResult
     outcome: classified.outcome,
     ts: new Date(tEnd).toISOString(),
     network: opts.network ?? "solana-devnet",
+    // agent-tasks#10: this verdict came from Pact's OWN observation of the
+    // upstream response — we made the fetch (above), timed it, and classified
+    // the real Response. The client never supplied it. Stamp it authoritative.
+    verdictSource: "pact_observed",
   };
   try {
     void Promise.resolve(opts.sink.publish(event)).catch(() => {

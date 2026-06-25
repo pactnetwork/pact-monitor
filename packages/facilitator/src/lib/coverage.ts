@@ -120,9 +120,16 @@ export function computeCoverage(
   pool: PoolConfig,
   amountPaidBaseUnits: bigint,
 ): CoverageMath {
-  // Delegate the money math to wrap's single source of truth. Passing
-  // `amountPaid` selects it as the principal: a covered-breach refund is the
-  // canonical `amountPaid + flatPremium` (agent-tasks#11).
+  // SECURITY (agent-tasks#10, red-team A-2/C-1): `amountPaidBaseUnits` is
+  // CLIENT-SUPPLIED and validated only `> 0` at the route boundary
+  // (routes/coverage.ts). `imputedCostLamports` is the per-call refund ceiling
+  // the facilitator advertises (env PAY_DEFAULT_IMPUTED_COST_LAMPORTS,
+  // "...capped at this value so a single large claim can't drain the pool").
+  // The C-1 imputed-cost cap now lives in `computeEconomics` (the single source
+  // of truth): the raw claimed amount is passed straight through and clamped to
+  // `imputedCostLamports` there, so the refund is `min(amountPaid, imputed) +
+  // flatPremium`. Behaviour is identical to the previous pre-clamp here — this
+  // just removes the duplicate so the cap can't drift between the two paths.
   return computeEconomics({
     outcome,
     pool,
