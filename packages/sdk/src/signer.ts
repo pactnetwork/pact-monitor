@@ -21,7 +21,7 @@
  */
 import type { Keypair, Transaction } from "@solana/web3.js";
 import nacl from "tweetnacl";
-import { getAddress, isAddress, isHex } from "viem";
+import { getAddress, isHex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
 export interface WalletAdapterSigner {
@@ -146,6 +146,3 @@ export function evmAddressFromPrivateKey(
     return null;
   }
 }
-
-/** Re-export viem helpers callers may need for type narrowing on hex strings. */
-export { isAddress, isHex };
