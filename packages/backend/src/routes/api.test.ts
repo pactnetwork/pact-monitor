@@ -799,7 +799,7 @@ describe("API integration tests", () => {
 
   test("GET /api/v1/pools does not cache RPC error responses", async () => {
     // Config must be fully valid so getConfigOr503 passes and execution
-    // reaches createSolanaClient → RPC. With no validator running, the RPC
+    // reaches the Kit RPC client. With no validator running, the RPC
     // call fails and the route returns 502 "Upstream RPC error". This test
     // asserts that:
     //   1. Both sequential calls return the same 502 (cache consistency).
