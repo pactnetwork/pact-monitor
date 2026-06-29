@@ -1,8 +1,5 @@
-import { Connection, Keypair, PublicKey } from "@solana/web3.js";
-import { AnchorProvider, Program, Wallet } from "@anchor-lang/core";
+import { Keypair, PublicKey } from "@solana/web3.js";
 import * as fs from "fs";
-import { fileURLToPath } from "url";
-import { dirname, join } from "path";
 import bs58 from "bs58";
 import { createHash } from "crypto";
 import {
@@ -17,13 +14,6 @@ import {
   type SolanaRpcSubscriptionsApi,
   type KeyPairSigner,
 } from "@solana/kit";
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-
-// Load the IDL JSON at module load. Using fs.readFileSync keeps us compatible
-// with the repo's ES2022/bundler tsconfig without relying on import-attributes.
-const idlJsonPath = join(__dirname, "..", "idl", "pact_insurance.json");
-const idl = JSON.parse(fs.readFileSync(idlJsonPath, "utf-8"));
 
 export interface SolanaConfig {
   rpcUrl: string;
@@ -111,17 +101,6 @@ export function __resetFaucetKeypairCacheForTests(): void {
   keypairCache.delete("faucet");
 }
 
-export function createSolanaClient(config: SolanaConfig) {
-  const connection = new Connection(config.rpcUrl, "confirmed");
-  const oracleKeypair = loadOracleKeypair(config);
-  const wallet = new Wallet(oracleKeypair);
-  const provider = new AnchorProvider(connection, wallet, { commitment: "confirmed" });
-  const programId = new PublicKey(config.programId);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const program = new Program(idl as any, provider);
-  return { connection, provider, program, oracleKeypair, programId };
-}
-
 export interface KitSolanaClient {
   rpc: Rpc<SolanaRpcApi>;
   rpcSubscriptions: RpcSubscriptions<SolanaRpcSubscriptionsApi>;
@@ -131,8 +110,6 @@ export interface KitSolanaClient {
 }
 
 // Kit-based client for Pinocchio/Codama account reads and instruction sends.
-// This is the default transport post-WP-17; the Anchor client above is
-// retained as a legacy fallback for the existing test suite.
 export async function createKitSolanaClient(config: SolanaConfig): Promise<KitSolanaClient> {
   const oracleKeypair = loadOracleKeypair(config);
   const rpcUrl = config.rpcUrl;
@@ -149,20 +126,9 @@ export async function createKitSolanaClient(config: SolanaConfig): Promise<KitSo
   };
 }
 
-export function deriveProtocolPda(programId: PublicKey): [PublicKey, number] {
-  return PublicKey.findProgramAddressSync([Buffer.from("protocol")], programId);
-}
-
 export function derivePoolPda(programId: PublicKey, hostname: string): [PublicKey, number] {
   return PublicKey.findProgramAddressSync(
     [Buffer.from("pool"), Buffer.from(hostname)],
-    programId,
-  );
-}
-
-export function deriveVaultPda(programId: PublicKey, poolPda: PublicKey): [PublicKey, number] {
-  return PublicKey.findProgramAddressSync(
-    [Buffer.from("vault"), poolPda.toBuffer()],
     programId,
   );
 }
@@ -181,17 +147,6 @@ export function derivePolicyPda(
 // Exposed so tests can lock in the on-chain seed format.
 export function callIdSeedBytes(callId: string): Uint8Array {
   return Uint8Array.from(createHash("sha256").update(callId).digest());
-}
-
-export function deriveClaimPda(
-  programId: PublicKey,
-  policyPda: PublicKey,
-  callId: string,
-): [PublicKey, number] {
-  return PublicKey.findProgramAddressSync(
-    [Buffer.from("claim"), policyPda.toBuffer(), callIdSeedBytes(callId)],
-    programId,
-  );
 }
 
 export function getSolanaConfig(): SolanaConfig {
