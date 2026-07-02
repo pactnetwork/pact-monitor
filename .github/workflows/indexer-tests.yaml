@@ -31,6 +31,9 @@ concurrency:
   group: indexer-tests-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   test:
     name: Indexer test suite (Postgres 16)
@@ -71,26 +74,14 @@ jobs:
         with:
           version: 10.30.3
 
-      - name: Setup Node 20
+      - name: Setup Node 22
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: pnpm
 
       - name: Install workspace deps
         run: pnpm install --frozen-lockfile
-
-      - name: Wait for Postgres
-        run: |
-          for i in $(seq 1 30); do
-            if pg_isready -h localhost -p 5433 -U pact >/dev/null 2>&1; then
-              echo "postgres ready"
-              exit 0
-            fi
-            sleep 1
-          done
-          echo "postgres did not become ready in time" >&2
-          exit 1
 
       - name: Build workspace deps
         # Builds all transitive workspace dependencies of the indexer in the
@@ -109,7 +100,7 @@ jobs:
       - name: Apply Prisma migrations
         # Runs `prisma migrate deploy` against the CI postgres. Required by
         # migration-rollback.spec.ts (WP-MN-03a T3), which inserts real rows and
-        # asserts composite-PK + backfill behavior across all six migrations.
+        # asserts composite-PK + backfill behavior across all seven migrations.
         run: pnpm --filter @pact-network/db run db:migrate
 
       - name: Run indexer test suite
