@@ -12,6 +12,7 @@ export const statuses = [
   // pact pay outcomes — surface payment scheme + retry result through --json
   "x402_payment_made",
   "mpp_payment_made",
+  "krexa_payment_made",
   "payment_failed",
   // pact pay-specific failure modes that must exit non-zero so shell chains
   // (`pact pay … && next-step`) stop on tool problems. These deliberately do
@@ -66,6 +67,7 @@ const exitCodeMap: Record<Status, number> = {
   // surfaced inside body.tool_exit_code so callers can chain on it.
   x402_payment_made: 0,
   mpp_payment_made: 0,
+  krexa_payment_made: 0,
   // pact pay reached a 402 challenge but the retry was rejected or unsupported.
   payment_failed: 31,
   // pact pay invoked with a tool we don't wrap yet (e.g. wget) — non-zero so
