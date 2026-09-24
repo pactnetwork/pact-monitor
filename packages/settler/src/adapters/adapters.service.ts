@@ -47,8 +47,12 @@ export class AdaptersService implements OnModuleInit {
     ) {
       this.logger.warn(
         `[settler] arc-mainnet enabled with NO gas-fee ceiling — settles can pay ` +
-          `unbounded gas. Set PACT_EVM_MAX_FEE_PER_GAS_WEI_ARC_MAINNET (wei, ` +
-          `>= 20 gwei Arc base-fee floor) before mainnet ramp (reorg-policy D6 §3).`,
+          `unbounded gas. Set PACT_EVM_MAX_FEE_PER_GAS_WEI_ARC_MAINNET (wei) before ` +
+          `mainnet ramp (reorg-policy D6 §3). Arc's 20 gwei base-fee floor is NOT a ` +
+          `safe ceiling value: viem's own fee quote already buffers base fee by ~1.2x ` +
+          `before this code applies its own +20% on top, so the real floor-quote is ` +
+          `~24+ gwei. A ceiling anywhere near 20 gwei refuses every settle. Use ` +
+          `something comfortably above that (>= 30 gwei as a starting point).`,
       );
     }
 
@@ -219,13 +223,20 @@ export class AdaptersService implements OnModuleInit {
    * PACT_EVM_MAX_FEE_PER_GAS_WEI, else no ceiling. Value is a base-10 integer
    * in the chain's native wei. A malformed value fails boot rather than
    * silently running uncapped.
+   *
+   * An EMPTY per-network value (e.g. `PACT_EVM_MAX_FEE_PER_GAS_WEI_ARC_MAINNET=`,
+   * common in .env/k8s templates) must fall through to the global key, not be
+   * treated as "scoped key is set" — `??` alone does not do this since `""` is
+   * not nullish. Both `scoped` and `global` are trimmed and compared with `||`
+   * so an empty scoped value falls through correctly (review #289 finding 2).
    */
   private resolveMaxFeePerGasWei(network: string): bigint | null {
     const globalKey = "PACT_EVM_MAX_FEE_PER_GAS_WEI";
     const scopedKey = `${globalKey}_${network.replace(/-/g, "_").toUpperCase()}`;
-    const scoped = this.config.get<string>(scopedKey);
+    const scoped = this.config.get<string>(scopedKey)?.trim();
+    const global = this.config.get<string>(globalKey)?.trim();
+    const raw = scoped || global;
     const sourceKey = scoped ? scopedKey : globalKey;
-    const raw = (scoped ?? this.config.get<string>(globalKey))?.trim();
     if (!raw) return null;
     if (!/^[0-9]+$/.test(raw) || BigInt(raw) === 0n) {
       throw new Error(

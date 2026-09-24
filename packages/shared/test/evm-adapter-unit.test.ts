@@ -814,21 +814,30 @@ describe("EvmAdapter maxFeePerGasWei ceiling (D6 §3)", () => {
     );
   });
 
-  it("Arc mainnet quote at the 20 gwei floor is refused by a ceiling set below the floor", async () => {
+  it("a ceiling set AT Arc's raw 20 gwei floor still refuses every settle (review #289 finding 1)", async () => {
+    // viem's estimateFeesPerGas already buffers the raw base fee by its own
+    // ~1.2x before Pact's code applies a further +20% on top (see D6 §3
+    // comment on submitSettleBatch). So at Arc's 20 gwei floor, the REAL
+    // quote viem hands back is ~24 gwei, not 20 gwei flat. A naive operator
+    // who reads "Arc's floor is 20 gwei" and sets the ceiling to exactly
+    // that gets every settle refused, at the floor, not just during a fee
+    // spike. This does not lose funds (submitSettleBatch throws before
+    // broadcast) but looks exactly like an outage.
+    const arcMainnetDeployment = {
+      chainId: 5042,
+      usdc: "0x3600000000000000000000000000000000000000",
+      registry: "0x1111111111111111111111111111111111111111",
+      pool: "0x1111111111111111111111111111111111111111",
+      settler: "0x1111111111111111111111111111111111111111",
+    };
     const adapter = new EvmAdapter({
       ...SIGNER_OPTS,
       descriptor: getChain("arc-mainnet"),
-      deployment: {
-        chainId: 5042,
-        usdc: "0x3600000000000000000000000000000000000000",
-        registry: "0x1111111111111111111111111111111111111111",
-        pool: "0x1111111111111111111111111111111111111111",
-        settler: "0x1111111111111111111111111111111111111111",
-      },
-      maxFeePerGasWei: 19_000_000_000n,
+      deployment: arcMainnetDeployment,
+      maxFeePerGasWei: 20_000_000_000n, // the (wrong) "= floor" guidance
     });
     mockEstimateFeesPerGas.mockResolvedValue({
-      maxFeePerGas: 20_000_000_000n,
+      maxFeePerGas: 24_000_000_000n, // realistic viem-buffered floor quote
       maxPriorityFeePerGas: 0n,
     });
     primeSuccessfulSettle();
@@ -837,6 +846,18 @@ describe("EvmAdapter maxFeePerGasWei ceiling (D6 §3)", () => {
       /fee ceiling exceeded on chain 5042/,
     );
     expect(mockSendTransaction).not.toHaveBeenCalled();
+
+    // A ceiling comfortably above the buffered floor-quote (the >= 30 gwei
+    // recommendation in .env.example / the boot warning) settles normally.
+    const safeAdapter = new EvmAdapter({
+      ...SIGNER_OPTS,
+      descriptor: getChain("arc-mainnet"),
+      deployment: arcMainnetDeployment,
+      maxFeePerGasWei: 30_000_000_000n,
+    });
+    await expect(
+      safeAdapter.submitSettleBatch(SETTLE_INPUT),
+    ).resolves.toBeDefined();
   });
 });
 
