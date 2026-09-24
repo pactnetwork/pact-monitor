@@ -4,7 +4,7 @@
     "name": "arc-testnet",
     "usdcAddress": "0x3600000000000000000000000000000000000000",
     "usdcDecimals": 6,
-    "rpcUrl": "https://rpc.testnet.arc.network",
+    "rpcUrl": "https://rpc.testnet.arc.io",
     "blockTimeMs": 500,
     "finalityBlocks": 64,
     "finalityBlockTag": "finalized",

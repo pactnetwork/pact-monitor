@@ -6,7 +6,7 @@ describe("chains registry — EVM (WP-MN-04 T1)", () => {
     const c = getChain("arc-testnet");
     expect(c.vm).toBe("evm");
     expect(c.chainId).toBe(5042002);
-    expect(c.rpcUrl).toBe("https://rpc.testnet.arc.network");
+    expect(c.rpcUrl).toBe("https://rpc.testnet.arc.io");
     expect(c.blockTimeMs).toBe(500);
     expect(c.finalityBlocks).toBe(64);
     expect(c.deploymentBlock).toBe(42953139);
