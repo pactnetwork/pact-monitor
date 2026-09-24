@@ -6,17 +6,19 @@
 
 > **This is an internal AI-assisted review. It is NOT a substitute for an external, human-led smart-contract audit.** `protocol-evm-v1` has never had a third-party audit. Do not present this document as an audit in the grant application or to any counterparty — call it what it is: an internal pre-deploy check.
 
-## Verdict: **NOT SAFE FOR MAINNET** (SAFE WITH FIXES, but the fix is not optional)
+## Verdict: **SAFE WITH FIXES** (updated 2026-09-24, post C-01 fix verification)
 
-One Critical finding (C-01) makes this contract set unsafe to fund with real USDC as currently structured: a single non-rotatable EOA can drain any endpoint's entire pool balance in a handful of transactions, with no multisig, timelock, or recovery path. Everything else found is High/Medium/Low and does not block a fix-and-ship path. Do the C-01 fix (change one constructor argument at deploy time — no contract code change needed) before any real USDC touches the pool.
+**Update:** C-01, the Critical finding that originally earned this doc a NOT SAFE verdict, is **CLOSED** — independently verified by me against live Arc testnet state (not just reviewed on paper; see "C-01 fix verification" below). The remaining findings (H-01, H-02, M-01, M-02, L-01..L-03) are all lower severity, already understood by the team, and do not block bringing this to Rick for a real mainnet Gate A conversation — they need to be resolved or explicitly accepted before real USDC moves, not before the conversation happens.
 
-| Severity | Count |
-|---|---|
-| Critical | 1 |
-| High | 2 |
-| Medium | 2 |
-| Low | 3 |
-| Informational (Arc-risk checklist, cleared) | 6 |
+Original verdict for the record: this contract set was NOT SAFE FOR MAINNET as first reviewed — a single non-rotatable EOA (`authority`) could drain any endpoint's entire pool balance in a handful of transactions, with no multisig, timelock, or recovery path. That gap is now closed at the deploy-configuration layer (a real Safe multisig, not the deployer EOA, now holds `authority`) — no PactRegistry/PactPool/PactSettler contract source was touched.
+
+| Severity | Count | Status |
+|---|---|---|
+| Critical | 1 | **CLOSED** (C-01, verified 2026-09-24) |
+| High | 2 | Open (H-01, H-02) |
+| Medium | 2 | Open (M-01, M-02) — plus 1 new Medium from the fix itself (M-03) |
+| Low | 3 | Open (L-01..L-03) — plus 1 new Low from the fix itself (L-04) |
+| Informational (Arc-risk checklist, cleared) | 6 | Cleared |
 
 ---
 
@@ -43,6 +45,26 @@ Because the contracts are non-upgradeable ("LOCKED" per the file headers) and `a
 **Fix (no Solidity change required):** at deploy time, pass a real multisig (e.g., a Safe with a sane signer threshold) as the `authority_` constructor argument instead of the deployer EOA — `Deploy.s.sol:108` currently hardcodes `deployer` for this. If you want the deployer EOA to be able to finish setup (grant `SETTLER_ROLE` to the settler contract, register the first endpoint) before handing off, either (a) do that setup from the multisig directly (Safe supports contract calls), or (b) accept the one-time centralization window between deploy and the multisig's first admin action, but do **not** fund any pool with real USDC until the multisig is confirmed as `authority` and the deployer key's role grants have been revoked. As defense-in-depth, also add an upper bound (or a timelock on increases) to `exposureCapPerHour` in `updateEndpointConfig`/`registerEndpoint` so a compromised or careless admin action can't instantly remove the only per-endpoint spending limit in the system.
 
 This is not novel to the EVM port — it mirrors the Solana v1 program's own authority/settlement-signer model, which `CLAUDE.md` already flags as "BLOCKED FOR MAINNET pending multisig rotation" for that chain. That referenced audit file (`docs/audits/2026-05-05-mainnet-readiness.md`) does not exist in this checkout (only unrelated dead-code-prune audits are present under `docs/audits/`), so it's unclear whether Solana's version of this issue was ever actually resolved — worth checking before treating Solana mainnet as a safe precedent. Either way, it does not make the Arc EVM deploy safe by association.
+
+### C-01 fix verification — **CLOSED**, independently confirmed 2026-09-24
+
+`arc-mn-authority-fix` built and rehearsed a fix on real Arc testnet: `script/Deploy.s.sol` now requires `authority_` to come from a `MULTISIG_ADDRESS` env var and `require`s `.code.length > 0` on it (never the deployer EOA); the deployer no longer receives `DEFAULT_ADMIN_ROLE` anywhere. Phase 2 (role grants, endpoint registration, pool funding) moved to a new `script/ConfigureAuthority.s.sol`, executed by the multisig itself via `execTransaction`. No `PactRegistry`/`PactPool`/`PactSettler` source file was touched.
+
+I did not take the reported testnet addresses/tx hashes on faith — I queried Arc testnet directly (`cast`, RPC `rpc.testnet.arc.io`, chain id `5042002` confirmed) and got:
+
+| Claim | My independent check | Result |
+|---|---|---|
+| Safe infra genuinely deployed on Arc testnet (not just claimed) | `eth_getCode` on Safe Singleton Factory `0x914d...643d7`, Proxy Factory `0x4e1D...0ec67`, SafeL2 singleton `0x29fc...0c762` | All three have real bytecode (141 / 6111 / 48845 bytes) |
+| Safe `0x216ed5eD6bCA19fC937B4d4437581A1EAF7Ef641` is a real deployed contract | `eth_getCode` | 345 bytes — consistent with a minimal SafeProxy |
+| New `PactRegistry`/`PactPool`/`PactSettler` are real deployed contracts | `eth_getCode` on all three | Real bytecode present at all three addresses |
+| `registry.authority()` == the Safe | `cast call ... "authority()(address)"` | Returns `0x216ed5eD6bCA19fC937B4d4437581A1EAF7Ef641` exactly |
+| Deployer holds `DEFAULT_ADMIN_ROLE` on none of the three contracts | `cast call ... "hasRole(bytes32,address)(bool)"` with role `0x00` and the deployer `0xD45e...c575d8` (recovered from the failed tx's `from` field), against Registry, Pool, Settler | `false`, `false`, `false` |
+| Safe holds `DEFAULT_ADMIN_ROLE` on all three contracts | Same call, Safe address | `true`, `true`, `true` |
+| Original C-01 attack step 1 (an `onlyAuthority` call from the deployer) now fails | Fetched the reported failed tx (`0x02989108af90bd26860b5e0485257a69e4934758cf736a03e63436805321e80b`) via `cast receipt` — `status: 0 (failed)`, `from` = deployer, `to` = Registry. Replayed its exact calldata via `eth_call` from the deployer | Revert data `0xb9739d1b`, which I confirmed via `cast sig "UnauthorizedAuthority()"` is the **exact selector** — the deployer really can no longer call an authority-gated function |
+| Original C-01 attack step 2 (deployer self-grants `SETTLER_ROLE` on the Settler) now fails | Built and replayed `grantRole(SETTLER_ROLE, deployer)` on the Settler via `eth_call` from the deployer, with `SETTLER_ROLE` computed fresh via `cast keccak "SETTLER_ROLE"` (not copied from anyone's claim) | Reverts with `AccessControlUnauthorizedAccount(deployer, 0x00)` — selector `0xe2517d3f`, confirmed via `cast sig` |
+| The system still works end-to-end after the fix (multisig authority doesn't brick settlement) | Fetched the reported settle-rehearsal tx (`0x98e1eddd716e4faa7c455c5089dcaa9a5472afb2b1933316ce7a5c7e91135d5c`) via `cast receipt` | `status: 1 (success)`, with a real `CallSettled`-shaped log from the new Settler address plus two `Transfer`-style logs (from the system emitter `0xfff...ffe` and from the USDC contract `0x3600...0000`) — this is a live, in-the-wild instance of the EIP-7708 dual-log behavior from Informational-5 below, which independently corroborates that earlier docs-based finding |
+
+Every load-bearing claim in the handoff checks out against the live chain, not just against the diff. **C-01 is closed** for the exact attack chain in the original finding, conditioned on the deployed authority contract actually being a properly-configured multisig with real, independent signers (see M-03, new, below — that part is a process control this code cannot fully enforce on its own).
 
 ---
 
@@ -90,6 +112,26 @@ Every external call in the settlement path is a plain ERC-20 `transfer`/`transfe
 
 **Fix:** add OZ `ReentrancyGuard` (`nonReentrant`) to `PactPool.payout`/`PactSettler.settleBatch` before mainnet. Non-blocking given the current token's confirmed hook-free behavior, but cheap enough to just do.
 
+### M-03 (new) — `Deploy.s.sol`'s `code.length > 0` check proves "is a contract," not "is a genuine, correctly-thresholded multisig"
+
+**File:** `script/Deploy.s.sol:59-67`
+
+The script's own comment is honest about this: "it can't verify the contract IS a properly configured Safe, but it guarantees whoever deploys can't accidentally (or quietly) pass an EOA." That's true and worth keeping, but it means the check alone would happily accept a sham "multisig" — a 1-of-1 wrapper, a proxy fully controlled by a single EOA, or any other contract with nonzero bytecode. This is not a code bug to fix; it's a manual pre-flight step that must happen before the real mainnet deploy and cannot be automated away by this script.
+
+**Fix (process, not code):** before running `Deploy.s.sol` against Arc mainnet with the real `MULTISIG_ADDRESS`, independently call `Safe.getOwners()` and `Safe.getThreshold()` on it (or the Safe{Wallet} UI) and confirm: the owner count and addresses match who Rick actually intends to hold keys, the threshold is >1, and each owner address is controlled by a different person/device (not the same key reused, not all held by one person on one machine). Bake this into whatever runbook accompanies the real deploy — it's a five-minute check that closes the one gap `code.length > 0` can't.
+
+(Minor footnote, not a real bypass: a contract could theoretically pass the check and later self-destruct, but Arc targets the Prague EVM version — confirmed via `foundry.toml`'s `evm_version = "prague"` — which carries forward EIP-6780's restriction that `SELFDESTRUCT` only removes code/storage when called in the same transaction as contract creation. A Safe can't make itself disappear post-deploy this way, so this isn't a practical concern.)
+
+### L-04 (new) — `ConfigureAuthority.s.sol`'s owner-keys-as-env-vars pattern is testnet-rehearsal-only and must not be reused for the real mainnet Safe
+
+**File:** `script/ConfigureAuthority.s.sol:52-59,188-192`
+
+The script loads `SAFE_OWNER_A_PRIVATE_KEY`/`SAFE_OWNER_B_PRIVATE_KEY` as raw env vars and signs Safe transactions with `vm.sign` inside a Forge script. Its own doc-comment is upfront that this is legitimate only "for a testnet proof where every Safe owner key is one we generated ourselves" and that real operational multi-party governance "is a separate, later, human step, owned by Rick" — so this isn't a hidden risk, but it's worth stating as a hard requirement rather than a suggestion: **the real mainnet Safe's owners must sign via their own wallets (hardware keys, Safe{Wallet} UI, or an equivalent signing ceremony) — never by handing a private key to a script or env var.** Reusing this exact script against the real mainnet Safe would recreate a version of C-01's problem one level up (now two or three keys sitting in env vars instead of one).
+
+Separately, worth noting for whoever runs the real sequence: steps 5-6 (`usdc.approve` + `pool.topUp`) can't go through `forge script --broadcast` on Arc at all — the script's own comment documents that Foundry's local `revm` pre-flight simulation doesn't understand Arc's compliance precompile at `0x1800...0001` (used inside Arc's USDC `transferFrom`) and throws `StackUnderflow` on it regardless of target, so those two steps must be submitted via plain `cast send` instead. Correctly worked around already; just don't rediscover it the hard way on mainnet.
+
+**Also checked, no regression found:** grepped `packages/indexer/src`, `packages/settler/src`, and `packages/shared/src` for any runtime code that calls or assumes the deployer holds an `onlyAuthority`-gated function (`updateEndpointConfig`, `pauseEndpoint`, `pauseProtocol`, `registerEndpoint`, `updateFeeRecipients`) — zero matches. The only existing "ops console" (`packages/indexer/src/ops/`) is Solana-only (uses `nacl`/`bs58`/the Solana program ID) — there is no EVM equivalent yet, so moving `SETTLER_ROLE`/authority setup to a multisig-only path has no blast radius on any currently-running settler or indexer code. Whenever an EVM ops console does get built, it will need to return an unsigned Safe `execTransaction` payload for the multisig to co-sign rather than assume a single-signer flow — a forward-looking design note, not a bug today.
+
 ---
 
 ## Low
@@ -136,4 +178,14 @@ Deliberate v1 tradeoff (simpler attack surface, no proxy-storage-collision risk)
 
 ## Summary for the grant deadline conversation
 
-The contracts correctly avoid the decimal-conflation, blob, and PREVRANDAO traps this review specifically looked for on Arc — that part of the port is solid. The blocker is not an EVM-specific bug; it's the same centralization gap the Solana side is already flagged for: **one EOA with no rotation path controls everything, and can turn that control into a full pool drain in a few transactions.** That is fixable **without touching contract code** — set `authority_` to a real multisig at deploy time in `Deploy.s.sol`, and don't fund any pool until that multisig is confirmed in place. Everything else here is worth doing but doesn't have to block Wednesday.
+**Updated 2026-09-24: this is now ready for a real Gate A conversation with Rick.**
+
+The contracts correctly avoid the decimal-conflation, blob, and PREVRANDAO traps this review specifically looked for on Arc — that part of the port was solid from the start. The one blocker, C-01 — a single non-rotatable EOA that could turn into a full pool drain in a few transactions — is now closed: `authority_` is a real Safe multisig, verified live on Arc testnet by me directly against RPC (not just reviewed on paper), and the exact original attack chain now reverts with the expected errors when replayed from the deployer key.
+
+What's left before real USDC actually moves (none of these block the Gate A conversation itself):
+1. **H-01** — settler-bot key is still a single-key oracle for SLA breaches, bounded by `exposureCapPerHour`; confirm the Arc settler key is in Secret Manager (not a plaintext Cloud Run env var) and size `exposureCapPerHour` conservatively for the initial demo pool.
+2. **H-02** — add the `arc-mainnet` entry to `config/chains.json` (the client already has the right USDC address, independently verified) so `Deploy.s.sol` can actually target chain 5042.
+3. **M-03 (new)** — before funding real money, manually confirm the real mainnet Safe's owners/threshold (`Safe.getOwners()`/`getThreshold()`) — the deploy script can prove "it's a contract," not "it's a genuine multisig with independent signers."
+4. **L-04 (new)** — when configuring the real mainnet Safe, sign with real owner wallets/hardware keys — never reuse `ConfigureAuthority.s.sol`'s env-var-private-key pattern, which is explicitly testnet-rehearsal-only.
+
+Everything else in this doc (M-01, M-02, L-01..L-03) is worth doing but was never blocking.
