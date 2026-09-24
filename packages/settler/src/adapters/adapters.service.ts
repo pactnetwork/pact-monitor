@@ -39,6 +39,19 @@ export class AdaptersService implements OnModuleInit {
       .map((s) => s.trim())
       .filter(Boolean);
 
+    // Scoped to arc-mainnet: base-mainnet predates the D6 §3 ceiling and runs
+    // uncapped by design. Warn-only so boot is never blocked by it.
+    if (
+      enabled.includes("arc-mainnet") &&
+      this.resolveMaxFeePerGasWei("arc-mainnet") == null
+    ) {
+      this.logger.warn(
+        `[settler] arc-mainnet enabled with NO gas-fee ceiling — settles can pay ` +
+          `unbounded gas. Set PACT_EVM_MAX_FEE_PER_GAS_WEI_ARC_MAINNET (wei, ` +
+          `>= 20 gwei Arc base-fee floor) before mainnet ramp (reorg-policy D6 §3).`,
+      );
+    }
+
     for (const name of enabled) {
       const descriptor = getChain(name); // throws on unknown
 
@@ -87,6 +100,8 @@ export class AdaptersService implements OnModuleInit {
           process.env,
         );
 
+        const maxFeePerGasWei = this.resolveMaxFeePerGasWei(name);
+
         const adapter = new EvmAdapter({
           descriptor,
           rpcUrl: this.resolveEvmRpcUrl(name, descriptor.rpcUrl),
@@ -95,6 +110,7 @@ export class AdaptersService implements OnModuleInit {
           deploymentBlock: BigInt(descriptor.deploymentBlock),
           deployment,
           ...(account ? { signer: { account } } : {}),
+          ...(maxFeePerGasWei != null ? { maxFeePerGasWei } : {}),
         });
         this.adapters.set(name, adapter);
         if (account) this.evmAccounts.set(name, account);
@@ -195,6 +211,28 @@ export class AdaptersService implements OnModuleInit {
   private resolveEvmRpcUrl(network: string, fallback: string): string {
     const envKey = `PACT_RPC_URL_${network.replace(/-/g, "_").toUpperCase()}`;
     return this.config.get<string>(envKey) ?? fallback;
+  }
+
+  /**
+   * D6 §3 mainnet gas-price ceiling. Precedence mirrors resolveDeployment:
+   * per-chain PACT_EVM_MAX_FEE_PER_GAS_WEI_<NETWORK_UPPER>, then the global
+   * PACT_EVM_MAX_FEE_PER_GAS_WEI, else no ceiling. Value is a base-10 integer
+   * in the chain's native wei. A malformed value fails boot rather than
+   * silently running uncapped.
+   */
+  private resolveMaxFeePerGasWei(network: string): bigint | null {
+    const globalKey = "PACT_EVM_MAX_FEE_PER_GAS_WEI";
+    const scopedKey = `${globalKey}_${network.replace(/-/g, "_").toUpperCase()}`;
+    const scoped = this.config.get<string>(scopedKey);
+    const sourceKey = scoped ? scopedKey : globalKey;
+    const raw = (scoped ?? this.config.get<string>(globalKey))?.trim();
+    if (!raw) return null;
+    if (!/^[0-9]+$/.test(raw) || BigInt(raw) === 0n) {
+      throw new Error(
+        `${sourceKey}=${raw} must be a positive base-10 integer (wei)`,
+      );
+    }
+    return BigInt(raw);
   }
 
   private loadKeypair(network: string): Keypair | null {

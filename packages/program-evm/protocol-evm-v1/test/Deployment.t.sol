@@ -77,4 +77,24 @@ contract DeploymentTest is Test {
         require(usdc == _ARC_USDC, "arc: usdc drift");
         require(ProtocolInvariants.EXPECTED_USDC_DECIMALS == 6, "arc: usdc decimals");
     }
+
+    /// @dev Mirrors Deploy.s.sol's chain lookup (iterate chains.json keys,
+    ///      match on chainId) so CHAIN_ID=5042 resolves to arc-mainnet.
+    function test_ArcMainnetResolvesFromChainsJson() external {
+        string memory j = vm.readFile("config/chains.json");
+        string[] memory names = vm.parseJsonKeys(j, ".");
+        string memory chainName;
+        for (uint256 i = 0; i < names.length; i++) {
+            if (vm.parseJsonUint(j, string.concat(".", names[i], ".chainId")) == 5042) {
+                chainName = names[i];
+                break;
+            }
+        }
+        assertEq(chainName, "arc-mainnet");
+        assertEq(vm.parseJsonAddress(j, ".arc-mainnet.usdcAddress"), _ARC_USDC);
+        assertEq(
+            vm.parseJsonUint(j, ".arc-mainnet.usdcDecimals"),
+            ProtocolInvariants.EXPECTED_USDC_DECIMALS
+        );
+    }
 }

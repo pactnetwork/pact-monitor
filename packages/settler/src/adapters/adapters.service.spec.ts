@@ -12,9 +12,10 @@ const mockSolanaAdapterInstances: object[] = [];
 const mockEvmAdapterInstances: object[] = [];
 
 vi.mock("@pact-network/shared", () => {
-  const CHAINS: Record<string, { vm: string; network: string; usdcMint: string; usdcDecimals: number; chainId: number; rpcUrl: string; finalityBlocks: number; blockTimeMs: number; deploymentBlock: number }> = {
+  const CHAINS: Record<string, { vm: string; network: string; usdcMint: string; usdcDecimals: number; chainId: number; rpcUrl: string; finalityBlocks: number; blockTimeMs: number; deploymentBlock: number | null }> = {
     "solana-devnet": { vm: "solana", network: "solana-devnet", usdcMint: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU", usdcDecimals: 6, chainId: 0, rpcUrl: "", finalityBlocks: 0, blockTimeMs: 0, deploymentBlock: 0 },
     "arc-testnet":   { vm: "evm",    network: "arc-testnet",   usdcMint: "0x0", usdcDecimals: 6, chainId: 5042002, rpcUrl: "https://rpc.testnet.arc.network", finalityBlocks: 64, blockTimeMs: 500, deploymentBlock: 42953139 },
+    "arc-mainnet":   { vm: "evm",    network: "arc-mainnet",   usdcMint: "0x0", usdcDecimals: 6, chainId: 5042,    rpcUrl: "https://rpc.mainnet.arc.io",    finalityBlocks: 64, blockTimeMs: 500, deploymentBlock: null },
     "base-sepolia":  { vm: "evm",    network: "base-sepolia",  usdcMint: "0x0", usdcDecimals: 6, chainId: 84532,   rpcUrl: "https://sepolia.base.org",      finalityBlocks: 1,  blockTimeMs: 2000, deploymentBlock: 41969204 },
   };
 
@@ -39,9 +40,11 @@ vi.mock("@pact-network/shared", () => {
   class EvmAdapter {
     descriptor: object;
     rpcUrl?: string;
-    constructor(opts: { descriptor: object; rpcUrl?: string }) {
+    maxFeePerGasWei?: bigint;
+    constructor(opts: { descriptor: object; rpcUrl?: string; maxFeePerGasWei?: bigint }) {
       this.descriptor = opts.descriptor;
       this.rpcUrl = opts.rpcUrl;
+      this.maxFeePerGasWei = opts.maxFeePerGasWei;
       mockEvmAdapterInstances.push(this);
     }
   }
@@ -168,6 +171,116 @@ describe("AdaptersService (settler)", () => {
 
     const arc = svc.getAdapter("arc-testnet") as unknown as { rpcUrl: string };
     expect(arc.rpcUrl).toBe("https://rpc.testnet.arc.network");
+  });
+
+  it("EVM fee ceiling: per-chain PACT_EVM_MAX_FEE_PER_GAS_WEI_<CHAIN> beats the global key", () => {
+    const svc = new AdaptersService(
+      makeConfig({
+        PACT_ENABLED_NETWORKS: "arc-testnet",
+        PACT_EVM_MAX_FEE_PER_GAS_WEI_ARC_TESTNET: "50000000000",
+        PACT_EVM_MAX_FEE_PER_GAS_WEI: "1",
+      }),
+    );
+    svc.onModuleInit();
+
+    const arc = svc.getAdapter("arc-testnet") as unknown as { maxFeePerGasWei?: bigint };
+    expect(arc.maxFeePerGasWei).toBe(50_000_000_000n);
+  });
+
+  it("EVM fee ceiling: global PACT_EVM_MAX_FEE_PER_GAS_WEI applies when no per-chain key is set", () => {
+    const svc = new AdaptersService(
+      makeConfig({
+        PACT_ENABLED_NETWORKS: "arc-testnet,base-sepolia",
+        PACT_EVM_MAX_FEE_PER_GAS_WEI: "30000000000",
+        PACT_EVM_MAX_FEE_PER_GAS_WEI_BASE_SEPOLIA: "2000000000",
+      }),
+    );
+    svc.onModuleInit();
+
+    const arc = svc.getAdapter("arc-testnet") as unknown as { maxFeePerGasWei?: bigint };
+    const base = svc.getAdapter("base-sepolia") as unknown as { maxFeePerGasWei?: bigint };
+    expect(arc.maxFeePerGasWei).toBe(30_000_000_000n);
+    expect(base.maxFeePerGasWei).toBe(2_000_000_000n);
+  });
+
+  it("EVM fee ceiling: unset leaves the adapter uncapped", () => {
+    const svc = new AdaptersService(
+      makeConfig({ PACT_ENABLED_NETWORKS: "arc-testnet" }),
+    );
+    svc.onModuleInit();
+
+    const arc = svc.getAdapter("arc-testnet") as unknown as { maxFeePerGasWei?: bigint };
+    expect(arc.maxFeePerGasWei).toBeUndefined();
+  });
+
+  it.each(["20 gwei", "1e10", "-5", "0", "0x4a817c800", "1.5"])(
+    "EVM fee ceiling: malformed value %s fails boot naming the source key",
+    (bad) => {
+      const svc = new AdaptersService(
+        makeConfig({
+          PACT_ENABLED_NETWORKS: "arc-testnet",
+          PACT_EVM_MAX_FEE_PER_GAS_WEI_ARC_TESTNET: bad,
+        }),
+      );
+      expect(() => svc.onModuleInit()).toThrow(
+        /PACT_EVM_MAX_FEE_PER_GAS_WEI_ARC_TESTNET=.* must be a positive base-10 integer/,
+      );
+    },
+  );
+
+  describe("arc-mainnet no-ceiling boot warning", () => {
+    const ceilingWarns = (spy: ReturnType<typeof vi.spyOn>) =>
+      spy.mock.calls
+        .map((c) => String(c[0]))
+        .filter((m) => m.includes("NO gas-fee ceiling"));
+
+    // arc-mainnet has deploymentBlock null in the registry, so boot throws
+    // after the warn; the warn must still fire first.
+    it("warns when arc-mainnet is enabled and neither ceiling key is set", () => {
+      const warnSpy = vi.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+      const svc = new AdaptersService(
+        makeConfig({ PACT_ENABLED_NETWORKS: "arc-mainnet" }),
+      );
+      expect(() => svc.onModuleInit()).toThrow(/missing deploymentBlock/);
+
+      const msgs = ceilingWarns(warnSpy);
+      expect(msgs).toHaveLength(1);
+      expect(msgs[0]).toMatch(/arc-mainnet enabled with NO gas-fee ceiling/);
+      expect(msgs[0]).toMatch(/PACT_EVM_MAX_FEE_PER_GAS_WEI_ARC_MAINNET/);
+      warnSpy.mockRestore();
+    });
+
+    it.each([
+      ["per-network key", { PACT_EVM_MAX_FEE_PER_GAS_WEI_ARC_MAINNET: "50000000000" }],
+      ["global key", { PACT_EVM_MAX_FEE_PER_GAS_WEI: "50000000000" }],
+    ])("no warn when the %s is set", (_label, extra) => {
+      const warnSpy = vi.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+      const svc = new AdaptersService(
+        makeConfig({ PACT_ENABLED_NETWORKS: "arc-mainnet", ...extra }),
+      );
+      expect(() => svc.onModuleInit()).toThrow(/missing deploymentBlock/);
+      expect(ceilingWarns(warnSpy)).toHaveLength(0);
+      warnSpy.mockRestore();
+    });
+
+    it("no warn for other EVM networks without a ceiling", () => {
+      const warnSpy = vi.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+      const svc = new AdaptersService(
+        makeConfig({ PACT_ENABLED_NETWORKS: "arc-testnet,base-sepolia" }),
+      );
+      svc.onModuleInit();
+      expect(ceilingWarns(warnSpy)).toHaveLength(0);
+      warnSpy.mockRestore();
+    });
+  });
+
+  it("arc-mainnet cannot boot before deploy: registry has no deploymentBlock", () => {
+    const svc = new AdaptersService(
+      makeConfig({ PACT_ENABLED_NETWORKS: "arc-mainnet" }),
+    );
+    expect(() => svc.onModuleInit()).toThrow(
+      /evm network arc-mainnet missing deploymentBlock/,
+    );
   });
 
   it("PACT_ENABLED_NETWORKS=bogus-chain: throws via getChain (unknown network)", () => {

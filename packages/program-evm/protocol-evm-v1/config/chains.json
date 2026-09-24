@@ -11,6 +11,18 @@
     "deploymentBlock": 42953139,
     "logRangeChunk": 9500
   },
+  "arc-mainnet": {
+    "chainId": 5042,
+    "name": "arc-mainnet",
+    "usdcAddress": "0x3600000000000000000000000000000000000000",
+    "usdcDecimals": 6,
+    "rpcUrl": "https://rpc.mainnet.arc.io",
+    "blockTimeMs": 500,
+    "finalityBlocks": 64,
+    "finalityBlockTag": "finalized",
+    "deploymentBlock": null,
+    "logRangeChunk": 9500
+  },
   "base-sepolia": {
     "chainId": 84532,
     "name": "base-sepolia",

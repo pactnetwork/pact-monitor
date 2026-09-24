@@ -37,6 +37,11 @@ const _chainsJson: Record<
     usdcAddress: "0x3600000000000000000000000000000000000000",
     usdcDecimals: 6,
   },
+  "arc-mainnet": {
+    chainId: 5042,
+    usdcAddress: "0x3600000000000000000000000000000000000000",
+    usdcDecimals: 6,
+  },
   "base-sepolia": {
     chainId: 84532,
     usdcAddress: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
@@ -60,6 +65,12 @@ export const ARC_TESTNET_CHAIN_ID = _chainsJson["arc-testnet"].chainId;
 /** Arc Testnet USDC token (sourced from chains.json["arc-testnet"].usdcAddress). */
 export const ARC_TESTNET_USDC: Address = _chainsJson["arc-testnet"]
   .usdcAddress as Address;
+
+/** Arc Mainnet EVM chain id (sourced from chains.json["arc-mainnet"].chainId). */
+export const ARC_MAINNET_CHAIN_ID = _chainsJson["arc-mainnet"].chainId;
+
+/** Arc Mainnet USDC token (sourced from chains.json["arc-mainnet"].usdcAddress). */
+export const ARC_MAINNET_USDC: Address = _chainsJson["arc-mainnet"].usdcAddress as Address;
 
 /** Base Sepolia EVM chain id (sourced from chains.json["base-sepolia"].chainId). */
 export const BASE_SEPOLIA_CHAIN_ID = _chainsJson["base-sepolia"].chainId;

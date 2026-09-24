@@ -4,6 +4,8 @@ import { join } from "node:path";
 import {
   ARC_TESTNET_CHAIN_ID,
   ARC_TESTNET_USDC,
+  ARC_MAINNET_CHAIN_ID,
+  ARC_MAINNET_USDC,
   BASE_SEPOLIA_CHAIN_ID,
   BASE_SEPOLIA_USDC,
   BASE_MAINNET_CHAIN_ID,
@@ -28,6 +30,16 @@ describe("chain-table drift — chains.json vs constants.ts", () => {
   it("arc-testnet USDC address matches constants.ts export (case-insensitive)", () => {
     expect(chains["arc-testnet"].usdcAddress.toLowerCase()).toBe(
       ARC_TESTNET_USDC.toLowerCase(),
+    );
+  });
+
+  it("arc-mainnet chainId matches constants.ts export", () => {
+    expect(chains["arc-mainnet"].chainId).toBe(ARC_MAINNET_CHAIN_ID);
+  });
+
+  it("arc-mainnet USDC address matches constants.ts export (case-insensitive)", () => {
+    expect(chains["arc-mainnet"].usdcAddress.toLowerCase()).toBe(
+      ARC_MAINNET_USDC.toLowerCase(),
     );
   });
 

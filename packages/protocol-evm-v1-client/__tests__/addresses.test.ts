@@ -8,6 +8,8 @@ import {
 import {
   ARC_TESTNET_CHAIN_ID,
   ARC_TESTNET_USDC,
+  ARC_MAINNET_CHAIN_ID,
+  ARC_MAINNET_USDC,
   BASE_SEPOLIA_CHAIN_ID,
   BASE_SEPOLIA_USDC,
   BASE_MAINNET_CHAIN_ID,
@@ -140,5 +142,43 @@ describe("addresses — Base chain DEPLOYMENTS (WP-BASE T2)", () => {
     expect(d.registry).toBe("0x8cf7Dd83877a6a254bf05E31A79d50bC7169221D");
     expect(d.pool).toBe("0xA3245C40d9C8448eeA03847CD2BFdDe41f7c14A4");
     expect(d.settler).toBe("0x21adb7C1aD28b332661DaB8d52d765610dBF162A");
+  });
+});
+
+describe("addresses — Arc Mainnet DEPLOYMENTS (chain 5042, not yet deployed)", () => {
+  it("entry exists with chain id + USDC and null contract addresses", () => {
+    const d = DEPLOYMENTS[ARC_MAINNET_CHAIN_ID];
+    expect(d).toBeDefined();
+    expect(d.chainId).toBe(5042);
+    expect(d.usdc).toBe(ARC_MAINNET_USDC);
+    expect(d.registry).toBeNull();
+    expect(d.pool).toBeNull();
+    expect(d.settler).toBeNull();
+  });
+
+  it("getDeployment(5042) resolves instead of throwing unknown-chain", () => {
+    expect(getDeployment(ARC_MAINNET_CHAIN_ID).chainId).toBe(5042);
+  });
+
+  it("does not inherit Arc Testnet addresses from any env or baked fallback", () => {
+    const r = resolveDeployment(ARC_MAINNET_CHAIN_ID, "arc-mainnet", {
+      PACT_EVM_REGISTRY_ARC_TESTNET: "0x056BAC33546b5b51B8CF6f332379651f715B889C",
+    });
+    expect(r.registry).toBeNull();
+    expect(r.pool).toBeNull();
+    expect(r.settler).toBeNull();
+  });
+
+  it("per-chain env overlay fills addresses for a post-deploy fork test", () => {
+    const addr = "0x1111111111111111111111111111111111111111";
+    const r = resolveDeployment(ARC_MAINNET_CHAIN_ID, "arc-mainnet", {
+      PACT_EVM_REGISTRY_ARC_MAINNET: addr,
+      PACT_EVM_POOL_ARC_MAINNET: addr,
+      PACT_EVM_SETTLER_ARC_MAINNET: addr,
+    });
+    expect(r.registry).toBe(addr);
+    expect(r.pool).toBe(addr);
+    expect(r.settler).toBe(addr);
+    expect(r.usdc).toBe(ARC_MAINNET_USDC);
   });
 });

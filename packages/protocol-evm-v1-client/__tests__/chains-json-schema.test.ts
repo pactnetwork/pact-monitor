@@ -62,4 +62,21 @@ describe("chains.json — schema shape", () => {
     );
     expect(arc.usdcDecimals).toBe(6);
   });
+
+  it("arc-mainnet entry matches chain 5042 and has no deploymentBlock before deploy", () => {
+    const arc = chains["arc-mainnet"] as Record<string, unknown>;
+    expect(arc.chainId).toBe(5042);
+    expect((arc.usdcAddress as string).toLowerCase()).toBe(
+      "0x3600000000000000000000000000000000000000",
+    );
+    expect(arc.usdcDecimals).toBe(6);
+    expect(arc.deploymentBlock).toBeNull();
+  });
+
+  it("chain ids are unique", () => {
+    const ids = Object.values(chains).map(
+      (c) => (c as Record<string, unknown>).chainId,
+    );
+    expect(new Set(ids).size).toBe(ids.length);
+  });
 });

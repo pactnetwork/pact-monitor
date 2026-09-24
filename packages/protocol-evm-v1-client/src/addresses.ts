@@ -13,7 +13,7 @@
  */
 import { getAddress, isAddress, type Address } from "viem";
 
-import { ARC_TESTNET_CHAIN_ID, ARC_TESTNET_USDC, BASE_SEPOLIA_CHAIN_ID, BASE_SEPOLIA_USDC, BASE_MAINNET_CHAIN_ID, BASE_MAINNET_USDC, ARBITRUM_SEPOLIA_CHAIN_ID, ARBITRUM_SEPOLIA_USDC } from "./constants.js";
+import { ARC_TESTNET_CHAIN_ID, ARC_TESTNET_USDC, ARC_MAINNET_CHAIN_ID, ARC_MAINNET_USDC, BASE_SEPOLIA_CHAIN_ID, BASE_SEPOLIA_USDC, BASE_MAINNET_CHAIN_ID, BASE_MAINNET_USDC, ARBITRUM_SEPOLIA_CHAIN_ID, ARBITRUM_SEPOLIA_USDC } from "./constants.js";
 
 /** Arc Testnet chain id (registry key). */
 export const ARC_TESTNET = ARC_TESTNET_CHAIN_ID;
@@ -42,6 +42,16 @@ export const DEPLOYMENTS: Record<number, PactDeployment> = {
     registry: "0x056BAC33546b5b51B8CF6f332379651f715B889C",
     pool: "0xa6135d9C6BFA0F256B9DeBa10d76C7698329aFdE",
     settler: "0xe461CE50ef53BFC10945B101FB94b11Ec5eB591f",
+  },
+  [ARC_MAINNET_CHAIN_ID]: {
+    chainId: ARC_MAINNET_CHAIN_ID,
+    usdc: ARC_MAINNET_USDC,
+    // Not deployed. null (never a zero or placeholder hex) so EvmAdapter
+    // refuses registry/settler calls until real addresses land here or via
+    // the resolveDeployment env overlay.
+    registry: null,
+    pool: null,
+    settler: null,
   },
   [BASE_SEPOLIA_CHAIN_ID]: {
     chainId: BASE_SEPOLIA_CHAIN_ID,

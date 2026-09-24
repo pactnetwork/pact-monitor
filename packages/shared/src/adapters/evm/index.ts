@@ -115,6 +115,13 @@ export interface EvmAdapterOptions {
   deployment?: PactDeployment;
   /** Block tag for finality checks. Defaults to "finalized". */
   finalityBlockTag?: "safe" | "finalized";
+  /**
+   * D6 §3 mainnet gas-price ceiling (`PACT_EVM_MAX_FEE_PER_GAS_WEI`), in the
+   * chain's native wei. When set, submitSettleBatch refuses to broadcast if the
+   * network's quoted fee exceeds it, and caps the +20% buffered fee at it, so
+   * no settle tx ever offers more than this per gas. Unset = no ceiling.
+   */
+  maxFeePerGasWei?: bigint;
 }
 
 // ---------------------------------------------------------------------------
@@ -140,6 +147,7 @@ export class EvmAdapter implements ChainAdapter {
   private readonly deployment: PactDeployment;
   private readonly finalityBlockTag: "safe" | "finalized";
   private readonly logRangeChunk: bigint;
+  private readonly maxFeePerGasWei: bigint | null;
 
   constructor(opts: EvmAdapterOptions) {
     if (opts.descriptor.vm !== "evm") {
@@ -163,6 +171,12 @@ export class EvmAdapter implements ChainAdapter {
     if (this.logRangeChunk <= 0n) {
       throw new Error(
         `EvmAdapter: logRangeChunk must be > 0 (got ${this.logRangeChunk})`,
+      );
+    }
+    this.maxFeePerGasWei = opts.maxFeePerGasWei ?? null;
+    if (this.maxFeePerGasWei != null && this.maxFeePerGasWei <= 0n) {
+      throw new Error(
+        `EvmAdapter: maxFeePerGasWei must be > 0 (got ${this.maxFeePerGasWei})`,
       );
     }
     // Cache deployment at construction time. Caller passes `deployment`
@@ -421,6 +435,8 @@ export class EvmAdapter implements ChainAdapter {
   //     maxPriorityFeePerGas unchanged.
   //   - Fallback (chain rejects EIP-1559): legacy gasPrice * 120% / 100.
   //   - gasLimit: estimateGas * 130% / 100.
+  //   - Ceiling (maxFeePerGasWei, if set): quote above it -> throw before
+  //     estimateGas/broadcast; buffered fee is capped at it.
   //
   // Finality wait-loop: D6 §5.1 verbatim.
   //   timeout = finalityBlocks * blockTimeMs * 3
@@ -472,11 +488,13 @@ export class EvmAdapter implements ChainAdapter {
     // fail (e.g., RPC down), wrap the underlying error in the standard
     // `settleBatch <what> failed: <reason>` envelope so operator-grep finds it.
     let gasParams: { maxFeePerGas?: bigint; maxPriorityFeePerGas?: bigint; gasPrice?: bigint } = {};
+    let quotedFee: bigint;
     try {
       const fees = await this.publicClient.estimateFeesPerGas();
       if (fees.maxFeePerGas != null) {
+        quotedFee = fees.maxFeePerGas;
         gasParams = {
-          maxFeePerGas: (fees.maxFeePerGas * 120n) / 100n,
+          maxFeePerGas: this.capFee((fees.maxFeePerGas * 120n) / 100n),
           maxPriorityFeePerGas: fees.maxPriorityFeePerGas ?? undefined,
         };
       } else {
@@ -486,12 +504,20 @@ export class EvmAdapter implements ChainAdapter {
       // Fall back to legacy gasPrice
       try {
         const gp = await this.publicClient.getGasPrice();
-        gasParams = { gasPrice: (gp * 120n) / 100n };
+        quotedFee = gp;
+        gasParams = { gasPrice: this.capFee((gp * 120n) / 100n) };
       } catch (gasErr) {
         const decoded = tryExtractPactError(gasErr);
         const reason = decoded?.name ?? (gasErr as Error)?.message ?? "unknown";
         throw new Error(`settleBatch gas estimation failed: ${reason}`);
       }
+    }
+
+    if (this.maxFeePerGasWei != null && quotedFee > this.maxFeePerGasWei) {
+      throw new Error(
+        `settleBatch fee ceiling exceeded on chain ${this.deployment.chainId}: ` +
+          `network quote ${quotedFee} wei > maxFeePerGasWei ${this.maxFeePerGasWei} wei; not broadcast`,
+      );
     }
 
     // Estimate gas limit (+30%)
@@ -573,6 +599,12 @@ export class EvmAdapter implements ChainAdapter {
 
       await sleep(this.blockTimeMs);
     }
+  }
+
+  private capFee(fee: bigint): bigint {
+    return this.maxFeePerGasWei != null && fee > this.maxFeePerGasWei
+      ? this.maxFeePerGasWei
+      : fee;
   }
 
   // -------------------------------------------------------------------------
