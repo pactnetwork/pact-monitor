@@ -26,13 +26,20 @@ import {PactSettler} from "../src/PactSettler.sol";
 ///      new invariant cross-check (chains.json usdcDecimals ==
 ///      ProtocolInvariants.EXPECTED_USDC_DECIMALS) precedes it.
 ///
-///      C1 (captain GATE A verdict): `authority_` IS the deployer EOA, full
-///      stop. The post-deploy SETTLER_ROLE grants are issued BY the deployer
-///      and only succeed if deployer == registry.authority() (deployer holds
-///      DEFAULT_ADMIN_ROLE via PactRegistry.sol:68 / PactPool.sol:35). A
-///      separate/rotated authority is OUT OF SCOPE for WP-07 (later mainnet
-///      authority-rotation concern, a post-deploy transfer step, not a ctor
-///      arg). There is intentionally NO separate-authority branch here.
+///      C1-SUPERSEDED (2026-09-24 authority fix, see
+///      docs/security/arc-mainnet-predeploy-review-2026-09-24.md C-01): the
+///      original C1 ruling made `authority_` the deployer EOA with no
+///      rotation path — a single leaked key could drain any endpoint's pool.
+///      `authority_` is now a REQUIRED env-provided address (`MULTISIG_ADDRESS`)
+///      that MUST already be a deployed contract (checked below) — in
+///      practice a Safe multisig. The deployer EOA no longer receives
+///      DEFAULT_ADMIN_ROLE on any of the three contracts (PactRegistry grants
+///      it to `authority_` in its constructor; PactPool/PactSettler grant it
+///      to `registry.authority()`, which is now the multisig from the very
+///      first block). Phase 2 (the SETTLER_ROLE grants, endpoint
+///      registration, and pool funding) moved to `script/ConfigureAuthority.s.sol`,
+///      which must be executed BY the multisig itself — the deployer EOA no
+///      longer holds admin on any contract and cannot perform that setup.
 ///
 ///      C2 (captain GATE A verdict): `treasuryVault` and `maxTotalFeeBps`
 ///      have NO setter — permanent for the life of the deployment. The
@@ -48,6 +55,16 @@ contract Deploy is Script {
 
         address treasuryVault = vm.envAddress("TREASURY_VAULT_ADDRESS");
         require(treasuryVault != address(0), "TREASURY_VAULT_ZERO");
+
+        // --- C-01 fix: authority_ MUST be a real multisig contract, never
+        // the deployer EOA and never any other bare EOA. vm.envAddress
+        // reverts loudly if MULTISIG_ADDRESS is unset (no silent fallback).
+        // The code-length check is defense-in-depth: it can't verify the
+        // contract IS a properly configured Safe, but it guarantees whoever
+        // deploys can't accidentally (or quietly) pass an EOA and reintroduce
+        // the exact vulnerability this fix closes.
+        address multisigAuthority = vm.envAddress("MULTISIG_ADDRESS");
+        require(multisigAuthority.code.length > 0, "MULTISIG_AUTHORITY_MUST_BE_CONTRACT");
 
         // --- Resolve chain entry from config/chains.json ---
         uint256 chainId = vm.envOr("CHAIN_ID", uint256(block.chainid));
@@ -94,7 +111,8 @@ contract Deploy is Script {
         console.log("=== Pact EVM deploy ===");
         console.log("chain id        :", chainId);
         console.log("chain name      :", chainName);
-        console.log("deployer/auth   :", deployer);
+        console.log("deployer (EOA)  :", deployer);
+        console.log("authority (msig):", multisigAuthority);
         console.log("usdc            :", usdc);
         console.log("treasury vault  :", treasuryVault);
         console.log("maxTotalFeeBps  :", uint256(ProtocolInvariants.DEFAULT_MAX_TOTAL_FEE_BPS));
@@ -106,7 +124,7 @@ contract Deploy is Script {
         vm.startBroadcast(deployerKey);
 
         PactRegistry registry = new PactRegistry(
-            deployer, usdc, treasuryVault,
+            multisigAuthority, usdc, treasuryVault,
             ProtocolInvariants.DEFAULT_MAX_TOTAL_FEE_BPS,
             emptyDefaults, defaultCount
         );
@@ -114,16 +132,18 @@ contract Deploy is Script {
         PactSettler settler =
             new PactSettler(usdc, address(registry), address(pool));
 
-        bytes32 settlerRole = keccak256("SETTLER_ROLE");
-        registry.grantRole(settlerRole, address(settler));
-        pool.grantRole(settlerRole, address(settler));
-
         vm.stopBroadcast();
 
+        // No SETTLER_ROLE grants here: the deployer EOA holds no admin role
+        // on any of the three contracts (registry.authority() == the
+        // multisig, set above). Run script/ConfigureAuthority.s.sol — signed
+        // and broadcast by the multisig itself — to grant SETTLER_ROLE,
+        // register endpoints, and fund pools.
         console.log("--- DEPLOYED ---");
         console.log("PactRegistry    :", address(registry));
         console.log("PactPool        :", address(pool));
         console.log("PactSettler     :", address(settler));
-        console.log("SETTLER_ROLE granted to settler on registry + pool: true");
+        console.log("authority()     :", registry.authority());
+        console.log("NEXT: run ConfigureAuthority.s.sol via the multisig to grant SETTLER_ROLE + register endpoints.");
     }
 }

@@ -42,11 +42,29 @@ const _evmChains: Record<
     name: "arc-testnet",
     usdcAddress: "0x3600000000000000000000000000000000000000",
     usdcDecimals: 6,
-    rpcUrl: "https://rpc.testnet.arc.network",
+    // Swapped from rpc.testnet.arc.network (old domain, docs.arc.io no
+    // longer lists it, and it rate-limited to the point of failing single
+    // isolated eth_getBalance calls during the 24 Sep testnet rehearsal —
+    // rpc.testnet.arc.io answered identical requests instantly with no
+    // rate limit, same chain id). Override via PACT_RPC_URL_ARC_TESTNET if
+    // .arc.io ever has its own issues.
+    rpcUrl: "https://rpc.testnet.arc.io",
     blockTimeMs: 500,
     finalityBlocks: 64,
     finalityBlockTag: "finalized",
     deploymentBlock: 42953139,
+    logRangeChunk: 9500,
+  },
+  "arc-mainnet": {
+    chainId: 5042,
+    name: "arc-mainnet",
+    usdcAddress: "0x3600000000000000000000000000000000000000",
+    usdcDecimals: 6,
+    rpcUrl: "https://rpc.mainnet.arc.io",
+    blockTimeMs: 500,
+    finalityBlocks: 64,
+    finalityBlockTag: "finalized",
+    deploymentBlock: null,
     logRangeChunk: 9500,
   },
   "base-sepolia": {

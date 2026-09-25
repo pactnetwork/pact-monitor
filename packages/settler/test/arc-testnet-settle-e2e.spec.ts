@@ -381,7 +381,7 @@ async function buildSubmitter(): Promise<{
 }> {
   const config = makeConfig();
   const adapters = new AdaptersService(config);
-  adapters.onModuleInit();
+  await adapters.onModuleInit();
   const submitter = new SubmitterService(
     config,
     { keypair: Keypair.generate() } as unknown as SecretLoaderService,
@@ -502,7 +502,7 @@ describe("MN-04 fix-WP T0 — Arc Testnet settle e2e acceptance gate", () => {
     // do a Solana treasury read at startup). The eligibility read must be
     // pure EVM.
     const adapters = new AdaptersService(makeConfig());
-    adapters.onModuleInit();
+    await adapters.onModuleInit();
     fakeBalance = 10_000n;
     fakeAllowance = 10_000n;
     evmCalls = [];

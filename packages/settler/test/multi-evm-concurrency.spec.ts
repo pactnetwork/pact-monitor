@@ -380,7 +380,7 @@ interface Fleet {
 async function buildFleet(): Promise<Fleet> {
   const config = makeConfig();
   const adapters = new AdaptersService(config);
-  adapters.onModuleInit();
+  await adapters.onModuleInit();
   const submitter = new SubmitterService(
     config,
     { keypair: Keypair.generate() } as unknown as SecretLoaderService,

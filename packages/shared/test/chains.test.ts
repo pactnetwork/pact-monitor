@@ -61,6 +61,21 @@ describe("chains registry (WP-MN-02 D2)", () => {
     expect(c.usdcDecimals).toBe(6);
   });
 
+  it("resolves arc-mainnet (chain 5042) with no deploymentBlock until contracts are deployed", () => {
+    const c = getChain("arc-mainnet");
+    expect(c.vm).toBe("evm");
+    expect(c.network).toBe("arc-mainnet");
+    expect(c.chainId).toBe(5042);
+    expect(c.usdcMint.toLowerCase()).toBe(
+      "0x3600000000000000000000000000000000000000",
+    );
+    expect(c.usdcDecimals).toBe(6);
+    expect(c.rpcUrl).toBe("https://rpc.mainnet.arc.io");
+    expect(c.finalityBlocks).toBe(64);
+    expect(c.finalityBlockTag).toBe("finalized");
+    expect(c.deploymentBlock).toBeUndefined();
+  });
+
   it("resolves solana-devnet from hand-coded entries", () => {
     const c = getChain("solana-devnet");
     expect(c.vm).toBe("solana");

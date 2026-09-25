@@ -715,3 +715,161 @@ describe("EvmAdapter.readEndpointConfigsFrom (multi-evm WP T3)", () => {
     expect(res.snapshots[0].maxTotalFeeBps).toBe(500);
   });
 });
+
+// ---------------------------------------------------------------------------
+// D6 §3 mainnet gas-price ceiling (PACT_EVM_MAX_FEE_PER_GAS_WEI)
+// ---------------------------------------------------------------------------
+describe("EvmAdapter maxFeePerGasWei ceiling (D6 §3)", () => {
+  function primeSuccessfulSettle(): void {
+    mockEstimateGas.mockResolvedValue(100000n);
+    mockSendTransaction.mockResolvedValue("0xCeilingTxHash" as `0x${string}`);
+    mockGetTransactionReceipt.mockResolvedValue({ status: "success", blockNumber: 10n });
+    mockGetBlockNumber.mockResolvedValue(12n);
+  }
+
+  it("refuses to broadcast when the EIP-1559 quote exceeds the ceiling", async () => {
+    const adapter = new EvmAdapter({ ...SIGNER_OPTS, maxFeePerGasWei: 999n });
+    mockEstimateFeesPerGas.mockResolvedValue({ maxFeePerGas: 1000n, maxPriorityFeePerGas: 1n });
+    primeSuccessfulSettle();
+
+    await expect(adapter.submitSettleBatch(SETTLE_INPUT)).rejects.toThrow(
+      /fee ceiling exceeded.*1000 wei > maxFeePerGasWei 999 wei; not broadcast/,
+    );
+    expect(mockEstimateGas).not.toHaveBeenCalled();
+    expect(mockSendTransaction).not.toHaveBeenCalled();
+  });
+
+  it("refuses to broadcast when the legacy gasPrice quote exceeds the ceiling", async () => {
+    const adapter = new EvmAdapter({ ...SIGNER_OPTS, maxFeePerGasWei: 1999n });
+    mockEstimateFeesPerGas.mockRejectedValue(new Error("EIP-1559 not supported"));
+    mockGetGasPrice.mockResolvedValue(2000n);
+    primeSuccessfulSettle();
+
+    await expect(adapter.submitSettleBatch(SETTLE_INPUT)).rejects.toThrow(
+      /fee ceiling exceeded/,
+    );
+    expect(mockSendTransaction).not.toHaveBeenCalled();
+  });
+
+  it("caps the +20% buffered maxFeePerGas at the ceiling when the quote is under it", async () => {
+    const adapter = new EvmAdapter({ ...SIGNER_OPTS, maxFeePerGasWei: 1100n });
+    mockEstimateFeesPerGas.mockResolvedValue({ maxFeePerGas: 1000n, maxPriorityFeePerGas: 100n });
+    primeSuccessfulSettle();
+
+    await adapter.submitSettleBatch(SETTLE_INPUT);
+
+    const sendArgs = (mockSendTransaction as Mock).mock.calls[0][0];
+    expect(sendArgs.maxFeePerGas).toBe(1100n);
+    expect(sendArgs.maxPriorityFeePerGas).toBe(100n);
+    const estimateArgs = (mockEstimateGas as Mock).mock.calls[0][0];
+    expect(estimateArgs.maxFeePerGas).toBe(1100n);
+  });
+
+  it("caps the buffered legacy gasPrice at the ceiling", async () => {
+    const adapter = new EvmAdapter({ ...SIGNER_OPTS, maxFeePerGasWei: 2100n });
+    mockEstimateFeesPerGas.mockRejectedValue(new Error("EIP-1559 not supported"));
+    mockGetGasPrice.mockResolvedValue(2000n);
+    primeSuccessfulSettle();
+
+    await adapter.submitSettleBatch(SETTLE_INPUT);
+
+    expect((mockSendTransaction as Mock).mock.calls[0][0].gasPrice).toBe(2100n);
+  });
+
+  it("allows a quote exactly equal to the ceiling", async () => {
+    const adapter = new EvmAdapter({ ...SIGNER_OPTS, maxFeePerGasWei: 1000n });
+    mockEstimateFeesPerGas.mockResolvedValue({ maxFeePerGas: 1000n, maxPriorityFeePerGas: 100n });
+    primeSuccessfulSettle();
+
+    await adapter.submitSettleBatch(SETTLE_INPUT);
+
+    expect((mockSendTransaction as Mock).mock.calls[0][0].maxFeePerGas).toBe(1000n);
+  });
+
+  it("leaves the buffered fee unchanged when it is already under the ceiling", async () => {
+    const adapter = new EvmAdapter({ ...SIGNER_OPTS, maxFeePerGasWei: 10_000n });
+    mockEstimateFeesPerGas.mockResolvedValue({ maxFeePerGas: 1000n, maxPriorityFeePerGas: 100n });
+    primeSuccessfulSettle();
+
+    await adapter.submitSettleBatch(SETTLE_INPUT);
+
+    expect((mockSendTransaction as Mock).mock.calls[0][0].maxFeePerGas).toBe(1200n);
+  });
+
+  it("no ceiling configured keeps the existing +20% behavior", async () => {
+    const adapter = new EvmAdapter(SIGNER_OPTS);
+    mockEstimateFeesPerGas.mockResolvedValue({ maxFeePerGas: 10n ** 15n, maxPriorityFeePerGas: 1n });
+    primeSuccessfulSettle();
+
+    await adapter.submitSettleBatch(SETTLE_INPUT);
+
+    expect((mockSendTransaction as Mock).mock.calls[0][0].maxFeePerGas).toBe(
+      (10n ** 15n * 120n) / 100n,
+    );
+  });
+
+  it("rejects a non-positive ceiling at construction", () => {
+    expect(() => new EvmAdapter({ ...BASE_OPTS, maxFeePerGasWei: 0n })).toThrow(
+      /maxFeePerGasWei must be > 0/,
+    );
+  });
+
+  it("a ceiling set AT Arc's raw 20 gwei floor still refuses every settle (review #289 finding 1)", async () => {
+    // viem's estimateFeesPerGas already buffers the raw base fee by its own
+    // ~1.2x before Pact's code applies a further +20% on top (see D6 §3
+    // comment on submitSettleBatch). So at Arc's 20 gwei floor, the REAL
+    // quote viem hands back is ~24 gwei, not 20 gwei flat. A naive operator
+    // who reads "Arc's floor is 20 gwei" and sets the ceiling to exactly
+    // that gets every settle refused, at the floor, not just during a fee
+    // spike. This does not lose funds (submitSettleBatch throws before
+    // broadcast) but looks exactly like an outage.
+    const arcMainnetDeployment = {
+      chainId: 5042,
+      usdc: "0x3600000000000000000000000000000000000000",
+      registry: "0x1111111111111111111111111111111111111111",
+      pool: "0x1111111111111111111111111111111111111111",
+      settler: "0x1111111111111111111111111111111111111111",
+    };
+    const adapter = new EvmAdapter({
+      ...SIGNER_OPTS,
+      descriptor: getChain("arc-mainnet"),
+      deployment: arcMainnetDeployment,
+      maxFeePerGasWei: 20_000_000_000n, // the (wrong) "= floor" guidance
+    });
+    mockEstimateFeesPerGas.mockResolvedValue({
+      maxFeePerGas: 24_000_000_000n, // realistic viem-buffered floor quote
+      maxPriorityFeePerGas: 0n,
+    });
+    primeSuccessfulSettle();
+
+    await expect(adapter.submitSettleBatch(SETTLE_INPUT)).rejects.toThrow(
+      /fee ceiling exceeded on chain 5042/,
+    );
+    expect(mockSendTransaction).not.toHaveBeenCalled();
+
+    // A ceiling comfortably above the buffered floor-quote (the >= 30 gwei
+    // recommendation in .env.example / the boot warning) settles normally.
+    const safeAdapter = new EvmAdapter({
+      ...SIGNER_OPTS,
+      descriptor: getChain("arc-mainnet"),
+      deployment: arcMainnetDeployment,
+      maxFeePerGasWei: 30_000_000_000n,
+    });
+    await expect(
+      safeAdapter.submitSettleBatch(SETTLE_INPUT),
+    ).resolves.toBeDefined();
+  });
+});
+
+describe("EvmAdapter on arc-mainnet before deploy", () => {
+  it("refuses to settle: the baked deployment has no settler address", async () => {
+    const adapter = new EvmAdapter({
+      ...SIGNER_OPTS,
+      descriptor: getChain("arc-mainnet"),
+    });
+    await expect(adapter.submitSettleBatch(SETTLE_INPUT)).rejects.toThrow(
+      /no settler address for chain 5042/,
+    );
+    expect(mockSendTransaction).not.toHaveBeenCalled();
+  });
+});
