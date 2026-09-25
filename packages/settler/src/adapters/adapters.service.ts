@@ -1,5 +1,6 @@
 import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { SecretManagerServiceClient } from "@google-cloud/secret-manager";
 import {
   ChainAdapter,
   EvmAdapter,
@@ -24,14 +25,16 @@ export class AdaptersService implements OnModuleInit {
   private readonly adapters = new Map<string, ChainAdapter>();
   private readonly keypairs = new Map<string, Keypair>();
   private readonly evmAccounts = new Map<string, PrivateKeyAccount>();
+  private readonly secretClient: SecretManagerServiceClient;
   readonly legacyDirectSolana: boolean;
 
   constructor(private readonly config: ConfigService) {
+    this.secretClient = new SecretManagerServiceClient();
     this.legacyDirectSolana =
       this.config.get<string>("PACT_LEGACY_DIRECT_SOLANA") === "true";
   }
 
-  onModuleInit(): void {
+  async onModuleInit(): Promise<void> {
     const enabledRaw =
       this.config.get<string>("PACT_ENABLED_NETWORKS") ?? "solana-devnet";
     const enabled = enabledRaw
@@ -92,7 +95,7 @@ export class AdaptersService implements OnModuleInit {
           throw new Error(`evm network ${name} missing deploymentBlock`);
         }
 
-        const account = this.loadEvmAccount(name);
+        const account = await this.loadEvmAccount(name);
         // NOTE: passing process.env bypasses Nest ConfigService. Acceptable for
         // Phase 1 (ConfigService backs onto process.env). Phase 2 (Rick
         // follow-up post WP-MN-04 Gate B) must switch to per-key
@@ -294,41 +297,72 @@ export class AdaptersService implements OnModuleInit {
   }
 
   /**
-   * Load an EVM signer for a network. Supports two phases per D6 §6:
-   *   Phase 1 (now): raw 0x-hex env value via PACT_SETTLER_KEYPAIR_<NETWORK>
-   *   Phase 2 (later): "projects/<gcp>/secrets/.../versions/latest" resource path
-   *     (Secret Manager; requires making onModuleInit async — deferred to Phase 2)
-   * Returns null when the env is unset (acceptable in test mode or read-only deploys).
+   * Load an EVM signer for a network from PACT_SETTLER_KEYPAIR_<NETWORK> (D6 §6).
+   * The value is either a raw 0x-hex private key (local dev) or a Secret
+   * Manager resource path "projects/<gcp>/secrets/<name>/versions/<v>" whose
+   * payload is that hex key (mainnet, security review H-01).
+   * Returns null when the env is unset (acceptable in test mode or read-only
+   * deploys) or a raw env value does not parse. Any Secret Manager failure
+   * (access error, empty payload, unparseable key) throws: the operator
+   * configured a mainnet signer, so booting without one would be silent
+   * degradation.
    */
-  private loadEvmAccount(network: string): PrivateKeyAccount | null {
+  private async loadEvmAccount(
+    network: string,
+  ): Promise<PrivateKeyAccount | null> {
     const envKey = `PACT_SETTLER_KEYPAIR_${network.replace(/-/g, "_").toUpperCase()}`;
-    const raw = this.config.get<string>(envKey);
-    if (!raw) return null;
+    const configured = this.config.get<string>(envKey);
+    if (!configured) return null;
 
-    if (raw.startsWith("projects/")) {
-      // Phase 2: Secret Manager resource path — not yet supported in Phase 1.
-      // Warn and skip rather than throw, so the service boots without a signer
-      // in environments where Secret Manager is not yet wired.
-      this.logger.warn(
-        `[settler] EVM signer for ${network}: Secret Manager paths (Phase 2) not yet supported — skipping signer load. Set a raw 0x-hex value for Phase 1.`,
-      );
-      return null;
-    }
+    const trimmed = configured.trim();
+    const fromSecret = trimmed.startsWith("projects/");
+    const raw = fromSecret ? await this.accessEvmSecret(network, trimmed) : trimmed;
 
     try {
-      const hex = (
-        raw.trim().startsWith("0x") ? raw.trim() : `0x${raw.trim()}`
-      ) as Hex;
+      const hex = (raw.startsWith("0x") ? raw : `0x${raw}`) as Hex;
       return privateKeyToAccount(hex);
     } catch (e) {
       // Redact: viem's InvalidHexValueError / InvalidHexLengthError include the
       // offending private key in e.message. Log only the error name so a
       // mistyped PACT_SETTLER_KEYPAIR_<NETWORK> never lands the key in Cloud
       // Logging (PR #225 P0-4).
+      if (fromSecret) {
+        throw new Error(
+          `Failed to parse EVM private key from Secret Manager for ${network}: ${(e as Error).name}`,
+        );
+      }
       this.logger.warn(
         `Failed to parse EVM private key for ${network}: ${(e as Error).name}`,
       );
       return null;
     }
+  }
+
+  private async accessEvmSecret(
+    network: string,
+    resourcePath: string,
+  ): Promise<string> {
+    let data: Uint8Array | string | null | undefined;
+    try {
+      const [version] = await this.secretClient.accessSecretVersion({
+        name: resourcePath,
+      });
+      data = version.payload?.data;
+    } catch (e) {
+      // Redact: surface only the error name and gRPC status code, never the
+      // client error message, so nothing echoed back by the API reaches logs.
+      const { name, code } = e as { name?: string; code?: unknown };
+      throw new Error(
+        `Secret Manager access failed for EVM signer ${network}: ${name ?? "Error"}` +
+          (typeof code === "number" ? ` (code ${code})` : ""),
+      );
+    }
+    const value =
+      typeof data === "string" ? data : data ? Buffer.from(data).toString("utf8") : "";
+    const trimmed = value.trim();
+    if (!trimmed) {
+      throw new Error(`Empty Secret Manager payload for EVM signer ${network}`);
+    }
+    return trimmed;
   }
 }

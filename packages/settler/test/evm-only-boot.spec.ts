@@ -69,7 +69,7 @@ async function fakeFetch(
 /** Boot every settler boot-path provider with one real ConfigService. */
 async function bootSettlerProviders(config: ConfigService): Promise<void> {
   const adapters = new AdaptersService(config);
-  adapters.onModuleInit();
+  await adapters.onModuleInit();
 
   const secrets = new SecretLoaderService(config);
   await secrets.onModuleInit();
@@ -128,7 +128,7 @@ describe("settler EVM-only boot (multi-evm WP T5)", () => {
 
     const config = new ConfigService();
     const adapters = new AdaptersService(config);
-    adapters.onModuleInit();
+    await adapters.onModuleInit();
     const secrets = new SecretLoaderService(config);
     await secrets.onModuleInit();
     const balance = new SignerBalanceService(config, secrets, adapters);
@@ -147,11 +147,11 @@ describe("settler EVM-only boot (multi-evm WP T5)", () => {
     expect(balance.solanaMonitored).toBe(false);
   });
 
-  it("still fails fast at construction when Solana is enabled but SOLANA_RPC_URL is missing", () => {
+  it("still fails fast at construction when Solana is enabled but SOLANA_RPC_URL is missing", async () => {
     vi.stubEnv("PACT_ENABLED_NETWORKS", "solana-devnet");
     const config = new ConfigService();
     const adapters = new AdaptersService(config);
-    adapters.onModuleInit();
+    await adapters.onModuleInit();
     const secrets = new SecretLoaderService(config);
 
     // SubmitterService (and SignerBalanceService) build the Solana deps in the
